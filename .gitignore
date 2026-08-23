@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+build/
+*.tsbuildinfo
+
+# Environment / secrets — never commit
+.env
+.env.*
+!.env.example
+*.local
+
+# Test / coverage
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Browser automation scratch
+.playwright-mcp/
+
+# Session data — never commit real session stores (ZCode sqlite, Claude Code jsonl)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.jsonl
+# Synthetic test fixtures are fine to commit
+!cli/test/fixtures/*.sqlite
+!cli/test/fixtures/*.jsonl
