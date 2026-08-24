@@ -1,0 +1,13 @@
+{
+  "name": "quire",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "db:test:up": "node scripts/test-db.mjs up",
+    "db:test:down": "node scripts/test-db.mjs down"
+  }
+}

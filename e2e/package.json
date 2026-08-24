@@ -1,0 +1,8 @@
+{
+  "name": "@quire/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "typecheck": "tsc", "test": "playwright test --pass-with-no-tests" },
+  "devDependencies": { "typescript": "^5.6.0", "@playwright/test": "^1.48.0" }
+}
