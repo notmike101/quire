@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Db } from './db/client.js';
 import type { Config } from './config.js';
 import { publicRoutes } from './api/public.js';
+import { ownerRoutes } from './api/owner.js';
 import { RateLimiter, IpWindow } from './security/rate-limit.js';
 
 export interface AppDeps {
@@ -23,6 +24,7 @@ export function createApp(deps: AppDeps): Hono {
       ipWindow: deps.ipWindow ?? new IpWindow(),
     }),
   );
-  // Owner routes (Task 7), security headers + error handler (Task 8), static SPA (Task 8).
+  app.route('/', ownerRoutes({ db: deps.db, config: deps.config }));
+  // Security headers, error handler, body limit, static SPA: Task 8.
   return app;
 }

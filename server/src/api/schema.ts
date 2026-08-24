@@ -7,7 +7,7 @@ export const partSchema = z
     callID: z.string().max(200).optional(),
     tool: z.string().max(200).optional(),
     status: z.string().max(100).optional(),
-    input: z.unknown(),
+    input: z.unknown().optional(),
     output: z.string().max(1_000_000).optional(),
   })
   .strict();
@@ -41,3 +41,21 @@ export const patchBodySchema = z
   .strict();
 
 export type ShapedSession = z.infer<typeof shapedSessionSchema>;
+
+const presetSchema = z.enum(['strict', 'normal', 'none']);
+
+export const previewBodySchema = z
+  .object({ session: shapedSessionSchema, preset: presetSchema.default('strict') })
+  .strict();
+
+export const createBodySchema = z
+  .object({
+    session: shapedSessionSchema,
+    preset: presetSchema.default('strict'),
+    password: z.string().min(1).max(200).optional(),
+    expiresAt: z.string().datetime({ offset: true }).optional(),
+  })
+  .strict();
+
+export type PreviewBody = z.infer<typeof previewBodySchema>;
+export type CreateBody = z.infer<typeof createBodySchema>;
