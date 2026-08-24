@@ -13,6 +13,7 @@ const config = {
   apiKey: 'a'.repeat(64),
   unlockSecret: 'b'.repeat(64),
   port: 8787,
+  webDist: '',
 };
 
 let db: Db;

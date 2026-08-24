@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { fileURLToPath } from 'node:url';
 
 export interface Config {
   databaseUrl: string;
   apiKey: string;
   unlockSecret: string;
   port: number;
+  webDist: string;
 }
 
 const schema = z.object({
@@ -12,6 +14,7 @@ const schema = z.object({
   QUIRE_API_KEY: z.string().min(32),
   UNLOCK_SECRET: z.string().min(32),
   PORT: z.coerce.number().int().positive().default(8787),
+  WEB_DIST: z.string().default(fileURLToPath(new URL('../../web/dist', import.meta.url))),
 });
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -25,5 +28,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     apiKey: parsed.data.QUIRE_API_KEY,
     unlockSecret: parsed.data.UNLOCK_SECRET,
     port: parsed.data.PORT,
+    webDist: parsed.data.WEB_DIST,
   };
 }
