@@ -10,13 +10,16 @@
   },
   "devDependencies": {
     "@types/node": "^22",
+    "drizzle-kit": "^0.31.10",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.13.4",
+    "postgres": "^3.4.9",
     "zod": "^4.4.3"
   }
 }
