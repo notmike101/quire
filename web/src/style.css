@@ -32,23 +32,31 @@
   border-radius: 0.25rem;
   padding: 0.1em 0.35em;
 }
-.dark .prose-quire :not(pre) > code { background: rgb(255 255 255 / 0.1); }
+@media (prefers-color-scheme: dark) {
+  .prose-quire :not(pre) > code { background: rgb(255 255 255 / 0.1); }
+}
 .prose-quire ul { list-style: disc; padding-left: 1.25em; margin: 0.5em 0; }
 .prose-quire ol { list-style: decimal; padding-left: 1.25em; margin: 0.5em 0; }
 .prose-quire a { color: #2563eb; text-decoration: underline; }
-.dark .prose-quire a { color: #60a5fa; }
+@media (prefers-color-scheme: dark) {
+  .prose-quire a { color: #60a5fa; }
+}
 .prose-quire blockquote {
   border-left: 2px solid rgb(0 0 0 / 0.2);
   color: rgb(0 0 0 / 0.6);
   margin: 0.5em 0;
   padding-left: 1em;
 }
-.dark .prose-quire blockquote {
-  border-color: rgb(255 255 255 / 0.2);
-  color: rgb(255 255 255 / 0.6);
+@media (prefers-color-scheme: dark) {
+  .prose-quire blockquote {
+    border-color: rgb(255 255 255 / 0.2);
+    color: rgb(255 255 255 / 0.6);
+  }
 }
 .prose-quire table { border-collapse: collapse; margin: 0.75em 0; }
 .prose-quire th,
 .prose-quire td { border: 1px solid rgb(0 0 0 / 0.15); padding: 0.25em 0.5em; }
-.dark .prose-quire th,
-.dark .prose-quire td { border-color: rgb(255 255 255 / 0.15); }
+@media (prefers-color-scheme: dark) {
+  .prose-quire th,
+  .prose-quire td { border-color: rgb(255 255 255 / 0.15); }
+}
