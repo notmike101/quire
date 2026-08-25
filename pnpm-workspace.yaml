@@ -3,3 +3,4 @@ packages:
   - cli
   - web
   - e2e
+  - plugin
