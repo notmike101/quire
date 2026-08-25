@@ -73,8 +73,7 @@ export async function runPublish(values: PublishValues, positionals: string[], d
   if (values.harness !== undefined && values.harness !== 'zcode' && values.harness !== 'claude-code') {
     throw new Error(`unknown --harness "${values.harness}" (use zcode or claude-code)`);
   }
-  const harnessName: HarnessName = (values.harness as HarnessName | undefined) ?? detectHarness();
-  const adapter = deps.adapter ?? makeAdapter(harnessName);
+  const adapter = deps.adapter ?? makeAdapter((values.harness as HarnessName | undefined) ?? detectHarness());
   const api = deps.api ?? new QuireApi();
 
   const session = await resolveSession(adapter, values, positionals, out);
