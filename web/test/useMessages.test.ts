@@ -9,7 +9,7 @@ const META: ShareMeta = {
   createdAt: '2026-08-20T00:00:00.000Z',
   expiresAt: null,
   messageCount: 120,
-  redactions: 2,
+  redactions: { 'api-key': 2 },
 };
 
 function makePage(count: number, start: number, nextCursor: number | null) {

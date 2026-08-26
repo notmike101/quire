@@ -72,15 +72,15 @@ pnpm --filter @quire/server dev
 ## CLI
 
 ```bash
-quire setup                # writes ~/.quire/config.json, prints server .env block
+quire setup                # prints the server .env block + a config example
 quire publish --current    # preview redacted session, confirm, publish
 quire list                 # list active shares
 quire revoke <token>       # soft-revoke (share becomes a 404)
-quire update <token> --expires-at 2026-09-01
+quire update <token> --expires 2026-09-01
 ```
 
 Environment: `QUIRE_SERVER_URL`, `QUIRE_API_KEY` (override the config file).
-Harness detection: `--harness zcode|claude` flag, else `CLAUDECODE` /
+Harness detection: `--harness zcode|claude-code` flag, else `CLAUDECODE` /
 `ZCODE_APP_VERSION` env, else the more recently modified session store.
 
 ## Plugin

@@ -22,7 +22,7 @@ export interface ShareMeta {
   createdAt: string;
   expiresAt: string | null;
   messageCount: number;
-  redactions: number;
+  redactions: Record<string, number>;
 }
 
 export interface PageResponse {
