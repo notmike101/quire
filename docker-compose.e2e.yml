@@ -1,0 +1,14 @@
+# Override for the Playwright E2E suite (Task 23): fixed test credentials and a
+# distinct host port so E2E never collides with a local dev stack.
+services:
+  server:
+    ports:
+      - "127.0.0.1:8790:8787"
+    environment:
+      DATABASE_URL: postgres://quire:e2e@postgres:5432/quire
+      QUIRE_API_KEY: e2e-test-key
+      UNLOCK_SECRET: e2e-unlock-secret
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: e2e
