@@ -1,1 +1,1 @@
-export default ['server', 'cli', 'web', 'e2e', 'plugin'];
+export default ['server', 'cli', 'web', 'plugin'];

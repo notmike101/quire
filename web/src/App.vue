@@ -72,9 +72,9 @@ function userText(message: ShareMessage): string {
             expires {{ formatDate(meta.expiresAt) }}
           </span>
           <span
-            v-if="(meta?.redactions ?? 0) > 0"
+            v-if="Object.values(meta?.redactions ?? {}).reduce((a, b) => a + b, 0) > 0"
             class="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-          >{{ meta?.redactions }} redacted</span>
+          >{{ Object.values(meta?.redactions ?? {}).reduce((a, b) => a + b, 0) }} redacted</span>
         </div>
       </header>
       <main class="mx-auto w-full max-w-[760px] px-4 pb-16">

@@ -6,8 +6,8 @@ services:
       - "127.0.0.1:8790:8787"
     environment:
       DATABASE_URL: postgres://quire:e2e@postgres:5432/quire
-      QUIRE_API_KEY: e2e-test-key
-      UNLOCK_SECRET: e2e-unlock-secret
+      QUIRE_API_KEY: e2e-test-key-0000000000000000000000
+      UNLOCK_SECRET: e2e-unlock-secret-0000000000000000
 
   postgres:
     environment:

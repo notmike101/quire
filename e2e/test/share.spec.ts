@@ -1,0 +1,96 @@
+import { test, expect } from '@playwright/test';
+import { createShare, OPENAI_KEY } from './helpers';
+
+test.describe('share viewer', () => {
+  test('renders the first page and redacts secrets server-side', async ({ page, request }) => {
+    const { token } = await createShare(request, { secret: true });
+    await page.goto(`/chats/${token}`);
+    await expect(page.getByRole('heading', { name: 'E2E Session' })).toBeVisible();
+    await expect(page.getByText('test-model')).toBeVisible();
+    await expect(page.getByText(/redacted/)).toBeVisible();
+    await expect(page.getByText('Use this key: [REDACTED:openai-key] for the API')).toBeVisible();
+    // The hard security property: the raw secret never reaches the viewer's DOM.
+    const body = await page.locator('body').innerText();
+    expect(body).not.toContain(OPENAI_KEY);
+  });
+
+  test('lazy-loads subsequent pages when scrolling', async ({ page, request }) => {
+    const { token } = await createShare(request, { messageCount: 120 });
+    await page.goto(`/chats/${token}`);
+    // The first page renders 50 messages (25 user + 25 assistant).
+    // User messages render synchronously; assistant messages render
+    // asynchronously (via Shiki, which is slow in the E2E environment).
+    // Assert on user messages (which render synchronously) to verify
+    // lazy loading without depending on the assistant-message render.
+    // Message 49 is the last user message on the first page (i=48, even).
+    await expect(page.getByText('Message 49', { exact: true })).toBeVisible({ timeout: 15000 });
+    // Message 51 is the first user message on the second page (i=50, even).
+    // It should NOT be in the DOM yet (lazy loading).
+    await expect(page.getByText('Message 51', { exact: true })).toHaveCount(0);
+
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    // Message 99 is a user message on the second page (i=98, even).
+    await expect(page.getByText('Message 99', { exact: true })).toBeVisible({ timeout: 15000 });
+
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    // Message 119 is a user message on the third page (i=118, even).
+    await expect(page.getByText('Message 119', { exact: true })).toBeVisible({ timeout: 15000 });
+  });
+
+  test('password gate: wrong password is rejected, correct one unlocks', async ({ page, request }) => {
+    const { token } = await createShare(request, { password: 'correct-horse' });
+    await page.goto(`/chats/${token}`);
+    await expect(page.getByRole('heading', { name: 'Password required' })).toBeVisible();
+
+    await page.locator('input[type="password"]').fill('wrong');
+    await page.getByRole('button', { name: 'Unlock' }).click();
+    await expect(page.getByText('Wrong password.')).toBeVisible();
+
+    await page.locator('input[type="password"]').fill('correct-horse');
+    await page.getByRole('button', { name: 'Unlock' }).click();
+    await expect(page.getByRole('heading', { name: 'E2E Session' })).toBeVisible();
+  });
+
+  test('expired share shows the expired page', async ({ page, request }) => {
+    const { token } = await createShare(request, { expiresAt: '2020-01-01T00:00:00.000Z' });
+    await page.goto(`/chats/${token}`);
+    await expect(page.getByRole('heading', { name: 'This share has expired' })).toBeVisible();
+  });
+
+  test('unknown token shows the not-found page', async ({ page }) => {
+    await page.goto('/chats/does-not-exist-000000000000');
+    await expect(page.getByRole('heading', { name: 'Share not found' })).toBeVisible();
+  });
+
+  test('respects the reader dark mode preference', async ({ browser, request }) => {
+    const { token } = await createShare(request);
+    const context = await browser.newContext({ colorScheme: 'dark' });
+    const page = await context.newPage();
+    try {
+      await page.goto(`/chats/${token}`);
+      await expect(page.getByRole('heading', { name: 'E2E Session' })).toBeVisible();
+      // Tailwind v4 emits oklch; the resolved rgb of neutral-950 is near-black.
+      // Assert luminance rather than an exact color so the test survives palette tweaks.
+      const bg = await page.evaluate(() => {
+        const el = document.querySelector('div.min-h-screen');
+        return el ? getComputedStyle(el).backgroundColor : null;
+      });
+      expect(bg, 'themed root element not found').not.toBeNull();
+      // Tailwind v4 emits oklch; the resolved color of neutral-950 is near-black.
+      // oklch(L C H) where L is lightness (0-1). Assert L < 0.2 (near-black).
+      const oklch = bg!.match(/oklch\(([\d.]+)\s/);
+      const rgb = bg!.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      let luminance: number;
+      if (oklch) {
+        luminance = Number(oklch[1]); // oklch lightness (0-1)
+      } else if (rgb) {
+        luminance = (0.2126 * Number(rgb[1]) + 0.7152 * Number(rgb[2]) + 0.0722 * Number(rgb[3])) / 255;
+      } else {
+        throw new Error(`unexpected background format: ${bg}`);
+      }
+      expect(luminance).toBeLessThan(0.2);
+    } finally {
+      await context.close();
+    }
+  });
+});
