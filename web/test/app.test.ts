@@ -16,7 +16,7 @@ const PAGE = {
     createdAt: '2026-08-20T00:00:00.000Z',
     expiresAt: null,
     messageCount: 2,
-    redactions: 1,
+    redactions: { "api-key": 1 },
   },
   messages: [
     { seq: 1, role: 'user', time: null, parts: [{ type: 'text', text: 'hello from user' }] },
