@@ -105,7 +105,6 @@ export function makeZcodeAdapter(dbPath: string = zcodeDbPath()): HarnessAdapter
           if (kept.length === 0) continue;
           out.push({ role, parts: kept });
         }
-        const firstAssistant = out.find((m) => m.role === 'assistant');
         return {
           sessionId: id,
           title: sess.title ?? id,

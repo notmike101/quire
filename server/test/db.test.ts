@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { makeDb, migrateDb } from '../src/db/client.js';
 import { sql } from 'drizzle-orm';
 

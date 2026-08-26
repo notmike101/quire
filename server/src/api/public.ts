@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { getConnInfo } from '@hono/node-server/conninfo';
 import { and, asc, eq, gt } from 'drizzle-orm';
 import { shares, shareMessages } from '../db/schema.js';
 import type { Db } from '../db/client.js';
@@ -15,8 +16,29 @@ export interface PublicDeps {
   ipWindow: IpWindow;
 }
 
-function clientIp(c: Context): string {
-  return c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || c.req.header('x-real-ip') || 'unknown';
+// Behind the documented reverse proxy the leftmost XFF hop is the real client
+// IP. The server is loopback-bound and fronted by a proxy that sets XFF, so a
+// direct client cannot inject a spoofed value — the proxy overwrites it. If the
+// server is ever exposed directly, set `trustProxy` to false to ignore XFF and
+// rate-limit on the socket address instead (which would then be the proxy).
+function clientIp(c: Context, trustProxy = true): string {
+  if (trustProxy) {
+    const xff = c.req.header('x-forwarded-for');
+    if (xff) {
+      const first = xff.split(',')[0]?.trim();
+      if (first) return first;
+    }
+    const xri = c.req.header('x-real-ip');
+    if (xri) return xri;
+  }
+  // Socket address as seen by the Node server (the proxy when fronted). The
+  // Node server attaches the IncomingMessage to c.env; under the Hono test
+  // harness (app.request) there is no socket, so fall back to a stable key.
+  try {
+    return getConnInfo(c).remote.address ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }
 
 function parseCookie(header: string | undefined, name: string): string | undefined {

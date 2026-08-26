@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -119,6 +119,7 @@ describe('runPublish (process)', () => {
 
   afterAll(async () => {
     await new Promise<void>((r) => server.close(() => r()));
+    rmSync(tempHome, { recursive: true, force: true });
   });
 
   function runCli(args: string[], stdin: string, timeoutMs = 30000): Promise<{ code: number | null; stdout: string; stderr: string }> {
@@ -143,15 +144,15 @@ describe('runPublish (process)', () => {
   }
 
   it('requires confirmation: declining publishes nothing', { timeout: 30000 }, async () => {
-    const { code, stdout } = await runCli(['publish', '--current', '--harness', 'zcode'], 'n\n');
-    expect(code).toBe(0);
+    const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode'], 'n\n');
+    expect(code, `stderr: ${stderr}`).toBe(0);
     expect(stdout).toContain('Aborted. Nothing was published.');
     expect(createCalls).toHaveLength(0);
   });
 
   it('confirming publishes and prints the URL', { timeout: 30000 }, async () => {
-    const { code, stdout } = await runCli(['publish', '--current', '--harness', 'zcode'], 'y\n');
-    expect(code).toBe(0);
+    const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode'], 'y\n');
+    expect(code, `stderr: ${stderr}`).toBe(0);
     expect(stdout).toContain('/chats/');
     expect(createCalls).toHaveLength(1);
     const body = createCalls[0] as { session: { sessionId: string; title: string } };
@@ -170,6 +171,7 @@ describe('runPublish (process)', () => {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
+    let stderr = '';
     let confirmed = false;
     let code: number | null = null;
     child.stdout.on('data', (d) => {
@@ -180,6 +182,7 @@ describe('runPublish (process)', () => {
         child.stdin.end();
       }
     });
+    child.stderr.on('data', (d) => (stderr += d));
     child.stdin.write('1\n');
     await new Promise<void>((resolve) => {
       const t = setTimeout(() => child.kill('SIGKILL'), 30000);
@@ -189,10 +192,88 @@ describe('runPublish (process)', () => {
         resolve();
       });
     });
-    expect(code).toBe(0);
+    expect(code, `stderr: ${stderr}`).toBe(0);
     expect(stdout).toContain('Recent sessions:');
     expect(createCalls).toHaveLength(2);
     const body = createCalls[1] as { session: { sessionId: string } };
     expect(body.session.sessionId).toBe('sess_fixture'); // session 1 in the list
+  });
+
+  it('EOF at the prompt aborts with a non-zero exit and a clear message', { timeout: 30000 }, async () => {
+    // M37: a truncated/EOF stdin while a question is pending must abort loudly,
+    // not resolve as an empty answer (which would look like a declined confirm
+    // and exit 0). Ending stdin with no input exercises the readline 'close'
+    // path that rejects with PromptAbortedError.
+    const child = spawn(process.execPath, ['--import', 'tsx', indexTs, 'publish', '--current', '--harness', 'zcode'], {
+      cwd: cliRoot,
+      env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome, QUIRE_SERVER_URL: baseUrl, QUIRE_API_KEY: 'k'.repeat(64) },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let code: number | null = null;
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.stdin.end(); // no input, immediate EOF
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(() => child.kill('SIGKILL'), 30000);
+      child.on('close', (c) => {
+        clearTimeout(t);
+        code = c;
+        resolve();
+      });
+    });
+    expect(code).not.toBe(0);
+    expect(`${stdout}${stderr}`).toContain('Aborted. Nothing was published.');
+    expect(createCalls).toHaveLength(2); // nothing new published
+  });
+
+  it('two sequential asks in one process both settle (picker -> confirm)', { timeout: 30000 }, async () => {
+    // M37 regression guard: the EOF-abort 'close' listener must not leak into a
+    // second ask() in the same process, and a normal answer must not close the
+    // interface so a buffered next answer is cut off. The real `quire publish`
+    // (no --current) does exactly this: ask('Select session') then
+    // confirm('Publish?'). Both variants must drive a successful publish.
+    //
+    // The 'y' answer is written only after 'Sharing:' appears on stdout (the
+    // first line emitted after the picker resolves and the confirm prompt is
+    // about to be asked). Writing '1\ny\n' as one coalesced chunk is not a
+    // valid scenario: readline's internal buffer consumes the whole chunk for
+    // the first rl.question(), so 'y' is gone before the second ask() exists.
+    // Staging on the prompt is how a real user (or script) answers.
+    for (const label of ['staged', 'prompt-gated'] as const) {
+      const callsBefore = createCalls.length;
+      const child = spawn(process.execPath, ['--import', 'tsx', indexTs, 'publish', '--harness', 'zcode'], {
+        cwd: cliRoot,
+        env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome, QUIRE_SERVER_URL: baseUrl, QUIRE_API_KEY: 'k'.repeat(64) },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      let code: number | null = null;
+      let confirmed = false;
+      child.stdout.on('data', (d) => {
+        stdout += d;
+        if (!confirmed && stdout.includes('Sharing:')) {
+          confirmed = true;
+          child.stdin.write('y\n');
+          child.stdin.end();
+        }
+      });
+      child.stderr.on('data', (d) => (stderr += d));
+      child.stdin.write('1\n');
+      await new Promise<void>((resolve) => {
+        const t = setTimeout(() => child.kill('SIGKILL'), 30000);
+        child.on('close', (c) => {
+          clearTimeout(t);
+          code = c;
+          resolve();
+        });
+      });
+      expect(code, `[${label}] stderr: ${stderr}\nstdout: ${stdout}`).toBe(0);
+      expect(stdout, `[${label}]`).toContain('Recent sessions:');
+      expect(stdout, `[${label}]`).toContain('/chats/');
+      expect(createCalls, `[${label}]`).toHaveLength(callsBefore + 1);
+    }
   });
 });

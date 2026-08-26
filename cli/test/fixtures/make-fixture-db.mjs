@@ -13,7 +13,9 @@ db.exec(`
   create table if not exists part (id text primary key, message_id text, session_id text, data text, sequence integer);
 `);
 db.exec('delete from part; delete from message; delete from session;');
-const now = Date.now();
+// Fixed epoch (2026-08-20T00:00:00Z) so the committed fixture is byte-stable
+// across `pnpm test` runs (M24: Date.now() dirtied the tree every run).
+const now = 1787232000000;
 const insSession = db.prepare('insert into session (id, title, directory, time_created, time_updated, task_type, share_url) values (?,?,?,?,?,?,?)');
 insSession.run('sess_fixture', 'Fixture Session', '/tmp', now - 3600_000, now, 'interactive', null);
 insSession.run('sess_older', 'Older Session', '/tmp', now - 7200_000, now - 1800_000, 'interactive', null);

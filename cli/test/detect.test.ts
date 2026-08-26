@@ -1,7 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
+import { describe, it, expect, afterAll } from 'vitest';
+import { mkdtempSync, writeFileSync, utimesSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+const tempDirs: string[] = [];
+function trackTemp(dir: string): string {
+  tempDirs.push(dir);
+  return dir;
+}
 
 describe('detectHarness', () => {
   it('CLAUDECODE env wins', async () => {
@@ -15,7 +21,7 @@ describe('detectHarness', () => {
   });
 
   it('falls back to the most recently modified store', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'detect-'));
+    const dir = trackTemp(mkdtempSync(join(tmpdir(), 'detect-')));
     const zcode = join(dir, 'zcode.sqlite');
     const cc = join(dir, 'cc.jsonl');
     writeFileSync(zcode, 'x');
@@ -32,8 +38,12 @@ describe('detectHarness', () => {
   });
 
   it('throws when no signal matches', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'detect-empty-'));
+    const dir = trackTemp(mkdtempSync(join(tmpdir(), 'detect-empty-')));
     const { detectHarness } = await import('../src/harness/detect.js');
     expect(() => detectHarness({}, { zcode: join(dir, 'nope'), claudeCode: join(dir, 'nope2') })).toThrow(/--harness/);
   });
+});
+
+afterAll(() => {
+  for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
 });

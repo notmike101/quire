@@ -117,13 +117,12 @@ export function makeClaudeCodeAdapter(projectsDir: string = claudeProjectsDir())
           const content = ev.message?.content;
           if (Array.isArray(content)) {
             const results = content.filter((b) => b.type === 'tool_result');
-            if (results.length > 0) {
-              for (const r of results) {
-                const part = lastAssistant?.parts.find((p) => p.type === 'tool' && p.callID === r.tool_use_id);
-                if (part && part.type === 'tool') part.output = truncateOutput(toolResultText(r));
-              }
-              continue; // tool-result-only turns are not chat messages
+            for (const r of results) {
+              const part = lastAssistant?.parts.find((p) => p.type === 'tool' && p.callID === r.tool_use_id);
+              if (part && part.type === 'tool') part.output = truncateOutput(toolResultText(r));
             }
+            // Keep sibling text blocks even when the turn also carries tool
+            // results (M28) — only a tool-result-only turn is not chat.
             const texts = content
               .filter((b) => b.type === 'text' && typeof b.text === 'string')
               .map((b) => b.text as string);

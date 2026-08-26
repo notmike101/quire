@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeDb, migrateDb, type Db } from '../src/db/client.js';
@@ -12,12 +12,13 @@ const config = { databaseUrl: url, apiKey: 'a'.repeat(64), unlockSecret: 'b'.rep
 
 let db: Db;
 let app: ReturnType<typeof createApp>;
+let dist: string;
 
 /** Response.json() is typed Promise<unknown> under @types/node (no DOM lib); cast to a plain object. */
 const json = (r: Response): Promise<Record<string, any>> => r.json() as Promise<Record<string, any>>;
 
 beforeAll(async () => {
-  const dist = mkdtempSync(join(tmpdir(), 'quire-web-'));
+  dist = mkdtempSync(join(tmpdir(), 'quire-web-'));
   mkdirSync(join(dist, 'assets'));
   writeFileSync(join(dist, 'index.html'), '<!doctype html><title>Quire</title>');
   writeFileSync(join(dist, 'assets', 'app.js'), 'console.log(1)');
@@ -38,6 +39,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await (db as unknown as { $client?: { end(): Promise<void> } }).$client?.end();
+  rmSync(dist, { recursive: true, force: true });
 });
 
 describe('security headers', () => {

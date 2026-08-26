@@ -1,13 +1,26 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const dir = dirname(fileURLToPath(import.meta.url));
-const fixtureDb = join(dir, 'fixtures', 'sample-session.sqlite');
+// Regenerate into a temp path (not the committed fixture) so the repo fixture
+// is never dirtied by a test run. The committed sample-session.sqlite is the
+// canonical artifact; the SQLite header's file-change counter makes any
+// in-place rewrite byte-different even with fixed timestamps (M24).
+let tempDir: string;
+let fixtureDb: string;
 
 beforeAll(() => {
-  execFileSync(process.execPath, [join(dir, 'fixtures', 'make-fixture-db.mjs')]);
+  tempDir = mkdtempSync(join(tmpdir(), 'quire-zcode-fixture-'));
+  fixtureDb = join(tempDir, 'sample-session.sqlite');
+  execFileSync(process.execPath, [join(dir, 'fixtures', 'make-fixture-db.mjs'), fixtureDb]);
+});
+
+afterAll(() => {
+  rmSync(tempDir, { recursive: true, force: true });
 });
 
 describe('zcode adapter', () => {

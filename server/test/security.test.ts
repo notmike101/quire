@@ -19,6 +19,8 @@ describe('password (argon2id)', () => {
   it('hashes and verifies the right password', async () => {
     const h = await hashPassword('correct horse battery staple');
     expect(h).toContain('$argon2id$');
+    // Pin the argon2id parameters (M14): a regression to weaker params must fail.
+    expect(h).toMatch(/\$argon2id\$v=19\$m=65536,p=1,t=3\$/);
     await expect(verifyPassword(h, 'correct horse battery staple')).resolves.toBe(true);
     await expect(verifyPassword(h, 'wrong')).resolves.toBe(false);
   });

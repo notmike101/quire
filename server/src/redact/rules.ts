@@ -49,9 +49,9 @@ export const rules: RedactRule[] = [
   },
   {
     category: 'generic-secret',
-    pattern: /\b(api[_-]?key|secret|token|passwd|password)(\s*[:=]\s*)['"]?([A-Za-z0-9+/=_\-]{16,})/gi,
+    pattern: /\b(api[_-]?key|secret|token|passwd|password)(\s*[:=]\s*)(['"]?)([A-Za-z0-9+/=_\-]{16,})\3/gi,
     presets: ['strict', 'normal'],
-    replace: (_m, key, sep) => `${key}${sep}[REDACTED:generic-secret]`,
+    replace: (_m, key, sep, _q, _v) => `${key}${sep}[REDACTED:generic-secret]`,
   },
   {
     category: 'private-ip',

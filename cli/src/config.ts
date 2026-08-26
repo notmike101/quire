@@ -19,8 +19,11 @@ export function loadCliConfig(env: NodeJS.ProcessEnv = process.env): CliConfig {
   }
   const serverUrl = env.QUIRE_SERVER_URL || file.serverUrl;
   const apiKey = env.QUIRE_API_KEY || file.apiKey;
-  if (!serverUrl || !serverUrl.startsWith('http')) {
+  if (!serverUrl) {
     throw new Error('QUIRE_SERVER_URL is not set (env or ~/.quire/config.json)');
+  }
+  if (!serverUrl.startsWith('http')) {
+    throw new Error(`QUIRE_SERVER_URL must start with http:// or https:// (got "${serverUrl}")`);
   }
   if (!apiKey) {
     throw new Error('QUIRE_API_KEY is not set (env or ~/.quire/config.json)');

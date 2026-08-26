@@ -54,4 +54,11 @@ describe('loadCliConfig', () => {
     vi.stubEnv('QUIRE_SERVER_URL', 'https://x.example.com');
     expect(() => loadCliConfig()).toThrow(/QUIRE_API_KEY/);
   });
+
+  it('rejects a non-http server URL with an accurate message', async () => {
+    vi.stubEnv('QUIRE_SERVER_URL', 'ftp://example.com');
+    vi.stubEnv('QUIRE_API_KEY', 'k'.repeat(64));
+    const { loadCliConfig } = await import('../src/config.js');
+    expect(() => loadCliConfig()).toThrow(/must start with http/);
+  });
 });

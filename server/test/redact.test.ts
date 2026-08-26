@@ -59,6 +59,8 @@ describe('prepareContent', () => {
     const out = messages[1]!.parts[1]!.input as { command: string };
     expect(out.command).toContain('postgres://[REDACTED:connection-string]@db.internal:5432/app');
     expect(out.command).toContain('api_key = [REDACTED:generic-secret]');
+    // M10: the quoted generic-secret value must not leave a stray closing quote.
+    expect(out.command).not.toContain('[REDACTED:generic-secret]"');
   });
 
   it('normal: skips private-ip and local-path', () => {

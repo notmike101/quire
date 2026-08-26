@@ -82,8 +82,8 @@ function userText(message: ShareMessage): string {
           <UserMessage v-if="message.role === 'user'" :text="userText(message)" />
           <AssistantMessage v-else :message="message" />
         </template>
-        <div v-if="loadingMore" class="py-4 text-center text-sm text-neutral-400">Loading more…</div>
-        <div v-else-if="messages.length === 0" class="py-16 text-center text-sm text-neutral-400">
+        <div v-if="loadingMore" class="py-4 text-center text-sm text-neutral-400 dark:text-neutral-500">Loading more…</div>
+        <div v-else-if="messages.length === 0" class="py-16 text-center text-sm text-neutral-400 dark:text-neutral-500">
           This session has no shareable messages.
         </div>
         <div ref="sentinel" class="h-1" />

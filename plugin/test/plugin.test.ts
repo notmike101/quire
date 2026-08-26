@@ -14,7 +14,9 @@ describe('plugin manifest', () => {
   });
 
   it('ships a /share command with frontmatter that runs the CLI', () => {
-    const md = readFileSync(join(root, 'commands', 'share.md'), 'utf8');
+    // Normalize CRLF -> LF so the frontmatter assertions are line-ending
+    // agnostic (git autocrlf checks the file out as CRLF on Windows).
+    const md = readFileSync(join(root, 'commands', 'share.md'), 'utf8').replace(/\r\n/g, '\n');
     expect(md.startsWith('---\n')).toBe(true);
     expect(md).toContain('description:');
     expect(md).toContain('quire publish --current $ARGUMENTS');

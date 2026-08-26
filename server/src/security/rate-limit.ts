@@ -28,7 +28,9 @@ export class RateLimiter {
 
   private prune(now: number): void {
     if (this.hits.size < 10_000) return;
-    for (const [k, e] of this.hits) if (e.lockedUntil < now && e.count === 0) this.hits.delete(k);
+    // Drop expired lockouts AND idle sub-threshold counters so an adversary
+    // cycling distinct (token, IP) keys cannot exhaust memory (M12).
+    for (const [k, e] of this.hits) if (e.lockedUntil < now && (e.count === 0 || e.lockedUntil === 0)) this.hits.delete(k);
   }
 }
 
@@ -43,7 +45,12 @@ export class IpWindow {
   allow(ip: string, now: number = Date.now()): boolean {
     const w = this.windows.get(ip);
     if (!w || now - w.start >= this.windowMs) {
-      if (this.windows.size > 10_000) this.windows.clear();
+      // Evict only stale windows instead of clearing everything (M13): a
+      // self-DoS of the limiter under an IP-scan burst would momentarily reset
+      // the 120 req/min limit for every IP.
+      if (this.windows.size > 10_000) {
+        for (const [k, e] of this.windows) if (now - e.start >= this.windowMs) this.windows.delete(k);
+      }
       this.windows.set(ip, { start: now, count: 1 });
       return true;
     }

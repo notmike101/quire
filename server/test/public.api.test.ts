@@ -2,7 +2,6 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { makeDb, migrateDb, type Db } from '../src/db/client.js';
 import { createApp } from '../src/app.js';
 import { shares, shareMessages } from '../src/db/schema.js';
-import { eq } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import { hashPassword } from '../src/security/password.js';
 import { RateLimiter, IpWindow } from '../src/security/rate-limit.js';
