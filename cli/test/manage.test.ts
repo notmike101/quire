@@ -38,9 +38,30 @@ describe('runUpdate (unit)', () => {
     expect(fakeApi.patch).toHaveBeenCalledWith('tok123', expect.objectContaining({ password: 'pw', expiresAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) }));
   });
 
+  it('--password random generates a secret for the PATCH', async () => {
+    const fakeApi = { patch: vi.fn(async () => ({ ok: true })) };
+    const { runUpdate } = await import('../src/commands/update.js');
+    await runUpdate('tok123', { password: 'random' }, fakeApi as never);
+    expect(fakeApi.patch).toHaveBeenCalledWith('tok123', expect.objectContaining({ password: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/) }));
+  });
+
   it('refuses to run with nothing to update', async () => {
     const { runUpdate } = await import('../src/commands/update.js');
     await expect(runUpdate('tok123', {}, {} as never)).rejects.toThrow(/nothing to update/);
+  });
+});
+
+describe('runRevoke (unit)', () => {
+  it('--yes revokes without prompting', async () => {
+    const fakeApi = { revoke: vi.fn(async () => ({ ok: true })) };
+    const { runRevoke } = await import('../src/commands/revoke.js');
+    await runRevoke('tok1234567890', { yes: true }, fakeApi as never);
+    expect(fakeApi.revoke).toHaveBeenCalledWith('tok1234567890');
+  });
+
+  it('refuses to run without a token', async () => {
+    const { runRevoke } = await import('../src/commands/revoke.js');
+    await expect(runRevoke(undefined, { yes: true }, {} as never)).rejects.toThrow(/usage: quire revoke/);
   });
 });
 

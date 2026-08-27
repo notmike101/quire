@@ -13,13 +13,21 @@ describe('plugin manifest', () => {
     expect(manifest.commands).toBe('./commands');
   });
 
-  it('ships a /share command with frontmatter that runs the CLI', () => {
+  it('ships a /share command that publishes non-interactively (always --yes, no prompt relay)', () => {
     // Normalize CRLF -> LF so the frontmatter assertions are line-ending
     // agnostic (git autocrlf checks the file out as CRLF on Windows).
     const md = readFileSync(join(root, 'commands', 'share.md'), 'utf8').replace(/\r\n/g, '\n');
     expect(md.startsWith('---\n')).toBe(true);
     expect(md).toContain('description:');
-    expect(md).toContain('quire publish --current $ARGUMENTS');
+    // The command must drive `quire publish --current` and always pass --yes so
+    // the agent is never blocked on a confirmation prompt.
+    expect(md).toContain('quire publish --current');
+    expect(md).toContain('--yes');
+    // It must NOT instruct the agent to relay a confirm prompt or wait on the user.
+    expect(md).not.toContain('Never skip or assume confirmation');
+    expect(md).not.toContain('relay that prompt');
+    // It must NOT pass the free-text instruction as a positional argument.
+    expect(md).not.toContain('quire publish --current $ARGUMENTS');
   });
 
   it('ships a README', () => {

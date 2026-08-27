@@ -36,8 +36,9 @@ pnpm workspace monorepo:
 | `e2e/`          | Playwright full-stack tests (drives the Docker stack)            |
 
 Data flow: harness session → adapter shapes it → CLI previews the redacted
-result (mandatory) → owner confirms → `POST /api/chats` persists only the
-redacted content → viewer fetches pages by cursor from `/api/public/chats/:token`.
+result (mandatory) → owner confirms (or the agent passes `--yes`) →
+`POST /api/chats` persists only the redacted content → viewer fetches pages by
+cursor from `/api/public/chats/:token`.
 
 Shares live under `/chats/<token>` (viewer) and `/api/public/chats/:token`
 (API). Tokens are 128-bit crypto-random; session ids never appear in URLs.
@@ -74,10 +75,18 @@ pnpm --filter @quire/server dev
 ```bash
 quire setup                # prints the server .env block + a config example
 quire publish --current    # preview redacted session, confirm, publish
+quire publish --current --password random --expires tomorrow --yes
+                           # agent path: random password (printed once),
+                           # expires at next midnight, no confirmation prompt
 quire list                 # list active shares
-quire revoke <token>       # soft-revoke (share becomes a 404)
+quire revoke <token> --yes # soft-revoke (share becomes a 404), no prompt
 quire update <token> --expires 2026-09-01
 ```
+
+`--password random` (or `generate`/`auto`) generates a random secret and prints
+it once. `--expires` accepts an ISO datetime, a duration (`30m`/`24h`/`7d`), or
+a keyword (`tomorrow`, `today`, `week`, `month`, `year`, or `in <duration>`).
+`publish` requires `--current` or a session id (there is no interactive picker).
 
 Environment: `QUIRE_SERVER_URL`, `QUIRE_API_KEY` (override the config file).
 Harness detection: `--harness zcode|claude-code` flag, else `CLAUDECODE` /
@@ -86,7 +95,9 @@ Harness detection: `--harness zcode|claude-code` flag, else `CLAUDECODE` /
 ## Plugin
 
 Claude Code–format plugin; install it in Claude Code or ZCode and use
-`/share` in a session to run the same preview-then-publish flow.
+`/share` in a session. The command infers the password/expiration/preset from
+what you ask and publishes immediately (always `--yes`, no prompt), then reports
+the link — e.g. `/share random password, expire tomorrow`.
 
 ## Deployment (Docker)
 

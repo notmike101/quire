@@ -384,18 +384,25 @@ Config: `~/.quire/config.json` or env — `{ serverUrl, apiKey }`. `serverUrl` i
 owner-configured host (no domain baked in).
 
 Commands:
-- `quire publish [sessionId] [--current] [--harness zcode|claude-code] [--password <pw>] [--expires <dur|ISO>] [--preset strict|normal|none] [--yes]`
+- `quire publish [sessionId] [--current] [--harness zcode|claude-code] [--password <pw|random>] [--expires <dur|ISO|tomorrow|today|week|month|year>] [--preset strict|normal|none] [--yes]`
   1. Resolve the harness (`--harness`, else auto-detect) and the session (see below). Open
      that harness's session store **read-only**.
   2. Load session + messages + parts (ordered by sequence) via the harness adapter.
   3. **Shape:** keep `text`/`tool`/`reasoning`; truncate tool outputs > 20 KB.
   4. `POST /api/chats/preview` → show the redacted transcript + redaction summary.
-  5. **Require confirmation** (interactive prompt, or `--yes` to skip). Never upload silently.
+  5. **Require confirmation** (interactive prompt, or `--yes` to skip). The `/share` plugin
+     always passes `--yes`, so an agent never blocks on a prompt; a human running the CLI
+     directly still gets the gate.
   6. `POST /api/chats` → print `https://<your-host>/chats/<token>` + summary.
 - `quire list` — table: token (short), title, created, expires, has-password, revoked.
-- `quire revoke <token>` — confirm, then `DELETE`.
-- `quire update <token> [--password <pw>] [--expires <dur|ISO>]` — `PATCH`.
+- `quire revoke <token> [--yes]` — confirm (or `--yes` to skip), then `DELETE`.
+- `quire update <token> [--password <pw|random>] [--expires <dur|ISO|tomorrow|…>]` — `PATCH`.
 - `quire setup` — generate + print `QUIRE_API_KEY` and `UNLOCK_SECRET` to paste into `.env`.
+
+`--password random` (or `generate`/`auto`) generates a random secret (16 random bytes,
+base64url) and prints it once; the server hashes it and never returns it. `--expires`
+accepts an ISO datetime, a duration (`30m`/`24h`/`7d`), or a keyword (`tomorrow`, `today`,
+`week`, `month`, `year`, or `in <duration>`).
 
 **Harness adapters** (`cli/src/harness/`): each adapter implements a small contract —
 `listSessions()`, `resolveCurrent()`, and `loadSession(id) -> ShapedSession` — and normalizes
@@ -411,12 +418,12 @@ plugin work in both Claude Code and ZCode.
 **Session resolution:**
 - Explicit id (full or unique prefix) → use it.
 - `--current` (used by the plugin) → resolve the current session. Primary mechanism: the most
-  recently updated session by `time_updated`; **always print the resolved title + id and require
-  confirmation** so a wrong session is caught. (Exact detection — most-recent vs a harness
-  "current session" pointer — is an implementation detail to verify per-harness in the plan;
-  the confirm-gate makes either safe.)
-- No arg, interactive → numbered list of recent sessions to pick from.
-- Subagent sessions are excluded from the default list but can be published by explicit id.
+  recently updated session by `time_updated`; **always print the resolved title + id** so a
+  wrong session is caught. (Exact detection — most-recent vs a harness "current session"
+  pointer — is an implementation detail to verify per-harness in the plan.)
+- No `--current` and no id → **error** (`no session selected — pass --current or a session
+  id`). There is no interactive numbered picker, so an agent is never blocked on a prompt.
+- Subagent sessions can be published by explicit id.
 
 The CLI **never prints secrets** and exits non-zero on failure. On a locked DB it retries once,
 then gives a clear message.
@@ -437,13 +444,17 @@ plugin/
 `commands/share.md` (illustrative):
 ```markdown
 ---
-description: Share the current session as a password-protected, expiring web link via Quire
-argument-hint: "[--password <pw>] [--expires <dur|ISO>] [--preset strict|normal|none]"
+description: Share the current session as a web link via Quire — infer options and publish without prompting
+argument-hint: "[what to set, e.g. 'random password, expire tomorrow']"
 ---
-Share the current session using the Quire CLI.
-1. Run: `quire publish --current $ARGUMENTS`
-2. Show the redaction preview and summary to the user.
-3. After the user confirms, report the resulting share URL.
+Share the current session using the Quire CLI. Drive it end-to-end — do not ask the user to
+confirm or answer a prompt.
+1. Infer flags from the request: "random password" → `--password random`; "expire
+   tomorrow/in N hours" → `--expires …`; "strict/normal/none" → `--preset …`. Always append
+   `--yes`. Never pass the free text as a positional argument.
+2. Run: `quire publish --current <inferred flags> --yes`
+3. Report the share URL, the generated password (if any), the expiration, and the redaction
+   summary. Do not ask for confirmation — the share is already live.
 ```
 
 - Works in **Claude Code** and **ZCode** now (both support markdown slash commands + a shell

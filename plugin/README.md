@@ -28,5 +28,12 @@ frontmatter in this repo are verified against it.
 
 ## Usage
 
-`/share` — share the current session (preview → confirm → URL).
-`/share --password s3cret --expires 24h` — password-protected, expires in a day.
+`/share` — share the current session. The command infers the options from what you ask and publishes immediately (no confirmation prompt), then reports the link.
+
+Examples:
+- `/share` — plain share of the current session.
+- `/share generate a random password, set it to expire tomorrow` — password-protected (a random password is generated and shown to you), expires at the next midnight.
+- `/share no password, expire in 1 hour` — open link, expires in an hour.
+- `/share password is s3cret, expire in 24h` — uses your literal password, expires in a day.
+
+The command always runs `quire publish --current … --yes`, so it never blocks on a prompt. It maps your words to flags: "random password" → `--password random`, "expire tomorrow/today/in N hours/a week" → `--expires …`, "strict/normal/none redaction" → `--preset …`.

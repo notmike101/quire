@@ -1,9 +1,22 @@
+import { randomBytes } from 'node:crypto';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedMessage } from '../harness/types.js';
 import { detectHarness, makeAdapter, type HarnessName } from '../harness/detect.js';
 import { QuireApi, QuireApiError, type PreviewResponse } from '../api.js';
 import { chunkMessages } from '../chunk.js';
-import { ask, confirm } from '../prompt.js';
+import { confirm } from '../prompt.js';
 import { parseExpiry } from '../expires.js';
+
+// --password values that mean "generate one for me" rather than a literal secret.
+const RANDOM_PASSWORD_WORDS = new Set(['random', 'generate', 'auto']);
+
+/** Returns a generated password when `value` is a "random" keyword, else the literal value. */
+export function resolvePassword(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (RANDOM_PASSWORD_WORDS.has(value.trim().toLowerCase())) {
+    return randomBytes(16).toString('base64url');
+  }
+  return value;
+}
 
 export interface PublishValues {
   current?: boolean;
@@ -42,7 +55,7 @@ function printPreview(messages: ShapedMessage[], summary: Record<string, number>
   out(`\nRedactions: ${counts.length === 0 ? 'none' : counts.map(([k, v]) => `${v} ${k}`).join(', ')}`);
 }
 
-async function resolveSession(adapter: HarnessAdapter, values: PublishValues, positionals: string[], out: (l: string) => void): Promise<HarnessSessionInfo> {
+async function resolveSession(adapter: HarnessAdapter, values: PublishValues, positionals: string[]): Promise<HarnessSessionInfo> {
   if (values.current) return adapter.resolveCurrent();
   const id = positionals[0];
   if (id) {
@@ -60,15 +73,9 @@ async function resolveSession(adapter: HarnessAdapter, values: PublishValues, po
       throw new Error(`session not found: ${id}`);
     }
   }
-  const sessions = await adapter.listSessions();
-  if (sessions.length === 0) throw new Error('no sessions found');
-  out('Recent sessions:');
-  sessions.forEach((s, i) => out(`  ${i + 1}. ${s.title}  (${s.id})`));
-  const answer = await ask(`Select session [1-${sessions.length}]: `);
-  const n = Number(answer);
-  const chosen = Number.isInteger(n) && n >= 1 && n <= sessions.length ? sessions[n - 1] : undefined;
-  if (!chosen) throw new Error(`invalid selection: ${answer}`);
-  return chosen;
+  // No --current and no id: there is no interactive picker (an agent must not be
+  // blocked on a numbered prompt). Fail with an actionable message instead.
+  throw new Error('no session selected — pass --current (this session) or a session id');
 }
 
 export async function runPublish(values: PublishValues, positionals: string[], deps: PublishDeps = {}): Promise<void> {
@@ -80,13 +87,20 @@ export async function runPublish(values: PublishValues, positionals: string[], d
   const api = deps.api ?? new QuireApi();
   const chunker = deps.chunker ?? chunkMessages;
 
-  const session = await resolveSession(adapter, values, positionals, out);
+  const session = await resolveSession(adapter, values, positionals);
   const shaped = await adapter.loadSession(session.id);
   out(`Sharing: ${shaped.title} (${shaped.sessionId}) — ${shaped.messages.length} messages`);
 
   const preset = values.preset ?? 'strict';
   if (!PRESETS.includes(preset)) throw new Error(`unknown --preset "${preset}" (use ${PRESETS.join(', ')})`);
   const expiresAt = values.expires ? parseExpiry(values.expires) : undefined;
+
+  // Resolve --password: a "random"/"generate"/"auto" keyword becomes a fresh
+  // random secret; anything else is used literally. The generated value is
+  // printed once here — the server hashes it and never returns it.
+  const isRandomPassword = values.password !== undefined && RANDOM_PASSWORD_WORDS.has(values.password.trim().toLowerCase());
+  const password = resolvePassword(values.password);
+  if (isRandomPassword) out(`Password: ${password}`);
 
   const preview: PreviewResponse = await api.preview(shaped, preset);
   printPreview(preview.messages as ShapedMessage[], preview.summary, preset, out);
@@ -98,7 +112,7 @@ export async function runPublish(values: PublishValues, positionals: string[], d
   }
 
   const payloadBytes = Buffer.byteLength(JSON.stringify(shaped));
-  const opts = { preset, password: values.password, expiresAt };
+  const opts = { preset, password, expiresAt };
 
   if (values.noChunk === true) {
     // Single upload regardless of size; over the cap -> 413 with a clear hint.

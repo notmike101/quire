@@ -29,7 +29,7 @@ const fakeAdapter = {
 const fakeApi = {
   baseUrl: 'https://srv.example.com',
   preview: vi.fn(async () => ({ messages: [], summary: { 'aws-access-key': 1 }, bytes: 10, messageCount: 1 })),
-  create: vi.fn(async () => ({ token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, summary: { 'aws-access-key': 1 }, bytes: 10, messageCount: 1 })),
+  create: vi.fn(async (_session: unknown, _opts?: { preset?: string; password?: string; expiresAt?: string }) => ({ token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, summary: { 'aws-access-key': 1 }, bytes: 10, messageCount: 1 })),
 };
 
 describe('runPublish (unit)', () => {
@@ -78,6 +78,42 @@ describe('runPublish (unit)', () => {
     await runPublish({ yes: true, preset: 'none' }, ['sess_a'], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} });
     expect(fakeApi.preview).toHaveBeenCalledWith(expect.anything(), 'none');
     expect(fakeApi.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ preset: 'none' }));
+  });
+
+  it('--password random generates a secret, prints it once, and sends it to create', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    const lines: string[] = [];
+    await runPublish({ current: true, yes: true, password: 'random' }, [], { adapter: fakeAdapter as never, api: fakeApi as never, out: (l) => lines.push(l) });
+    const opts = fakeApi.create.mock.lastCall?.[1] as { password?: string };
+    expect(opts.password).toMatch(/^[A-Za-z0-9_-]{22}$/); // base64url of 16 bytes
+    const printed = lines.filter((l) => l.startsWith('Password: '));
+    expect(printed).toHaveLength(1);
+    expect(printed[0]).toBe(`Password: ${opts.password}`);
+  });
+
+  it('--password with a literal value is sent as-is and not printed', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    const lines: string[] = [];
+    await runPublish({ current: true, yes: true, password: 'hunter2' }, [], { adapter: fakeAdapter as never, api: fakeApi as never, out: (l) => lines.push(l) });
+    const opts = fakeApi.create.mock.lastCall?.[1] as { password?: string };
+    expect(opts.password).toBe('hunter2');
+    expect(lines.some((l) => l.startsWith('Password: '))).toBe(false);
+  });
+
+  it('no --current and no id: errors with an actionable message and publishes nothing', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    const before = fakeApi.create.mock.calls.length;
+    await expect(
+      runPublish({ yes: true }, [], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} }),
+    ).rejects.toThrow(/no session selected/);
+    expect(fakeApi.create.mock.calls.length).toBe(before); // nothing new published
+  });
+
+  it('--expires tomorrow sends an ISO expiresAt to create', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    await runPublish({ current: true, yes: true, expires: 'tomorrow' }, [], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} });
+    const opts = fakeApi.create.mock.lastCall?.[1] as { expiresAt?: string };
+    expect(opts.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/); // ISO datetime
   });
 
   it('chunks a large session: 1 create + N-1 createChunk in order', async () => {
@@ -162,6 +198,9 @@ describe('runPublish (process)', () => {
           createCalls.push(JSON.parse(body));
           res.writeHead(201, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, summary: {}, bytes: 10, messageCount: 2 }));
+        } else if (req.method === 'DELETE' && req.url?.startsWith('/api/chats/')) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
         } else {
           res.writeHead(404, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ error: { code: 'not_found', message: 'nope' } }));
@@ -215,43 +254,40 @@ describe('runPublish (process)', () => {
     expect(body.session.title).toBe('Fixture Session');
   });
 
-  it('interactive numbered list selects by number', { timeout: 30000 }, async () => {
-    // D3: stage stdin. A single '1\ny\n' write coalesces into one pipe chunk consumed whole by
-    // the first readline interface ('1' resolves the selection, 'y' is discarded), leaving the
-    // confirm ask unsettled. 'y' is written only after 'Sharing:' — the first stdout line
-    // emitted after the first readline closed — then stdin is ended.
-    const child = spawn(process.execPath, ['--import', 'tsx', indexTs, 'publish', '--harness', 'zcode'], {
-      cwd: cliRoot,
-      env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome, QUIRE_SERVER_URL: baseUrl, QUIRE_API_KEY: 'k'.repeat(64) },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    let confirmed = false;
-    let code: number | null = null;
-    child.stdout.on('data', (d) => {
-      stdout += d;
-      if (!confirmed && stdout.includes('Sharing:')) {
-        confirmed = true;
-        child.stdin.write('y\n');
-        child.stdin.end();
-      }
-    });
-    child.stderr.on('data', (d) => (stderr += d));
-    child.stdin.write('1\n');
-    await new Promise<void>((resolve) => {
-      const t = setTimeout(() => child.kill('SIGKILL'), 30000);
-      child.on('close', (c) => {
-        clearTimeout(t);
-        code = c;
-        resolve();
-      });
-    });
+  it('--yes publishes with no prompt (the agent path)', { timeout: 30000 }, async () => {
+    // The agent always passes --yes, so the CLI must publish without reading stdin.
+    // stdin is ended immediately (no input) to prove nothing is awaited.
+    const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode', '--yes'], '');
     expect(code, `stderr: ${stderr}`).toBe(0);
-    expect(stdout).toContain('Recent sessions:');
+    expect(stdout).toContain('/chats/');
     expect(createCalls).toHaveLength(2);
     const body = createCalls[1] as { session: { sessionId: string } };
-    expect(body.session.sessionId).toBe('sess_fixture'); // session 1 in the list
+    expect(body.session.sessionId).toBe('sess_fixture');
+  });
+
+  it('--password random + --expires tomorrow + --yes: non-interactive, prints Password and sends both', { timeout: 30000 }, async () => {
+    const { code, stdout, stderr } = await runCli(
+      ['publish', '--current', '--harness', 'zcode', '--password', 'random', '--expires', 'tomorrow', '--yes'],
+      '',
+    );
+    expect(code, `stderr: ${stderr}`).toBe(0);
+    expect(stdout).toContain('/chats/');
+    expect(stdout).toMatch(/Password: [A-Za-z0-9_-]{22}/);
+    expect(createCalls).toHaveLength(3);
+    const body = createCalls[2] as { password?: string; expiresAt?: string };
+    expect(body.password).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    // "tomorrow" = next local midnight, which is a valid ISO datetime (not necessarily 00:00Z).
+    expect(body.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(new Date(body.expiresAt!).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('no --current and no id: errors with an actionable message and publishes nothing', { timeout: 30000 }, async () => {
+    // There is no interactive picker anymore — a bare `quire publish` must fail
+    // fast rather than block on a numbered prompt.
+    const { code, stdout, stderr } = await runCli(['publish', '--harness', 'zcode'], '');
+    expect(code).not.toBe(0);
+    expect(`${stdout}${stderr}`).toContain('no session selected');
+    expect(createCalls).toHaveLength(3); // nothing new published
   });
 
   it('EOF at the prompt aborts with a non-zero exit and a clear message', { timeout: 30000 }, async () => {
@@ -280,55 +316,14 @@ describe('runPublish (process)', () => {
     });
     expect(code).not.toBe(0);
     expect(`${stdout}${stderr}`).toContain('Aborted. Nothing was published.');
-    expect(createCalls).toHaveLength(2); // nothing new published
+    expect(createCalls).toHaveLength(3); // nothing new published
   });
 
-  it('two sequential asks in one process both settle (picker -> confirm)', { timeout: 30000 }, async () => {
-    // M37 regression guard: the EOF-abort 'close' listener must not leak into a
-    // second ask() in the same process, and a normal answer must not close the
-    // interface so a buffered next answer is cut off. The real `quire publish`
-    // (no --current) does exactly this: ask('Select session') then
-    // confirm('Publish?'). Both variants must drive a successful publish.
-    //
-    // The 'y' answer is written only after 'Sharing:' appears on stdout (the
-    // first line emitted after the picker resolves and the confirm prompt is
-    // about to be asked). Writing '1\ny\n' as one coalesced chunk is not a
-    // valid scenario: readline's internal buffer consumes the whole chunk for
-    // the first rl.question(), so 'y' is gone before the second ask() exists.
-    // Staging on the prompt is how a real user (or script) answers.
-    for (const label of ['staged', 'prompt-gated'] as const) {
-      const callsBefore = createCalls.length;
-      const child = spawn(process.execPath, ['--import', 'tsx', indexTs, 'publish', '--harness', 'zcode'], {
-        cwd: cliRoot,
-        env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome, QUIRE_SERVER_URL: baseUrl, QUIRE_API_KEY: 'k'.repeat(64) },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      let stdout = '';
-      let stderr = '';
-      let code: number | null = null;
-      let confirmed = false;
-      child.stdout.on('data', (d) => {
-        stdout += d;
-        if (!confirmed && stdout.includes('Sharing:')) {
-          confirmed = true;
-          child.stdin.write('y\n');
-          child.stdin.end();
-        }
-      });
-      child.stderr.on('data', (d) => (stderr += d));
-      child.stdin.write('1\n');
-      await new Promise<void>((resolve) => {
-        const t = setTimeout(() => child.kill('SIGKILL'), 30000);
-        child.on('close', (c) => {
-          clearTimeout(t);
-          code = c;
-          resolve();
-        });
-      });
-      expect(code, `[${label}] stderr: ${stderr}\nstdout: ${stdout}`).toBe(0);
-      expect(stdout, `[${label}]`).toContain('Recent sessions:');
-      expect(stdout, `[${label}]`).toContain('/chats/');
-      expect(createCalls, `[${label}]`).toHaveLength(callsBefore + 1);
-    }
+  it('revoke --yes revokes with no prompt (agent path)', { timeout: 30000 }, async () => {
+    // `quire revoke <token> --yes` must skip the confirm prompt and call DELETE
+    // without reading stdin. The mock server answers DELETE /api/chats/:token.
+    const { code, stdout, stderr } = await runCli(['revoke', 't'.repeat(22), '--yes'], '');
+    expect(code, `stderr: ${stderr}`).toBe(0);
+    expect(stdout).toContain('Revoked');
   });
 });
