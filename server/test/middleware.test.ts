@@ -51,6 +51,12 @@ describe('security headers', () => {
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('strict-transport-security')).toContain('max-age=31536000');
   });
+  it('sends X-Robots-Tag: noindex, nofollow on every response', async () => {
+    for (const path of ['/healthz', '/chats/sometoken', '/api/public/chats/doesnotexist', '/robots.txt']) {
+      const res = await app.request(path);
+      expect(res.headers.get('x-robots-tag'), `x-robots-tag on ${path}`).toBe('noindex, nofollow');
+    }
+  });
 });
 
 describe('body limit', () => {
@@ -75,6 +81,14 @@ describe('static SPA', () => {
     const res = await app.request('/assets/app.js');
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('console.log(1)');
+  });
+  it('serves a robots.txt that disallows all crawling', async () => {
+    const res = await app.request('/robots.txt');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/plain');
+    const body = await res.text();
+    expect(body).toContain('User-agent: *');
+    expect(body).toContain('Disallow: /');
   });
 });
 

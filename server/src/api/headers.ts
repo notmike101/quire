@@ -11,6 +11,11 @@ export function securityHeaders(): MiddlewareHandler {
     c.header('Referrer-Policy', 'no-referrer');
     c.header('X-Content-Type-Options', 'nosniff');
     c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    // Shared sessions are opt-in, password-gated, expiring transcripts — they must
+    // never be crawled or indexed. The header is the authoritative signal (it is
+    // honored even when a robots.txt is unreachable, e.g. on the SPA's client-routed
+    // URLs); it is reinforced by a robots.txt and a <meta robots> tag in the SPA.
+    c.header('X-Robots-Tag', 'noindex, nofollow');
   };
 }
 
