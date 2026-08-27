@@ -45,4 +45,13 @@ describe('QuireApi', () => {
     expect('password' in body).toBe(false);
     expect('expiresAt' in body).toBe(false);
   });
+
+  it('posts a chunk append to /api/chats/:token/chunks', async () => {
+    const fn = mockFetch(200, { ok: true, messageCount: 3, bytes: 42 });
+    await new QuireApi(config).createChunk('tok123', { uploadId: 'a'.repeat(32), chunkSeq: 1, messages: [] });
+    const [url, init] = fn.mock.calls[0]!;
+    expect(url).toBe('https://srv.example.com/api/chats/tok123/chunks');
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body).toEqual({ uploadId: 'a'.repeat(32), chunkSeq: 1, messages: [] });
+  });
 });

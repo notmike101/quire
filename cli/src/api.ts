@@ -20,6 +20,8 @@ export interface PreviewResponse {
 export interface CreateResponse {
   token: string;
   url: string;
+  uploadId: string;
+  chunkCount: number;
   summary: Record<string, number>;
   bytes: number;
   messageCount: number;
@@ -77,6 +79,13 @@ export class QuireApi {
     opts: { preset?: string; password?: string; expiresAt?: string } = {},
   ): Promise<CreateResponse> {
     return this.request('POST', '/api/chats', { session, ...opts });
+  }
+
+  createChunk(
+    token: string,
+    body: { uploadId: string; chunkSeq: number; messages: unknown[] },
+  ): Promise<{ ok: boolean; messageCount: number; bytes: number }> {
+    return this.request('POST', `/api/chats/${token}/chunks`, body);
   }
 
   list(): Promise<{ shares: ShareMeta[] }> {
