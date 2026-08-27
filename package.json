@@ -3,6 +3,11 @@
   "private": true,
   "packageManager": "pnpm@9.15.0",
   "engines": { "node": ">=22" },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "0.28.2"
+    }
+  },
   "scripts": {
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
