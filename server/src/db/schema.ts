@@ -3,6 +3,7 @@ import { pgTable, uuid, text, timestamp, integer, jsonb, primaryKey } from 'driz
 export const shares = pgTable('shares', {
   id: uuid('id').primaryKey().defaultRandom(),
   token: text('token').notNull().unique(),
+  uploadId: text('upload_id').notNull().unique(),
   sessionId: text('session_id').notNull(),
   title: text('title').notNull(),
   model: text('model'),
@@ -21,10 +22,11 @@ export const shareMessages = pgTable(
   'share_messages',
   {
     shareId: uuid('share_id').notNull().references(() => shares.id, { onDelete: 'cascade' }),
+    chunkSeq: integer('chunk_seq').notNull().default(0),
     seq: integer('seq').notNull(),
     role: text('role').notNull(),
     time: timestamp('time', { withTimezone: true }),
     parts: jsonb('parts').notNull(),
   },
-  (t) => [primaryKey({ columns: [t.shareId, t.seq] })],
+  (t) => [primaryKey({ columns: [t.shareId, t.chunkSeq, t.seq] })],
 );

@@ -42,4 +42,18 @@ describe('schema + migrations', () => {
     const left = await db.execute(sql`select count(*)::int as n from share_messages where share_id = ${id}`);
     expect((left[0] as { n: number }).n).toBe(0);
   });
+
+  it('shares has upload_id and share_messages has chunk_seq', async () => {
+    const db = makeDb(url);
+    const shareCols = await db.execute(sql`
+      select column_name from information_schema.columns
+      where table_name = 'shares' and column_name = 'upload_id'
+    `);
+    expect(shareCols.length).toBe(1);
+    const msgCols = await db.execute(sql`
+      select column_name from information_schema.columns
+      where table_name = 'share_messages' and column_name = 'chunk_seq'
+    `);
+    expect(msgCols.length).toBe(1);
+  });
 });
