@@ -57,5 +57,15 @@ export const createBodySchema = z
   })
   .strict();
 
+export const chunkBodySchema = z
+  .object({
+    uploadId: z.string().min(1).max(64),
+    chunkSeq: z.number().int().nonnegative(),
+    messages: z.array(messageSchema),
+  })
+  .strict();
+
+export type ChunkBody = z.infer<typeof chunkBodySchema>;
+
 export type PreviewBody = z.infer<typeof previewBodySchema>;
 export type CreateBody = z.infer<typeof createBodySchema>;

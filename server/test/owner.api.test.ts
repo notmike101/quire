@@ -162,3 +162,75 @@ describe('list / get / patch / delete', () => {
     expect(pub.status).toBe(404);
   });
 });
+
+describe('chunked upload', () => {
+  it('create returns uploadId + chunkCount: 1', async () => {
+    const res = await app.request('/api/chats', {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ session, preset: 'strict' }),
+    });
+    expect(res.status).toBe(201);
+    const body = await json(res);
+    expect(body.uploadId).toMatch(/^[0-9a-f]{32}$/);
+    expect(body.chunkCount).toBe(1);
+    await db.execute(sql`delete from shares where token = ${body.token}`);
+  });
+
+  it('appends a second chunk: messageCount/bytes accumulate, chunk_seq=1, redactions merge', async () => {
+    // self-contained: create a fresh share, then append chunk 1 to it
+    const createRes = await app.request('/api/chats', {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ session, preset: 'strict' }),
+    });
+    const created = await json(createRes);
+    const tok = created.token as string;
+    const uploadId = created.uploadId as string;
+
+    const chunk2 = {
+      uploadId,
+      chunkSeq: 1,
+      messages: [
+        { role: 'user', parts: [{ type: 'text', text: 'second chunk AKIAABCDEFGHIJKLMNOP' }] },
+      ],
+    };
+    const res = await app.request(`/api/chats/${tok}/chunks`, {
+      method: 'POST', headers: auth, body: JSON.stringify(chunk2),
+    });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.ok).toBe(true);
+    expect(body.messageCount).toBe(3); // 2 from create + 1 from chunk
+    const share = (await db.select().from(shares).where(eq(shares.token, tok)))[0]!;
+    const msgs = await db.select().from(shareMessages).where(eq(shareMessages.shareId, share.id));
+    const inChunk1 = msgs.filter((m) => m.chunkSeq === 1);
+    expect(inChunk1).toHaveLength(1);
+    expect(JSON.stringify(msgs)).toContain('[REDACTED:aws-access-key]');
+    expect(JSON.stringify(msgs)).not.toContain('AKIAABCDEFGHIJKLMNOP');
+    expect((share.redactions as Record<string, number>)['aws-access-key']).toBeGreaterThanOrEqual(1);
+    await db.execute(sql`delete from shares where token = ${tok}`);
+  });
+
+  it('rejects an append with a wrong uploadId (400)', async () => {
+    const createRes = await app.request('/api/chats', {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ session, preset: 'strict' }),
+    });
+    const created = await json(createRes);
+    const tok = created.token as string;
+    const res = await app.request(`/api/chats/${tok}/chunks`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ uploadId: 'f'.repeat(32), chunkSeq: 1, messages: [] }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error.code).toBe('upload_id_mismatch');
+    await db.execute(sql`delete from shares where token = ${tok}`);
+  });
+
+  it('404 for an append to an unknown token', async () => {
+    const res = await app.request('/api/chats/neverexisted/chunks', {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ uploadId: 'a'.repeat(32), chunkSeq: 1, messages: [] }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
