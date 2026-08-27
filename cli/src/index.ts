@@ -6,7 +6,8 @@ const USAGE = `quire — share AI coding sessions as expiring, password-protecte
 
 Usage:
   quire publish [sessionId] [--current] [--harness zcode|claude-code]
-                [--password <pw>] [--expires <dur|ISO>] [--preset strict|normal|none] [--yes]
+                [--password <pw>] [--expires <dur|ISO>] [--preset strict|normal|none]
+                [--no-chunk] [--yes]
   quire list
   quire revoke <token>
   quire update <token> [--password <pw>] [--expires <dur|ISO>]
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
           expires: { type: 'string' },
           preset: { type: 'string' },
           yes: { type: 'boolean', default: false },
+          noChunk: { type: 'boolean', default: false },
         },
       });
       if (command === 'publish') await runPublish(values, positionals);

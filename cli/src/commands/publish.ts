@@ -1,6 +1,7 @@
 import type { HarnessAdapter, HarnessSessionInfo, ShapedMessage } from '../harness/types.js';
 import { detectHarness, makeAdapter, type HarnessName } from '../harness/detect.js';
-import { QuireApi, type CreateResponse, type PreviewResponse } from '../api.js';
+import { QuireApi, QuireApiError, type PreviewResponse } from '../api.js';
+import { chunkMessages } from '../chunk.js';
 import { ask, confirm } from '../prompt.js';
 import { parseExpiry } from '../expires.js';
 
@@ -11,12 +12,14 @@ export interface PublishValues {
   expires?: string;
   preset?: string;
   yes?: boolean;
+  noChunk?: boolean;
 }
 
 export interface PublishDeps {
   adapter?: HarnessAdapter;
   api?: QuireApi;
   out?: (line: string) => void;
+  chunker?: (messages: ShapedMessage[]) => ShapedMessage[][];
 }
 
 const PRESETS = ['strict', 'normal', 'none'];
@@ -75,6 +78,7 @@ export async function runPublish(values: PublishValues, positionals: string[], d
   }
   const adapter = deps.adapter ?? makeAdapter((values.harness as HarnessName | undefined) ?? detectHarness());
   const api = deps.api ?? new QuireApi();
+  const chunker = deps.chunker ?? chunkMessages;
 
   const session = await resolveSession(adapter, values, positionals, out);
   const shaped = await adapter.loadSession(session.id);
@@ -92,8 +96,54 @@ export async function runPublish(values: PublishValues, positionals: string[], d
     out('Aborted. Nothing was published.');
     return;
   }
-  const created: CreateResponse = await api.create(shaped, { preset, password: values.password, expiresAt });
+
+  const payloadBytes = Buffer.byteLength(JSON.stringify(shaped));
+  const opts = { preset, password: values.password, expiresAt };
+
+  if (values.noChunk === true) {
+    // Single upload regardless of size; over the cap -> 413 with a clear hint.
+    let created;
+    try {
+      created = await api.create(shaped, opts);
+    } catch (err) {
+      if (err instanceof QuireApiError && err.status === 413) {
+        throw new Error(
+          `session is ${(payloadBytes / 1024 / 1024).toFixed(1)} MB, over the 20 MB per-request cap; re-run without --no-chunk to chunk`,
+        );
+      }
+      throw err;
+    }
+    const counts = Object.entries(created.summary);
+    out(`\nPublished: ${api.baseUrl}${created.url}`);
+    out(`Messages: ${created.messageCount} · Stored: ${created.bytes} bytes · Redactions: ${counts.length === 0 ? 'none' : counts.map(([k, v]) => `${v} ${k}`).join(', ')}`);
+    return;
+  }
+
+  // Ask the chunker how many groups the session packs into. With the default
+  // chunkMessages (19 MB cap) this is 1 unless the session exceeds the cap, so
+  // the common path is unchanged; an injected chunker can force the chunked
+  // path in tests without a 19 MB fixture.
+  const chunks = chunker(shaped.messages);
+  if (chunks.length <= 1) {
+    // Common path: one request, unchanged behavior.
+    const created = await api.create(shaped, opts);
+    const counts = Object.entries(created.summary);
+    out(`\nPublished: ${api.baseUrl}${created.url}`);
+    out(`Messages: ${created.messageCount} · Stored: ${created.bytes} bytes · Redactions: ${counts.length === 0 ? 'none' : counts.map(([k, v]) => `${v} ${k}`).join(', ')}`);
+    return;
+  }
+
+  // Chunked path: split into <=19 MB groups, create the share with chunk 0,
+  // then append the rest in order.
+  out(`Session is ${(payloadBytes / 1024 / 1024).toFixed(1)} MB — uploading in ${chunks.length} chunks…`);
+  const head = { ...shaped, messages: chunks[0]! };
+  const created = await api.create(head, opts);
+  for (let i = 1; i < chunks.length; i++) {
+    const chunkBytes = Buffer.byteLength(JSON.stringify(chunks[i]));
+    out(`Uploading chunk ${i + 1}/${chunks.length} (${(chunkBytes / 1024 / 1024).toFixed(1)} MB)…`);
+    await api.createChunk(created.token, { uploadId: created.uploadId, chunkSeq: i, messages: chunks[i]! });
+  }
   const counts = Object.entries(created.summary);
   out(`\nPublished: ${api.baseUrl}${created.url}`);
-  out(`Messages: ${created.messageCount} · Stored: ${created.bytes} bytes · Redactions: ${counts.length === 0 ? 'none' : counts.map(([k, v]) => `${v} ${k}`).join(', ')}`);
+  out(`Messages: ${shaped.messages.length} · Redactions: ${counts.length === 0 ? 'none' : counts.map(([k, v]) => `${v} ${k}`).join(', ')}`);
 }

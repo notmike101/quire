@@ -79,6 +79,61 @@ describe('runPublish (unit)', () => {
     expect(fakeApi.preview).toHaveBeenCalledWith(expect.anything(), 'none');
     expect(fakeApi.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ preset: 'none' }));
   });
+
+  it('chunks a large session: 1 create + N-1 createChunk in order', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    // A session whose serialized size exceeds the (small) injected cap.
+    const bigAdapter = {
+      name: 'zcode',
+      listSessions: vi.fn(async () => [{ id: 'sess_big', title: 'Big', updatedAt: '', isSubagent: false }]),
+      resolveCurrent: vi.fn(async () => ({ id: 'sess_big', title: 'Big', updatedAt: '', isSubagent: false })),
+      loadSession: vi.fn(async (id: string) => ({
+        sessionId: id, title: 'Big',
+        messages: Array.from({ length: 6 }, (_, i) => ({ role: 'user' as const, parts: [{ type: 'text' as const, text: 'x'.repeat(200) }] })),
+      })),
+    };
+    const calls: string[] = [];
+    const chunkyApi = {
+      baseUrl: 'https://srv.example.com',
+      preview: vi.fn(async () => ({ messages: [], summary: {}, bytes: 0, messageCount: 6 })),
+      create: vi.fn(async () => {
+        calls.push('create');
+        return { token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, uploadId: 'a'.repeat(32), chunkCount: 1, summary: {}, bytes: 0, messageCount: 2 };
+      }),
+      createChunk: vi.fn(async (_tok: string, body: { chunkSeq: number }) => {
+        calls.push(`chunk${body.chunkSeq}`);
+        return { ok: true, messageCount: 4, bytes: 0 };
+      }),
+    };
+    // Inject a chunker that forces 3 chunks of 2 (ESM named exports are read-only,
+    // so the chunker is a dep, not a spy on the imported chunkMessages).
+    const chunker = vi.fn((msgs: unknown[]) => {
+      const arr = msgs as unknown[];
+      return [arr.slice(0, 2), arr.slice(2, 4), arr.slice(4, 6)];
+    });
+    await runPublish({ current: true, yes: true }, [], { adapter: bigAdapter as never, api: chunkyApi as never, chunker: chunker as never, out: () => {} });
+    expect(chunker).toHaveBeenCalledOnce();
+    expect(calls).toEqual(['create', 'chunk1', 'chunk2']);
+  });
+
+  it('--no-chunk sends a single create and no createChunk', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    const calls: string[] = [];
+    const noChunkApi = {
+      baseUrl: 'https://srv.example.com',
+      preview: vi.fn(async () => ({ messages: [], summary: {}, bytes: 0, messageCount: 6 })),
+      create: vi.fn(async () => {
+        calls.push('create');
+        return { token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, uploadId: 'a'.repeat(32), chunkCount: 1, summary: {}, bytes: 0, messageCount: 6 };
+      }),
+      createChunk: vi.fn(async () => { calls.push('chunk'); return { ok: true, messageCount: 6, bytes: 0 }; }),
+    };
+    // noChunk must short-circuit before any chunking: the chunker must never run.
+    const chunker = vi.fn((msgs: unknown[]) => [msgs]);
+    await runPublish({ current: true, yes: true, noChunk: true }, [], { adapter: fakeAdapter as never, api: noChunkApi as never, chunker: chunker as never, out: () => {} });
+    expect(chunker).not.toHaveBeenCalled();
+    expect(calls).toEqual(['create']);
+  });
 });
 
 // ---------- process-level tests (real CLI, mock server, temp home) ----------
