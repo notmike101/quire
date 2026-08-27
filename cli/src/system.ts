@@ -11,8 +11,10 @@ import type { ShapedPart } from './harness/types.js';
  * The parser is deliberately conservative: only a well-formed, top-level
  * `<system-reminder>` block is treated as system. Nested tags (e.g.
  * `<untrusted_objective>` inside a reminder) are part of the block's content,
- * not separate segments. Text that merely *mentions* the tag (e.g. inside
- * backticks) is left untouched.
+ * not separate segments. A block that is *quoted* — wrapped in backticks, as in
+ * `` `<system-reminder>…</system-reminder>` `` — is left untouched, because a
+ * user writing about the harness (or a compaction summary describing it) quotes
+ * the tag inline rather than having one injected.
  */
 
 export interface SystemSegment {
@@ -23,11 +25,25 @@ export interface SystemSegment {
 const REMINDER_RE = /<system-reminder>([\s\S]*?)<\/system-reminder>/g;
 
 /**
+ * A `<system-reminder>` block is a quoted mention (not a real injection) when it
+ * is immediately preceded or followed by a backtick. Real harness injections are
+ * bare tags at message boundaries; a user quoting the tag in prose wraps it in
+ * backticks. This keeps user-authored text that references the tag from being
+ * collapsed into a system notice.
+ */
+function isBacktickQuoted(text: string, index: number, length: number): boolean {
+  const before = index > 0 ? text[index - 1] : '';
+  const after = text[index + length] ?? '';
+  return before === '`' || after === '`';
+}
+
+/**
  * Split a text part into ordered segments. A part that is entirely one
  * reminder block (ignoring surrounding whitespace) yields a single `system`
  * segment. A mixed part yields its real text plus one `system` segment per
- * injected block, in order. A part with no reminder block is returned as a
- * single `text` segment unchanged.
+ * injected block, in order. Quoted (backtick-wrapped) blocks are kept as plain
+ * text. A part with no reminder block is returned as a single `text` segment
+ * unchanged.
  */
 export function splitSystemText(text: string): SystemSegment[] {
   if (!text.includes('<system-reminder>')) return [{ kind: 'text', text }];
@@ -41,7 +57,13 @@ export function splitSystemText(text: string): SystemSegment[] {
       const before = text.slice(last, m.index);
       if (before.trim() !== '') segments.push({ kind: 'text', text: before });
     }
-    segments.push({ kind: 'system', text: m[1]! });
+    // A backtick-wrapped block is a quoted mention, not an injection — emit it
+    // as plain text so the user's prose is preserved verbatim.
+    if (isBacktickQuoted(text, m.index, m[0].length)) {
+      segments.push({ kind: 'text', text: m[0] });
+    } else {
+      segments.push({ kind: 'system', text: m[1]! });
+    }
     last = m.index + m[0].length;
   }
   if (last < text.length) {

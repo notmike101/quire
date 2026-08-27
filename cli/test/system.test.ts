@@ -17,6 +17,29 @@ describe('splitSystemText', () => {
     expect(splitSystemText(text)).toEqual([{ kind: 'text', text }]);
   });
 
+  it('keeps a well-formed reminder block quoted in backticks as plain text', () => {
+    // A user writing about the harness quotes the tag inline; the block is
+    // well-formed but backtick-wrapped, so it must NOT become a system part.
+    const text = "I'm seeing: `<system-reminder>...</system-reminder>` rendered as chat.";
+    const segs = splitSystemText(text);
+    // No segment may be a system part; the quoted block stays as text.
+    expect(segs.some((s) => s.kind === 'system')).toBe(false);
+    // Reassembled, the text is preserved verbatim (nothing dropped).
+    expect(segs.map((s) => s.text).join('')).toBe(text);
+  });
+
+  it('splits a part that has both a quoted mention and a real injection', () => {
+    const text =
+      'Quoted: `<system-reminder>...</system-reminder>`\n' +
+      '<system-reminder>\nContinue working toward the active session goal.\n</system-reminder>';
+    const segs = splitSystemText(text);
+    // The quoted block is text; only the bare block becomes a system part.
+    expect(segs.filter((s) => s.kind === 'system')).toHaveLength(1);
+    expect(segs.find((s) => s.kind === 'system')!.text).toContain('active session goal');
+    // The quoted mention survives as plain text, verbatim.
+    expect(segs.map((s) => s.text).join('')).toContain('`<system-reminder>...</system-reminder>`');
+  });
+
   it('splits a pure reminder block into a single system segment', () => {
     const text = '<system-reminder>\nContinue working toward the active session goal.\n</system-reminder>';
     expect(splitSystemText(text)).toEqual([{ kind: 'system', text: '\nContinue working toward the active session goal.\n' }]);
