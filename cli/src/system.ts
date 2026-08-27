@@ -67,6 +67,25 @@ export function systemLabel(block: string): string {
 }
 
 /**
+ * The harness also injects a TodoWrite nudge as a BARE text part — no
+ * `<system-reminder>` wrapper. It always opens with a fixed prefix and may
+ * append the current todo list. Detect it by that prefix so it can be collapsed
+ * like other system notices instead of rendering as a raw user bubble.
+ */
+const TODO_REMINDER_PREFIX = "The TodoWrite tool hasn't been used recently.";
+
+/**
+ * Split a text part that is entirely a bare TodoWrite reminder into a single
+ * `system` segment. Returns `null` when the part is not such a reminder (e.g.
+ * real user text that merely mentions the tool), so the caller leaves it
+ * untouched. The whole part is the reminder; there is no surrounding text.
+ */
+function splitBareTodoReminder(text: string): SystemSegment[] | null {
+  if (!text.startsWith(TODO_REMINDER_PREFIX)) return null;
+  return [{ kind: 'system', text }];
+}
+
+/**
  * Rewrite a message's text parts, splitting out harness-injected system
  * blocks. Non-text parts pass through untouched. A text part that yields no
  * system segment is left as-is (same object shape, no new part).
@@ -76,6 +95,12 @@ export function extractSystemParts(parts: ShapedPart[]): ShapedPart[] {
   for (const p of parts) {
     if (p.type !== 'text' || typeof p.text !== 'string') {
       out.push(p);
+      continue;
+    }
+    // A bare TodoWrite nudge (no <system-reminder> wrapper) is a system notice.
+    const bare = splitBareTodoReminder(p.text);
+    if (bare) {
+      out.push({ type: 'system', text: p.text });
       continue;
     }
     const segments = splitSystemText(p.text);

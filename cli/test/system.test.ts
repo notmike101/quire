@@ -111,6 +111,21 @@ describe('extractSystemParts', () => {
     const out = extractSystemParts(parts);
     expect(out.map((p) => p.type)).toEqual(['text', 'system', 'tool', 'system']);
   });
+
+  it('converts a bare TodoWrite nudge (no wrapper) into a system part', () => {
+    const part: ShapedPart = { type: 'text', text: "The TodoWrite tool hasn't been used recently. If you're working on tasks, consider using the TodoWrite tool." };
+    expect(extractSystemParts([part])).toEqual([{ type: 'system', text: part.text }]);
+  });
+
+  it('converts a bare TodoWrite nudge with an appended todo list into a system part', () => {
+    const part: ShapedPart = { type: 'text', text: "The TodoWrite tool hasn't been used recently. Consider using the TodoWrite tool.\n\nHere are the existing contents of your todo list:\n\n[1. [pending] do the thing]" };
+    expect(extractSystemParts([part])).toEqual([{ type: 'system', text: part.text }]);
+  });
+
+  it('leaves real user text that mentions TodoWrite unchanged', () => {
+    const part: ShapedPart = { type: 'text', text: 'I used the TodoWrite tool to track my progress.' };
+    expect(extractSystemParts([part])).toEqual([part]);
+  });
 });
 
 describe('splitThinkText', () => {
