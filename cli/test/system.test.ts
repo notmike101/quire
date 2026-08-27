@@ -196,25 +196,20 @@ describe('splitThinkText', () => {
     ]);
   });
 
-  it('splits a mixed part into text + reasoning + text in order', () => {
+  it('leaves an embedded think block (not at the start) as plain text', () => {
+    // A think tag in the middle of prose (e.g. a compaction summary quoting the
+    // conversation, or quoted code) is NOT reasoning — the whole part is text.
     const text = 'Preamble.\n' + T_OPEN + 'real thinking here' + T_CLOSE + '\nTrailing.';
-    const segs = splitThinkText(text);
-    expect(segs.map((s) => s.kind)).toEqual(['text', 'reasoning', 'text']);
-    expect(segs[0]!.text).toBe('Preamble.\n');
-    expect(segs[1]!.text).toBe('real thinking here');
-    expect(segs[2]!.text).toBe('\nTrailing.');
+    expect(splitThinkText(text)).toEqual([{ kind: 'text', text }]);
   });
 
-  it('handles multiple think blocks, dropping empty ones', () => {
-    const text = 'a' + T_OPEN + 'x' + T_CLOSE + 'b' + T_OPEN + ' ' + T_CLOSE + 'c';
+  it('extracts multiple consecutive leading think blocks, dropping empty ones', () => {
+    const text = T_OPEN + 'x' + T_CLOSE + T_OPEN + ' ' + T_CLOSE + '\nAnswer.';
     const segs = splitThinkText(text);
-    // The second block is whitespace-only and dropped, so 'b' and 'c' stay
-    // separate text segments.
-    expect(segs.map((s) => s.kind)).toEqual(['text', 'reasoning', 'text', 'text']);
-    expect(segs[0]!.text).toBe('a');
-    expect(segs[1]!.text).toBe('x');
-    expect(segs[2]!.text).toBe('b');
-    expect(segs[3]!.text).toBe('c');
+    // First block is reasoning; second is empty (dropped); then the answer.
+    expect(segs.map((s) => s.kind)).toEqual(['reasoning', 'text']);
+    expect(segs[0]!.text).toBe('x');
+    expect(segs[1]!.text).toBe('\nAnswer.');
   });
 
   it('treats an unclosed think tag as plain text (nothing dropped)', () => {
@@ -266,5 +261,20 @@ describe('extractReasoningParts', () => {
     ];
     const out = extractReasoningParts(parts);
     expect(out.map((p) => p.type)).toEqual(['text', 'reasoning', 'text', 'tool', 'text']);
+  });
+
+  it('leaves a compaction summary with an embedded think tag as a single text part', () => {
+    // The summary quotes the conversation, which included think tags. Those are
+    // embedded mid-prose, not leading, so the whole part stays one text part.
+    const part: ShapedPart = {
+      type: 'text',
+      text: 'This session is being continued…\n\n' + T_OPEN + '\n\n' + T_CLOSE + '\n\nSummary:\n1. Primary request…',
+    };
+    expect(extractReasoningParts([part])).toEqual([part]);
+  });
+
+  it('leaves a user message that quotes the think tag unchanged', () => {
+    const part: ShapedPart = { type: 'text', text: "I'm still seeing " + T_OPEN + '…' + T_CLOSE + ' blocks' };
+    expect(extractReasoningParts([part])).toEqual([part]);
   });
 });

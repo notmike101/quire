@@ -158,18 +158,19 @@ export function extractSystemParts(parts: ShapedPart[]): ShapedPart[] {
 }
 
 /**
- * Reasoning-model thinking. The model (ZCode, Claude Code) sometimes emits its
- * thinking as a literal `<think>…</think>` block inside a text part rather than
- * as a structured reasoning part. The viewer's markdown renderer passes the raw
- * tags through, so they show up as visible `think` text in the chat.
+ * Reasoning-model thinking. The model (ZCode, Claude Code) emits its thinking
+ * as a literal `think…/think` block at the START of a text part, before the
+ * actual response. The viewer's markdown renderer passes the raw tags through,
+ * so they show up as visible `think` text in the chat.
  *
- * We split these out into a `reasoning` part so the viewer can render them as a
- * muted, collapsible "thinking…" block. The parser is conservative: only a
- * well-formed `<think>…</think>` block is treated as reasoning. An EMPTY block
- * (whitespace-only content — the dominant real-world case, ~99%) is dropped
- * entirely; it carries no information. A non-empty block becomes a `reasoning`
- * segment. Text that merely *mentions* the tag is left untouched, and an
- * unclosed tag degrades to plain text (nothing is dropped).
+ * We split the leading think block(s) out into a `reasoning` part so the viewer
+ * can render them as a muted, collapsible "thinking…" block. The parser is
+ * deliberately conservative: a think block is only treated as reasoning when it
+ * is at the START of the part (after optional whitespace). A think tag that is
+ * embedded mid-prose — in a compaction summary quoting the conversation, in
+ * quoted source code, or in a user message quoting the tag — is left as plain
+ * text. An EMPTY leading block (whitespace-only content, the dominant case) is
+ * dropped; it carries no information. An unclosed tag degrades to plain text.
  */
 
 export interface ThinkSegment {
@@ -177,38 +178,46 @@ export interface ThinkSegment {
   text: string;
 }
 
-const THINK_RE = /<think>([\s\S]*?)<\/think>/g;
+const THINK_OPEN = '<' + 'think' + '>';
+const THINK_CLOSE = '<' + '/' + 'think' + '>';
 
 /**
- * Split a text part into ordered segments, extracting well-formed `<think>`
- * blocks. Empty blocks are dropped; non-empty blocks become `reasoning`
- * segments. A part with no well-formed block is returned as a single `text`
- * segment unchanged.
+ * Split a text part into ordered segments, extracting a LEADING run of well-
+ * formed `think` blocks. Empty blocks are dropped; non-empty blocks become
+ * `reasoning` segments. A part that does not start with a think block is
+ * returned as a single `text` segment unchanged (embedded/quoted think tags are
+ * never treated as reasoning).
  */
 export function splitThinkText(text: string): ThinkSegment[] {
-  if (!text.includes('<think>')) return [{ kind: 'text', text }];
+  // Fast path: no think tag at all, or the part doesn't start with one.
+  const leftTrimmed = text.replace(/^\s+/, '');
+  if (!leftTrimmed.startsWith(THINK_OPEN)) return [{ kind: 'text', text }];
 
   const segments: ThinkSegment[] = [];
-  let last = 0;
-  THINK_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = THINK_RE.exec(text)) !== null) {
-    if (m.index > last) {
-      const before = text.slice(last, m.index);
-      if (before.trim() !== '') segments.push({ kind: 'text', text: before });
-    }
-    const content = m[1]!;
+  // Consume leading think blocks. Each must start at the current position
+  // (after optional whitespace) to count as a real reasoning block.
+  let pos = 0;
+  while (true) {
+    const ws = text.slice(pos).match(/^\s*/);
+    const wsLen = ws ? ws[0].length : 0;
+    const start = pos + wsLen;
+    if (!text.startsWith(THINK_OPEN, start)) break;
+    const closeIdx = text.indexOf(THINK_CLOSE, start + THINK_OPEN.length);
+    if (closeIdx === -1) break; // unclosed tag: stop, treat rest as text
+    const content = text.slice(start + THINK_OPEN.length, closeIdx);
     // Empty (whitespace-only) thinking blocks carry no information — drop them.
     if (content.trim() !== '') segments.push({ kind: 'reasoning', text: content });
-    last = m.index + m[0].length;
+    pos = closeIdx + THINK_CLOSE.length;
   }
-  if (last < text.length) {
-    const after = text.slice(last);
-    if (after.trim() !== '') segments.push({ kind: 'text', text: after });
+  // Anything after the leading think blocks is the real response text.
+  const rest = text.slice(pos);
+  if (rest.trim() !== '') segments.push({ kind: 'text', text: rest });
+  // If no non-empty reasoning block was found, the part had only empty thinking.
+  // Return just the trailing response text (the empty blocks are dropped). If
+  // there is no trailing text either, return the original so nothing is lost.
+  if (!segments.some((s) => s.kind === 'reasoning')) {
+    return rest.trim() !== '' ? [{ kind: 'text', text: rest }] : [{ kind: 'text', text }];
   }
-  // No well-formed block found (e.g. an unclosed tag): treat the whole part as
-  // plain text so nothing is silently dropped.
-  if (segments.length === 0) return [{ kind: 'text', text }];
   return segments;
 }
 
