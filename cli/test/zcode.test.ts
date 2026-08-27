@@ -82,6 +82,19 @@ describe('zcode adapter', () => {
     expect(reminderMsg.parts[0]!.text).toContain('make the thing');
   });
 
+  it('drops harness-injected model-only user messages', async () => {
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const s = await makeZcodeAdapter(fixtureDb).loadSession('sess_fixture');
+    // The fixture has 5 user/assistant messages: m1 (real user), m2 (assistant),
+    // m4 (real user w/ system reminder), and m5 (model-only todo nudge). m3 is a
+    // system message (skipped) and m5 is model-only (dropped) → 3 messages.
+    expect(s.messages).toHaveLength(3);
+    // No message may carry the model-only todo-nudge text.
+    const allText = s.messages.flatMap((m) => m.parts)
+      .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && typeof p.text === 'string');
+    expect(allText.some((p) => p.text.includes('TodoWrite'))).toBe(false);
+  });
+
   it('loadSession throws for an unknown id', async () => {
     const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
     await expect(makeZcodeAdapter(fixtureDb).loadSession('sess_nope')).rejects.toThrow(/not found/);

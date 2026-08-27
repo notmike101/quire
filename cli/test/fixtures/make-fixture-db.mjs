@@ -25,6 +25,9 @@ insMsg.run('m1', 'sess_fixture', JSON.stringify({ role: 'user' }), 1);
 insMsg.run('m2', 'sess_fixture', JSON.stringify({ role: 'assistant', modelID: 'test-model', providerID: 'test-provider' }), 2);
 insMsg.run('m3', 'sess_fixture', JSON.stringify({ role: 'system' }), 3);
 insMsg.run('m4', 'sess_fixture', JSON.stringify({ role: 'user' }), 4);
+// A harness-injected user message the model sees but the user never typed
+// (visibility: "model-only"). The adapter must drop it entirely.
+insMsg.run('m5', 'sess_fixture', JSON.stringify({ role: 'user', metadata: { visibility: 'model-only', source: 'todo_reminder' } }), 5);
 const insPart = db.prepare('insert into part (id, message_id, session_id, data, sequence) values (?,?,?,?,?)');
 insPart.run('p1', 'm1', 'sess_fixture', JSON.stringify({ type: 'text', text: 'hello world' }), 1);
 insPart.run('p2', 'm2', 'sess_fixture', JSON.stringify({ type: 'text', text: 'hi there' }), 1);
@@ -43,5 +46,7 @@ insPart.run('p9', 'm2', 'sess_fixture', JSON.stringify({ type: 'text', text: T_O
 // A harness-injected goal-continuation reminder: the whole user message is a
 // <system-reminder> block, which the adapter must split into a `system` part.
 insPart.run('p7', 'm4', 'sess_fixture', JSON.stringify({ type: 'text', text: '<system-reminder>\nContinue working toward the active session goal.\n\n<untrusted_objective>\nmake the thing\n</untrusted_objective>\n</system-reminder>' }), 1);
+// Part for the model-only message — must be dropped along with its message.
+insPart.run('p10', 'm5', 'sess_fixture', JSON.stringify({ type: 'text', text: "The TodoWrite tool hasn't been used recently." }), 1);
 db.close();
 console.log(`fixture db written to ${dbPath}`);

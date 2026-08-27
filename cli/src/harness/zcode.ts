@@ -10,7 +10,13 @@ export function zcodeDbPath(): string {
 }
 
 type SessionRow = { id: string; title: string | null; time_updated: number; };
-interface MessageData { role?: string; modelID?: string; model?: string; providerID?: string; }
+interface MessageData {
+  role?: string;
+  modelID?: string;
+  model?: string;
+  providerID?: string;
+  metadata?: { visibility?: string; source?: string };
+}
 type PartRow = { message_id: string; data: string; };
 
 interface RawPart {
@@ -102,6 +108,11 @@ export function makeZcodeAdapter(dbPath: string = zcodeDbPath()): HarnessAdapter
         for (const m of messages) {
           const role = m.data.role;
           if (role !== 'user' && role !== 'assistant') continue;
+          // The harness injects context the model sees but the user never typed
+          // (todo nudges, re-injected tool results, goal/plan notes) as user
+          // messages marked visibility: "model-only". Drop them — they are not
+          // part of the conversation the user actually had.
+          if (m.data.metadata?.visibility === 'model-only') continue;
           const kept = byMessage.get(m.id) ?? [];
           if (kept.length === 0) continue;
           out.push({ role, parts: extractReasoningParts(extractSystemParts(kept)) });
