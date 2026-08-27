@@ -45,7 +45,12 @@ afterAll(async () => {
 describe('security headers', () => {
   it('are present on every response', async () => {
     const res = await app.request('/healthz');
-    expect(res.headers.get('content-security-policy')).toContain("default-src 'self'");
+    const csp = res.headers.get('content-security-policy') ?? '';
+    expect(csp).toContain("default-src 'self'");
+    // Shiki (code highlighting in the SPA) instantiates a WebAssembly module,
+    // which script-src gates behind 'wasm-unsafe-eval'. Without it every code
+    // block in a transcript renders unhighlighted (verified live 2026-08-27).
+    expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'");
     expect(res.headers.get('x-frame-options')).toBe('DENY');
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');

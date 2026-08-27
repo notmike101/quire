@@ -6,7 +6,14 @@ export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 export function securityHeaders(): MiddlewareHandler {
   return async (c, next) => {
     await next();
-    c.header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'");
+    // script-src needs 'wasm-unsafe-eval': the SPA highlights code with Shiki,
+    // which instantiates a WebAssembly module. WebAssembly.instantiate() is
+    // governed by script-src and requires wasm-unsafe-eval (or a per-module
+    // hash/nonce) — without it every code block in a transcript renders
+    // unhighlighted and the console fills with CompileError. 'wasm-unsafe-eval'
+    // only permits WASM compilation from already-same-origin ('self') sources;
+    // it does NOT allow arbitrary JS eval, so the CSP stays strict.
+    c.header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'");
     c.header('X-Frame-Options', 'DENY');
     c.header('Referrer-Policy', 'no-referrer');
     c.header('X-Content-Type-Options', 'nosniff');
