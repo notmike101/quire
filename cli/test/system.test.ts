@@ -149,6 +149,27 @@ describe('extractSystemParts', () => {
     const part: ShapedPart = { type: 'text', text: 'I used the TodoWrite tool to track my progress.' };
     expect(extractSystemParts([part])).toEqual([part]);
   });
+
+  it('keeps a part that only quotes the tag in backticks as a single text part', () => {
+    // The user's message quotes the tag inline; there is no real injection, so
+    // the whole part must stay one text part (one message), not fragments.
+    const part: ShapedPart = {
+      type: 'text',
+      text: "I'm seeing: `<system-reminder>...</system-reminder>` rendered as chat.\n\nFigure this out.",
+    };
+    expect(extractSystemParts([part])).toEqual([part]);
+  });
+
+  it('still splits a part that has both a quoted mention and a real injection', () => {
+    const part: ShapedPart = {
+      type: 'text',
+      text: 'Quoted: `<system-reminder>...</system-reminder>`\n<system-reminder>\ngoal body\n</system-reminder>',
+    };
+    const out = extractSystemParts([part]);
+    expect(out.map((p) => p.type)).toEqual(['text', 'system']);
+    expect(out[0]!.text).toContain('`<system-reminder>...</system-reminder>`');
+    expect(out[1]!.text).toContain('goal body');
+  });
 });
 
 describe('splitThinkText', () => {

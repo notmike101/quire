@@ -110,7 +110,9 @@ function splitBareTodoReminder(text: string): SystemSegment[] | null {
 /**
  * Rewrite a message's text parts, splitting out harness-injected system
  * blocks. Non-text parts pass through untouched. A text part that yields no
- * system segment is left as-is (same object shape, no new part).
+ * system segment (e.g. it only *quotes* the tag in backticks) is left as a
+ * single unchanged text part, so it renders as one message rather than
+ * fragments.
  */
 export function extractSystemParts(parts: ShapedPart[]): ShapedPart[] {
   const out: ShapedPart[] = [];
@@ -126,13 +128,31 @@ export function extractSystemParts(parts: ShapedPart[]): ShapedPart[] {
       continue;
     }
     const segments = splitSystemText(p.text);
-    if (segments.length === 1 && segments[0]!.kind === 'text') {
+    // No real injection (e.g. only backtick-quoted mentions): keep the whole
+    // part as a single text part so it renders as one message, not fragments.
+    if (!segments.some((s) => s.kind === 'system')) {
       out.push(p);
       continue;
     }
+    // Emit system segments as their own parts, but merge consecutive text
+    // segments (prose around a quoted mention) into a single text part so the
+    // user's message stays contiguous instead of fragmenting into bubbles.
+    let buf = '';
+    const flush = (): void => {
+      if (buf !== '') {
+        out.push({ type: 'text', text: buf });
+        buf = '';
+      }
+    };
     for (const seg of segments) {
-      out.push(seg.kind === 'system' ? { type: 'system', text: seg.text } : { type: 'text', text: seg.text });
+      if (seg.kind === 'system') {
+        flush();
+        out.push({ type: 'system', text: seg.text });
+      } else {
+        buf += seg.text;
+      }
     }
+    flush();
   }
   return out;
 }
