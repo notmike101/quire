@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateShareToken } from '../src/security/token.js';
+import { generateShareToken, generateUploadId } from '../src/security/token.js';
 import { hashPassword, verifyPassword } from '../src/security/password.js';
 import { signUnlockCookie, verifyUnlockCookie, UNLOCK_TTL_MS, unlockCookieName } from '../src/security/unlock.js';
 import { RateLimiter, IpWindow } from '../src/security/rate-limit.js';
@@ -12,6 +12,16 @@ describe('generateShareToken', () => {
   it('is unique across 1000 draws', () => {
     const set = new Set(Array.from({ length: 1000 }, () => generateShareToken()));
     expect(set.size).toBe(1000);
+  });
+});
+
+describe('generateUploadId', () => {
+  it('returns 32 lowercase hex chars and is unique', () => {
+    const a = generateUploadId();
+    const b = generateUploadId();
+    expect(a).toMatch(/^[0-9a-f]{32}$/);
+    expect(b).toMatch(/^[0-9a-f]{32}$/);
+    expect(a).not.toBe(b);
   });
 });
 
