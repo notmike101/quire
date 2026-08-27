@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createShare, createChunkedShare, createSystemNoticeShare, OPENAI_KEY } from './helpers';
+import { createShare, createChunkedShare, createSystemNoticeShare, createReasoningShare, OPENAI_KEY } from './helpers';
 
 test.describe('share viewer', () => {
   test('renders the first page and redacts secrets server-side', async ({ page, request }) => {
@@ -117,5 +117,20 @@ test.describe('share viewer', () => {
     // Expanding reveals the body.
     await page.getByRole('button', { name: /goal continuation/ }).click();
     await expect(page.getByText('hidden objective body')).toBeVisible();
+  });
+
+  test('a reasoning part renders as a collapsed thinking chip, not raw text', async ({ page, request }) => {
+    const { token } = await createReasoningShare(request);
+    await page.goto(`/chats/${token}`);
+    await expect(page.getByRole('heading', { name: 'Reasoning Session' })).toBeVisible();
+    // The collapsed chip shows the "thinking…" label…
+    await expect(page.getByRole('button', { name: /thinking/ })).toBeVisible({ timeout: 15000 });
+    // …but the reasoning body is hidden until expanded.
+    await expect(page.getByText('let me think about this carefully step by step')).toHaveCount(0);
+    // The visible text part renders normally.
+    await expect(page.getByText('The answer is 4.')).toBeVisible();
+    // Expanding reveals the reasoning body.
+    await page.getByRole('button', { name: /thinking/ }).click();
+    await expect(page.getByText('let me think about this carefully step by step')).toBeVisible();
   });
 });

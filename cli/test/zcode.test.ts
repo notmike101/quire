@@ -48,12 +48,25 @@ describe('zcode adapter', () => {
     expect(s.messages[0]!.role).toBe('user');
     expect(s.messages[0]!.parts).toEqual([{ type: 'text', text: 'hello world' }]);
     const assistant = s.messages[1]!;
-    expect(assistant.parts.map((p) => p.type)).toEqual(['text', 'tool', 'reasoning']);
+    // p2 text, p3 tool, p4 reasoning, p8 think-block text (split), p9 empty
+    // think-block text (dropped to a text fallback).
+    expect(assistant.parts.map((p) => p.type)).toEqual([
+      'text', 'tool', 'reasoning', 'reasoning', 'text', 'text',
+    ]);
     const tool = assistant.parts[1]!;
     expect(tool.tool).toBe('Bash');
     expect(tool.callID).toBe('c1');
     expect(tool.input).toEqual({ command: 'ls' });
     expect(tool.output!).toContain('[truncated');
+    // p8: a non-empty think block becomes a reasoning part, the trailing text
+    // stays a text part.
+    expect(assistant.parts[3]!.type).toBe('reasoning');
+    expect(assistant.parts[3]!.text).toBe('\nLet me check the file.\n');
+    expect(assistant.parts[4]!.type).toBe('text');
+    expect(assistant.parts[4]!.text).toBe('\nNow let me read it.');
+    // p9: an empty think block is dropped; the trailing text segment is kept.
+    expect(assistant.parts[5]!.type).toBe('text');
+    expect(assistant.parts[5]!.text).toBe('\n\nSure, here is the final answer.');
   });
 
   it('splits a pure <system-reminder> user message into a system part', async () => {

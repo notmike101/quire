@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { splitSystemText, systemLabel, extractSystemParts } from '../src/system.js';
+import { splitSystemText, systemLabel, extractSystemParts, splitThinkText, extractReasoningParts } from '../src/system.js';
 import type { ShapedPart } from '../src/harness/types.js';
+
+// The think tags are built at runtime so the literal markup is never mangled by
+// any tool that strips HTML-ish tags from file contents.
+const T_OPEN = '<' + 'think' + '>';
+const T_CLOSE = '<' + '/' + 'think' + '>';
 
 describe('splitSystemText', () => {
   it('returns a single text segment when there is no reminder block', () => {
@@ -105,5 +110,102 @@ describe('extractSystemParts', () => {
     ];
     const out = extractSystemParts(parts);
     expect(out.map((p) => p.type)).toEqual(['text', 'system', 'tool', 'system']);
+  });
+});
+
+describe('splitThinkText', () => {
+  it('returns a single text segment when there is no think block', () => {
+    expect(splitThinkText('hello world')).toEqual([{ kind: 'text', text: 'hello world' }]);
+  });
+
+  it('treats a mention of the tag in backticks as plain text', () => {
+    const text = 'The model emits `think` tags in its output.';
+    expect(splitThinkText(text)).toEqual([{ kind: 'text', text }]);
+  });
+
+  it('drops an empty think block (the dominant real-world case)', () => {
+    const text = T_OPEN + '\n\n' + T_CLOSE + '\n\nHello.';
+    expect(splitThinkText(text)).toEqual([{ kind: 'text', text: '\n\nHello.' }]);
+  });
+
+  it('converts a non-empty think block into a reasoning segment', () => {
+    const text = T_OPEN + '\nLet me think.\n' + T_CLOSE + '\nSome answer.';
+    const segs = splitThinkText(text);
+    expect(segs).toEqual([
+      { kind: 'reasoning', text: '\nLet me think.\n' },
+      { kind: 'text', text: '\nSome answer.' },
+    ]);
+  });
+
+  it('splits a mixed part into text + reasoning + text in order', () => {
+    const text = 'Preamble.\n' + T_OPEN + 'real thinking here' + T_CLOSE + '\nTrailing.';
+    const segs = splitThinkText(text);
+    expect(segs.map((s) => s.kind)).toEqual(['text', 'reasoning', 'text']);
+    expect(segs[0]!.text).toBe('Preamble.\n');
+    expect(segs[1]!.text).toBe('real thinking here');
+    expect(segs[2]!.text).toBe('\nTrailing.');
+  });
+
+  it('handles multiple think blocks, dropping empty ones', () => {
+    const text = 'a' + T_OPEN + 'x' + T_CLOSE + 'b' + T_OPEN + ' ' + T_CLOSE + 'c';
+    const segs = splitThinkText(text);
+    // The second block is whitespace-only and dropped, so 'b' and 'c' stay
+    // separate text segments.
+    expect(segs.map((s) => s.kind)).toEqual(['text', 'reasoning', 'text', 'text']);
+    expect(segs[0]!.text).toBe('a');
+    expect(segs[1]!.text).toBe('x');
+    expect(segs[2]!.text).toBe('b');
+    expect(segs[3]!.text).toBe('c');
+  });
+
+  it('treats an unclosed think tag as plain text (nothing dropped)', () => {
+    const text = T_OPEN + 'unclosed and never closed';
+    expect(splitThinkText(text)).toEqual([{ kind: 'text', text }]);
+  });
+
+  it('drops a part that is only an empty think block down to a text fallback', () => {
+    // A part that is *only* an empty think block yields no segments; we fall
+    // back to the original text so nothing is silently lost.
+    const text = T_OPEN + '  \n\n  ' + T_CLOSE;
+    expect(splitThinkText(text)).toEqual([{ kind: 'text', text }]);
+  });
+});
+
+describe('extractReasoningParts', () => {
+  it('passes non-text parts through untouched', () => {
+    const tool: ShapedPart = { type: 'tool', tool: 'Bash', status: 'completed', input: { command: 'ls' }, output: 'ok' };
+    const reasoning: ShapedPart = { type: 'reasoning', text: 'hmm' };
+    expect(extractReasoningParts([tool, reasoning])).toEqual([tool, reasoning]);
+  });
+
+  it('leaves a plain text part unchanged', () => {
+    const text: ShapedPart = { type: 'text', text: 'just text' };
+    expect(extractReasoningParts([text])).toEqual([text]);
+  });
+
+  it('drops a leading empty think block, keeping the real text', () => {
+    const part: ShapedPart = { type: 'text', text: T_OPEN + '\n\n' + T_CLOSE + '\n\nHello.' };
+    // The empty block is dropped; the trailing text segment is kept.
+    expect(extractReasoningParts([part])).toEqual([{ type: 'text', text: '\n\nHello.' }]);
+  });
+
+  it('splits a non-empty think block into reasoning + text parts', () => {
+    const part: ShapedPart = { type: 'text', text: T_OPEN + 'I need to check the file.' + T_CLOSE + '\nNow let me read it.' };
+    const out = extractReasoningParts([part]);
+    expect(out).toEqual([
+      { type: 'reasoning', text: 'I need to check the file.' },
+      { type: 'text', text: '\nNow let me read it.' },
+    ]);
+  });
+
+  it('preserves the order of multiple parts in a message', () => {
+    const parts: ShapedPart[] = [
+      { type: 'text', text: 'first' },
+      { type: 'text', text: T_OPEN + 'thinking here' + T_CLOSE + 'answer' },
+      { type: 'tool', tool: 'Read', status: 'completed', input: {}, output: 'x' },
+      { type: 'text', text: 'last' },
+    ];
+    const out = extractReasoningParts(parts);
+    expect(out.map((p) => p.type)).toEqual(['text', 'reasoning', 'text', 'tool', 'text']);
   });
 });

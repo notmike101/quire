@@ -89,3 +89,83 @@ export function extractSystemParts(parts: ShapedPart[]): ShapedPart[] {
   }
   return out;
 }
+
+/**
+ * Reasoning-model thinking. The model (ZCode, Claude Code) sometimes emits its
+ * thinking as a literal `<think>…</think>` block inside a text part rather than
+ * as a structured reasoning part. The viewer's markdown renderer passes the raw
+ * tags through, so they show up as visible `think` text in the chat.
+ *
+ * We split these out into a `reasoning` part so the viewer can render them as a
+ * muted, collapsible "thinking…" block. The parser is conservative: only a
+ * well-formed `<think>…</think>` block is treated as reasoning. An EMPTY block
+ * (whitespace-only content — the dominant real-world case, ~99%) is dropped
+ * entirely; it carries no information. A non-empty block becomes a `reasoning`
+ * segment. Text that merely *mentions* the tag is left untouched, and an
+ * unclosed tag degrades to plain text (nothing is dropped).
+ */
+
+export interface ThinkSegment {
+  kind: 'text' | 'reasoning';
+  text: string;
+}
+
+const THINK_RE = /<think>([\s\S]*?)<\/think>/g;
+
+/**
+ * Split a text part into ordered segments, extracting well-formed `<think>`
+ * blocks. Empty blocks are dropped; non-empty blocks become `reasoning`
+ * segments. A part with no well-formed block is returned as a single `text`
+ * segment unchanged.
+ */
+export function splitThinkText(text: string): ThinkSegment[] {
+  if (!text.includes('<think>')) return [{ kind: 'text', text }];
+
+  const segments: ThinkSegment[] = [];
+  let last = 0;
+  THINK_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = THINK_RE.exec(text)) !== null) {
+    if (m.index > last) {
+      const before = text.slice(last, m.index);
+      if (before.trim() !== '') segments.push({ kind: 'text', text: before });
+    }
+    const content = m[1]!;
+    // Empty (whitespace-only) thinking blocks carry no information — drop them.
+    if (content.trim() !== '') segments.push({ kind: 'reasoning', text: content });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) {
+    const after = text.slice(last);
+    if (after.trim() !== '') segments.push({ kind: 'text', text: after });
+  }
+  // No well-formed block found (e.g. an unclosed tag): treat the whole part as
+  // plain text so nothing is silently dropped.
+  if (segments.length === 0) return [{ kind: 'text', text }];
+  return segments;
+}
+
+/**
+ * Rewrite a message's text parts, splitting out literal `<think>` blocks into
+ * `reasoning` parts. Non-text parts pass through untouched. A text part that
+ * yields no reasoning segment is left as-is.
+ */
+export function extractReasoningParts(parts: ShapedPart[]): ShapedPart[] {
+  const out: ShapedPart[] = [];
+  for (const p of parts) {
+    if (p.type !== 'text' || typeof p.text !== 'string') {
+      out.push(p);
+      continue;
+    }
+    // Fast path: no think tag at all → nothing to do, keep the original part.
+    if (!p.text.includes('think')) {
+      out.push(p);
+      continue;
+    }
+    const segments = splitThinkText(p.text);
+    for (const seg of segments) {
+      out.push(seg.kind === 'reasoning' ? { type: 'reasoning', text: seg.text } : { type: 'text', text: seg.text });
+    }
+  }
+  return out;
+}

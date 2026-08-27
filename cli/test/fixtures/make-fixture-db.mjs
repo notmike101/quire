@@ -32,6 +32,14 @@ insPart.run('p3', 'm2', 'sess_fixture', JSON.stringify({ type: 'tool', callID: '
 insPart.run('p4', 'm2', 'sess_fixture', JSON.stringify({ type: 'reasoning', text: 'thinking out loud' }), 3);
 insPart.run('p5', 'm2', 'sess_fixture', JSON.stringify({ type: 'step-start' }), 4);
 insPart.run('p6', 'm2', 'sess_fixture', JSON.stringify({ type: 'compaction' }), 5);
+// A text part carrying a literal think block (reasoning model emitting its
+// thinking inline). The adapter must split it into a `reasoning` part. The
+// tag strings use the concatenation form so the literal markup is never
+// mangled by any tool that strips HTML-ish tags from file contents.
+const T_OPEN = '<' + 'think' + '>';
+const T_CLOSE = '<' + '/' + 'think' + '>';
+insPart.run('p8', 'm2', 'sess_fixture', JSON.stringify({ type: 'text', text: T_OPEN + '\nLet me check the file.\n' + T_CLOSE + '\nNow let me read it.' }), 6);
+insPart.run('p9', 'm2', 'sess_fixture', JSON.stringify({ type: 'text', text: T_OPEN + '  \n\n  ' + T_CLOSE + '\n\nSure, here is the final answer.' }), 7);
 // A harness-injected goal-continuation reminder: the whole user message is a
 // <system-reminder> block, which the adapter must split into a `system` part.
 insPart.run('p7', 'm4', 'sess_fixture', JSON.stringify({ type: 'text', text: '<system-reminder>\nContinue working toward the active session goal.\n\n<untrusted_objective>\nmake the thing\n</untrusted_objective>\n</system-reminder>' }), 1);

@@ -123,4 +123,21 @@ describe('AssistantMessage', () => {
     expect(w.text()).toContain('goal continuation');
     expect(w.text()).not.toContain('hidden body');
   });
+
+  it('renders a reasoning part as a collapsed thinking chip', async () => {
+    const message: ShareMessage = {
+      chunkSeq: 0,
+      seq: 3,
+      role: 'assistant',
+      time: null,
+      parts: [{ type: 'reasoning', text: 'let me think about this carefully' }],
+    };
+    const w = mount(AssistantMessage, { props: { message } });
+    await flushPromises();
+    // The chip is collapsed by default: the label shows, the body does not.
+    expect(w.text()).toContain('thinking');
+    expect(w.text()).not.toContain('let me think about this carefully');
+    await w.find('button').trigger('click');
+    expect(w.text()).toContain('let me think about this carefully');
+  });
 });

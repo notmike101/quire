@@ -81,6 +81,39 @@ export async function createSystemNoticeShare(request: APIRequestContext): Promi
   return await res.json();
 }
 
+/** A session whose assistant message has a `reasoning` part (think block). */
+export function reasoningSession(): object {
+  return {
+    sessionId: 'sess_reasoning',
+    title: 'Reasoning Session',
+    model: 'test-model',
+    messages: [
+      {
+        role: 'user',
+        time: new Date(Date.UTC(2026, 0, 1, 12, 0)).toISOString(),
+        parts: [{ type: 'text', text: 'what is 2+2?' }],
+      },
+      {
+        role: 'assistant',
+        time: new Date(Date.UTC(2026, 0, 1, 12, 1)).toISOString(),
+        parts: [
+          { type: 'reasoning', text: 'let me think about this carefully step by step' },
+          { type: 'text', text: 'The answer is 4.' },
+        ],
+      },
+    ],
+  };
+}
+
+export async function createReasoningShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
+  const res = await request.post('/api/chats', {
+    headers: { authorization: `Bearer ${API_KEY}` },
+    data: { session: reasoningSession() },
+  });
+  expect(res.status()).toBe(201);
+  return await res.json();
+}
+
 export async function createChunkedShare(
   request: APIRequestContext,
   opts: { perChunk?: number } = {},

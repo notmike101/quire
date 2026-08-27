@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
 import { truncateOutput } from '../shape.js';
-import { extractSystemParts } from '../system.js';
+import { extractSystemParts, extractReasoningParts } from '../system.js';
 
 export function zcodeDbPath(): string {
   return join(homedir(), '.zcode', 'cli', 'db', 'db.sqlite');
@@ -104,7 +104,7 @@ export function makeZcodeAdapter(dbPath: string = zcodeDbPath()): HarnessAdapter
           if (role !== 'user' && role !== 'assistant') continue;
           const kept = byMessage.get(m.id) ?? [];
           if (kept.length === 0) continue;
-          out.push({ role, parts: extractSystemParts(kept) });
+          out.push({ role, parts: extractReasoningParts(extractSystemParts(kept)) });
         }
         return {
           sessionId: id,

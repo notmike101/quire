@@ -19,7 +19,7 @@ describe('claude-code adapter', () => {
     const s = await makeClaudeCodeAdapter(projectsDir).loadSession('sample-session');
     expect(s.title).toBe('Fix the login bug');
     expect(s.model).toBe('claude-test');
-    expect(s.messages).toHaveLength(4); // tool_result-only user turn is not a message; sidechain skipped
+    expect(s.messages).toHaveLength(5); // tool_result-only user turn is not a message; sidechain skipped
     expect(s.messages[0]!.role).toBe('user');
     expect(s.messages[0]!.parts).toEqual([{ type: 'text', text: 'please fix the login bug' }]);
     const a1 = s.messages[1]!;
@@ -31,12 +31,18 @@ describe('claude-code adapter', () => {
     expect(tool.output).toBe('export function login() {}');
     const a2 = s.messages[2]!;
     expect(a2.parts.map((p) => p.type)).toEqual(['reasoning', 'text']);
+    // a5: an assistant turn whose text carries a literal think block. The
+    // non-empty block becomes a reasoning part; the trailing text stays.
+    const a5 = s.messages[3]!;
+    expect(a5.parts.map((p) => p.type)).toEqual(['reasoning', 'text']);
+    expect(a5.parts[0]!.text).toBe('\nI should double-check the path.\n');
+    expect(a5.parts[1]!.text).toBe('\nDone.');
   });
 
   it('splits a <system-reminder> user turn into a system part', async () => {
     const { makeClaudeCodeAdapter } = await import('../src/harness/claude-code.js');
     const s = await makeClaudeCodeAdapter(projectsDir).loadSession('sample-session');
-    const reminder = s.messages[3]!;
+    const reminder = s.messages[4]!;
     expect(reminder.role).toBe('user');
     expect(reminder.parts).toHaveLength(1);
     expect(reminder.parts[0]!.type).toBe('system');
