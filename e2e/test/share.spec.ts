@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createShare, OPENAI_KEY } from './helpers';
+import { createShare, createChunkedShare, OPENAI_KEY } from './helpers';
 
 test.describe('share viewer', () => {
   test('renders the first page and redacts secrets server-side', async ({ page, request }) => {
@@ -92,5 +92,17 @@ test.describe('share viewer', () => {
     } finally {
       await context.close();
     }
+  });
+
+  test('a two-chunk share renders messages from both chunks in order', async ({ page, request }) => {
+    const { token } = await createChunkedShare(request, { perChunk: 3 });
+    await page.goto(`/chats/${token}`);
+    await expect(page.getByRole('heading', { name: 'Chunked E2E' })).toBeVisible();
+    // chunk0 messages render first
+    await expect(page.getByText('chunk0 message 1', { exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('chunk0 message 3', { exact: true })).toBeVisible();
+    // chunk1 messages render after (user messages are even-indexed: chunk1 i=0,2 -> "chunk1 message 1", "chunk1 message 3")
+    await expect(page.getByText('chunk1 message 1', { exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('chunk1 message 3', { exact: true })).toBeVisible();
   });
 });

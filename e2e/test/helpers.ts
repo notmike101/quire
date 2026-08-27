@@ -50,3 +50,33 @@ export async function createShare(
   expect(res.status()).toBe(201);
   return await res.json();
 }
+
+export async function createChunkedShare(
+  request: APIRequestContext,
+  opts: { perChunk?: number } = {},
+): Promise<{ token: string; uploadId: string }> {
+  const perChunk = opts.perChunk ?? 3;
+  const mkChunk = (chunkSeq: number): object => {
+    const messages: object[] = [];
+    for (let i = 0; i < perChunk; i++) {
+      messages.push({
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        time: new Date(Date.UTC(2026, 0, 1, 12, i)).toISOString(),
+        parts: [{ type: 'text', text: `chunk${chunkSeq} message ${i + 1}` }],
+      });
+    }
+    return messages;
+  };
+  const first = await request.post('/api/chats', {
+    headers: { authorization: `Bearer ${API_KEY}` },
+    data: { session: { sessionId: 'sess_chunked', title: 'Chunked E2E', model: 'test-model', messages: mkChunk(0) }, preset: 'strict' },
+  });
+  expect(first.status()).toBe(201);
+  const firstBody = await first.json();
+  const second = await request.post(`/api/chats/${firstBody.token}/chunks`, {
+    headers: { authorization: `Bearer ${API_KEY}` },
+    data: { uploadId: firstBody.uploadId, chunkSeq: 1, messages: mkChunk(1) },
+  });
+  expect(second.status()).toBe(200);
+  return { token: firstBody.token, uploadId: firstBody.uploadId };
+}
