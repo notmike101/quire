@@ -12,10 +12,11 @@ const META: ShareMeta = {
   redactions: { 'api-key': 2 },
 };
 
-function makePage(count: number, start: number, nextCursor: number | null) {
+function makePage(count: number, start: number, nextCursor: string | null) {
   return {
     meta: META,
     messages: Array.from({ length: count }, (_, i): ShareMessage => ({
+      chunkSeq: 0,
       seq: start + i + 1,
       role: i % 2 === 0 ? 'user' : 'assistant',
       time: null,
@@ -43,8 +44,8 @@ afterEach(() => vi.unstubAllGlobals());
 describe('useMessages', () => {
   it('loads the first page and appends until nextCursor is null', async () => {
     const fetchMock = mockSequence([
-      { status: 200, body: makePage(50, 0, 50) },
-      { status: 200, body: makePage(50, 50, 100) },
+      { status: 200, body: makePage(50, 0, '0:50') },
+      { status: 200, body: makePage(50, 50, '0:100') },
       { status: 200, body: makePage(20, 100, null) },
     ]);
     const m = useMessages('tok');

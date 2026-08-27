@@ -14,7 +14,7 @@ export function useMessages(token: string) {
   const errorMessage = ref('');
   const passwordError = ref('');
 
-  let nextCursor: number | null = null;
+  let nextCursor: string | null = null;
   let exhausted = false;
 
   async function loadFirst(): Promise<void> {

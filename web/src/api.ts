@@ -9,6 +9,7 @@ export interface SharePart {
 }
 
 export interface ShareMessage {
+  chunkSeq: number;
   seq: number;
   role: 'user' | 'assistant';
   time: string | null;
@@ -28,7 +29,7 @@ export interface ShareMeta {
 export interface PageResponse {
   meta: ShareMeta;
   messages: ShareMessage[];
-  nextCursor: number | null;
+  nextCursor: string | null;
 }
 
 export class ShareError extends Error {
@@ -59,9 +60,9 @@ export function shareApi(token: string) {
     return json as T;
   }
 
-  function page(limit = 50, cursor?: number): Promise<PageResponse> {
+  function page(limit = 50, cursor?: string): Promise<PageResponse> {
     const params = new URLSearchParams({ limit: String(limit) });
-    if (cursor !== undefined) params.set('cursor', String(cursor));
+    if (cursor !== undefined) params.set('cursor', cursor);
     return request<PageResponse>(`${base}?${params.toString()}`);
   }
 

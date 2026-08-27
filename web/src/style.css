@@ -3,6 +3,23 @@
 /* Tailwind v4's `dark:` variant is media-based by default: it tracks the
    reader's `prefers-color-scheme` — no JS, no toggle (spec §7). */
 
+/* Paint html/body with the same theme-aware background as the min-h-screen
+   root so the browser canvas never shows through in the overscroll region or
+   the top margin of the short full-page states (password gate, expired,
+   not-found, error). Without this, dark-mode readers see a white band at the
+   top: the root div is dark but body/html are transparent, so the UA default
+   white canvas bleeds into the mt-24 margin above the card. */
+html,
+body {
+  background-color: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  html,
+  body {
+    background-color: #0a0a0a; /* neutral-950, matches the root div's dark:bg-neutral-950 */
+  }
+}
+
 @theme {
   --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;

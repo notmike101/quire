@@ -15,8 +15,8 @@ describe('shareApi', () => {
   it('page() sends limit and cursor', async () => {
     const fetchMock = mockFetch(200, { meta: {}, messages: [], nextCursor: null });
     vi.stubGlobal('fetch', fetchMock);
-    await shareApi('tok123').page(50, 100);
-    expect(fetchMock.mock.calls[0]![0]).toBe('/api/public/chats/tok123?limit=50&cursor=100');
+    await shareApi('tok123').page(50, '0:100');
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/public/chats/tok123?limit=50&cursor=0%3A100');
   });
 
   it('page() omits cursor on the first page', async () => {

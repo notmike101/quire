@@ -58,6 +58,7 @@ describe('ReasoningBlock', () => {
 describe('AssistantMessage', () => {
   it('renders text parts as markdown and tool parts as cards', async () => {
     const message: ShareMessage = {
+      chunkSeq: 0,
       seq: 1,
       role: 'assistant',
       time: null,
