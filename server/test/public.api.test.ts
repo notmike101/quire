@@ -4,6 +4,7 @@ import { createApp } from '../src/app.js';
 import { shares, shareMessages } from '../src/db/schema.js';
 import { sql } from 'drizzle-orm';
 import { hashPassword } from '../src/security/password.js';
+import { generateUploadId } from '../src/security/token.js';
 import { RateLimiter, IpWindow } from '../src/security/rate-limit.js';
 
 const url = process.env.DATABASE_URL ?? 'postgres://quire:quire@localhost:54329/quire_test';
@@ -25,6 +26,7 @@ async function seedShare(token: string, opts: { password?: string; expiresAt?: D
   const n = opts.messages ?? 120;
   const [share] = await db.insert(shares).values({
     token,
+    uploadId: generateUploadId(),
     sessionId: `sess_${token}`,
     title: `Share ${token}`,
     expiresAt: opts.expiresAt,
@@ -39,6 +41,26 @@ async function seedShare(token: string, opts: { password?: string; expiresAt?: D
     role: i % 2 === 0 ? 'user' : ('assistant' as const),
     parts: [{ type: 'text', text: `message ${i + 1}` }],
   }));
+  await db.insert(shareMessages).values(rows);
+  return share;
+}
+
+async function seedTwoChunkShare(token: string, perChunk: number) {
+  const [share] = await db.insert(shares).values({
+    token, uploadId: 'b'.repeat(32), sessionId: `sess_${token}`, title: `Share ${token}`,
+    messageCount: perChunk * 2,
+  }).returning();
+  if (!share) throw new Error('seed insert returned no row');
+  const rows: Array<{ shareId: string; chunkSeq: number; seq: number; role: 'user' | 'assistant'; parts: unknown[] }> = [];
+  for (const chunkSeq of [0, 1]) {
+    for (let i = 0; i < perChunk; i++) {
+      rows.push({
+        shareId: share.id, chunkSeq, seq: i + 1,
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        parts: [{ type: 'text', text: `c${chunkSeq}m${i + 1}` }],
+      });
+    }
+  }
   await db.insert(shareMessages).values(rows);
   return share;
 }
@@ -91,11 +113,11 @@ describe('public content endpoint', () => {
     const p1 = await json(await app.request('/api/public/chats/page1'));
     expect(p1.messages).toHaveLength(50);
     expect(p1.messages[0].seq).toBe(1);
-    expect(p1.nextCursor).toBe(50);
-    const p2 = await json(await app.request('/api/public/chats/page1?limit=50&cursor=50'));
+    expect(p1.nextCursor).toBe('0:50');
+    const p2 = await json(await app.request('/api/public/chats/page1?limit=50&cursor=0:50'));
     expect(p2.messages[0].seq).toBe(51);
-    expect(p2.nextCursor).toBe(100);
-    const p3 = await json(await app.request('/api/public/chats/page1?limit=50&cursor=100'));
+    expect(p2.nextCursor).toBe('0:100');
+    const p3 = await json(await app.request('/api/public/chats/page1?limit=50&cursor=0:100'));
     expect(p3.messages).toHaveLength(20);
     expect(p3.nextCursor).toBeNull();
     expect(p1.meta.title).toBe('Share page1');
@@ -179,5 +201,29 @@ describe('unlock endpoint', () => {
     });
     expect(res.status).toBe(400);
     expect((await json(res)).error.code).toBe('no_password');
+  });
+});
+
+describe('chunked pagination', () => {
+  it('pages across a chunk boundary in (chunk_seq, seq) order', async () => {
+    await seedTwoChunkShare('chunks1', 25); // chunk0: seq1..25, chunk1: seq1..25
+    // limit 20 -> first page is chunk0 seq1..20, cursor "0:20"
+    const p1 = await json(await app.request('/api/public/chats/chunks1?limit=20'));
+    expect(p1.messages).toHaveLength(20);
+    expect(p1.messages[0]).toMatchObject({ chunkSeq: 0, seq: 1 });
+    expect(p1.messages[19]).toMatchObject({ chunkSeq: 0, seq: 20 });
+    expect(p1.nextCursor).toBe('0:20');
+    // next page: chunk0 seq21..25 (5 rows) + chunk1 seq1..15 (15 rows) = 20
+    const p2 = await json(await app.request('/api/public/chats/chunks1?limit=20&cursor=0:20'));
+    expect(p2.messages).toHaveLength(20);
+    expect(p2.messages[0]).toMatchObject({ chunkSeq: 0, seq: 21 });
+    expect(p2.messages[4]).toMatchObject({ chunkSeq: 0, seq: 25 });
+    expect(p2.messages[5]).toMatchObject({ chunkSeq: 1, seq: 1 });
+    expect(p2.nextCursor).toBe('1:15');
+    // final page: chunk1 seq16..25 = 10 rows (short), no next cursor
+    const p3 = await json(await app.request('/api/public/chats/chunks1?limit=20&cursor=1:15'));
+    expect(p3.messages).toHaveLength(10);
+    expect(p3.messages[0]).toMatchObject({ chunkSeq: 1, seq: 16 });
+    expect(p3.nextCursor).toBeNull();
   });
 });

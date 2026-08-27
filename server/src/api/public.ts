@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { getConnInfo } from '@hono/node-server/conninfo';
-import { and, asc, eq, gt } from 'drizzle-orm';
+import { and, asc, eq, gt, or } from 'drizzle-orm';
 import { shares, shareMessages } from '../db/schema.js';
 import type { Db } from '../db/client.js';
 import type { Config } from '../config.js';
@@ -56,9 +56,17 @@ function clampLimit(raw: string | undefined): number {
   return Number.isInteger(n) && n > 0 ? Math.min(n, 200) : 50;
 }
 
-function parseCursor(raw: string | undefined): number {
-  const n = raw === undefined ? 0 : Number.parseInt(raw, 10);
-  return Number.isInteger(n) && n >= 0 ? n : 0;
+interface Cursor { chunkSeq: number; seq: number }
+function parseCursor(raw: string | undefined): Cursor {
+  if (raw === undefined) return { chunkSeq: 0, seq: 0 };
+  const idx = raw.indexOf(':');
+  if (idx < 0) return { chunkSeq: 0, seq: 0 };
+  const chunkSeq = Number.parseInt(raw.slice(0, idx), 10);
+  const seq = Number.parseInt(raw.slice(idx + 1), 10);
+  return {
+    chunkSeq: Number.isInteger(chunkSeq) && chunkSeq >= 0 ? chunkSeq : 0,
+    seq: Number.isInteger(seq) && seq >= 0 ? seq : 0,
+  };
 }
 
 /** Unknown and revoked tokens both return null -> identical 404 bodies (no existence oracle). */
@@ -90,14 +98,19 @@ export function publicRoutes(deps: PublicDeps): Hono {
       }
     }
     const limit = clampLimit(c.req.query('limit'));
-    const cursor = parseCursor(c.req.query('cursor'));
+    const { chunkSeq, seq } = parseCursor(c.req.query('cursor'));
+    const after = or(
+      gt(shareMessages.chunkSeq, chunkSeq),
+      and(eq(shareMessages.chunkSeq, chunkSeq), gt(shareMessages.seq, seq)),
+    );
     const rows = await db
       .select()
       .from(shareMessages)
-      .where(and(eq(shareMessages.shareId, share.id), gt(shareMessages.seq, cursor)))
-      .orderBy(asc(shareMessages.seq))
+      .where(and(eq(shareMessages.shareId, share.id), after))
+      .orderBy(asc(shareMessages.chunkSeq), asc(shareMessages.seq))
       .limit(limit);
-    const nextCursor = rows.length === limit ? rows[rows.length - 1]!.seq : null;
+    const last = rows[rows.length - 1];
+    const nextCursor = rows.length === limit && last ? `${last.chunkSeq}:${last.seq}` : null;
     return c.json({
       meta: {
         title: share.title,
@@ -108,7 +121,7 @@ export function publicRoutes(deps: PublicDeps): Hono {
         messageCount: share.messageCount,
         redactions: share.redactions,
       },
-      messages: rows.map((r) => ({ seq: r.seq, role: r.role, time: r.time, parts: r.parts })),
+      messages: rows.map((r) => ({ chunkSeq: r.chunkSeq, seq: r.seq, role: r.role, time: r.time, parts: r.parts })),
       nextCursor,
     });
   });

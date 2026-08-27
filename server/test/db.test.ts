@@ -33,7 +33,7 @@ describe('schema + migrations', () => {
   it('cascades share_messages when a share is deleted', async () => {
     const db = makeDb(url);
     const ins = await db.execute(sql`
-      insert into shares (token, session_id, title) values ('t-cascade', 's1', 'T')
+      insert into shares (token, upload_id, session_id, title) values ('t-cascade', 'cccccccccccccccccccccccccccccccc', 's1', 'T')
       returning id
     `);
     const id = (ins[0] as { id: string }).id;
