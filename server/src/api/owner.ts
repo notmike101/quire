@@ -51,34 +51,40 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     const { session, preset, password, expiresAt } = parsed.data;
     const prepared = prepareContent(session.messages, preset);
     const token = generateShareToken();
-    const [share] = await db
-      .insert(shares)
-      .values({
-        token,
-        sessionId: session.sessionId,
-        title: session.title,
-        model: session.model ?? null,
-        provider: session.provider ?? null,
-        expiresAt: expiresAt ? new Date(expiresAt) : null,
-        passwordHash: password ? await hashPassword(password) : null,
-        preset,
-        messageCount: prepared.messageCount,
-        redactions: prepared.summary,
-        bytes: prepared.bytes,
-      })
-      .returning();
-    if (!share) throw new Error('insert returned no row');
-    await db
-      .insert(shareMessages)
-      .values(
-        prepared.messages.map((m, i) => ({
-          shareId: share.id,
-          seq: i + 1,
-          role: m.role,
-          time: m.time ? new Date(m.time) : null,
-          parts: m.parts,
-        })),
-      );
+    // Both inserts are atomic: if the messages batch fails (e.g. an unexpected
+    // payload shape), the shares row rolls back too — no orphan share with a
+    // messageCount but no messages.
+    const share = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(shares)
+        .values({
+          token,
+          sessionId: session.sessionId,
+          title: session.title,
+          model: session.model ?? null,
+          provider: session.provider ?? null,
+          expiresAt: expiresAt ? new Date(expiresAt) : null,
+          passwordHash: password ? await hashPassword(password) : null,
+          preset,
+          messageCount: prepared.messageCount,
+          redactions: prepared.summary,
+          bytes: prepared.bytes,
+        })
+        .returning();
+      if (!row) throw new Error('insert returned no row');
+      await tx
+        .insert(shareMessages)
+        .values(
+          prepared.messages.map((m, i) => ({
+            shareId: row.id,
+            seq: i + 1,
+            role: m.role,
+            time: m.time ? new Date(m.time) : null,
+            parts: m.parts,
+          })),
+        );
+      return row;
+    });
     return c.json({ token, url: `/chats/${token}`, summary: prepared.summary, bytes: prepared.bytes, messageCount: prepared.messageCount }, 201);
   });
 

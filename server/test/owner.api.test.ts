@@ -93,6 +93,32 @@ describe('create', () => {
     expect(res.status).toBe(400);
     expect((await json(res)).error.code).toBe('validation');
   });
+
+  it('stores a session whose tool output contains NUL/control chars (no 500, messages persisted)', async () => {
+    // Regression: Postgres rejects NUL in jsonb; real ZCode tool output carries them.
+    const nulSession = {
+      sessionId: 'sess_nul',
+      title: 'NUL session',
+      messages: [
+        { role: 'user', parts: [{ type: 'text', text: 'run it' }] },
+        { role: 'assistant', parts: [{ type: 'tool', callID: 'c1', tool: 'Bash', status: 'completed', input: { cmd: 'x\u0000y' }, output: 'bin\u0000\u001Bary' }] },
+      ],
+    };
+    const res = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session: nulSession, preset: 'strict' }) });
+    expect(res.status).toBe(201);
+    const body = await json(res);
+    const nulToken = body.token as string;
+    expect(body.messageCount).toBe(2);
+    const share = (await db.select().from(shares).where(eq(shares.token, nulToken)))[0]!;
+    const msgs = await db.select().from(shareMessages).where(eq(shareMessages.shareId, share.id));
+    expect(msgs).toHaveLength(2);
+    // NUL/control chars stripped, surrounding content intact. `parts` is a jsonb array.
+    const tool = (msgs.find((m) => m.seq === 2)!.parts as Array<{ input: { cmd: string }; output: string }>)[0]!;
+    expect(tool.input.cmd).toBe('xy');
+    expect(tool.output).toBe('binary');
+    // Clean up this extra share so the list/delete tests below see only `token`.
+    await db.execute(sql`delete from shares where token = ${nulToken}`);
+  });
 });
 
 describe('list / get / patch / delete', () => {

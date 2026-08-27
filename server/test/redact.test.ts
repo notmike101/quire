@@ -99,4 +99,33 @@ describe('prepareContent', () => {
     expect(r.bytes).toBe(Buffer.byteLength(JSON.stringify(r.messages)));
     expect(r.messageCount).toBe(2);
   });
+
+  it('strips NUL and C0 control chars (except \\n \\r \\t) from every string, all presets', () => {
+    // Postgres rejects NUL in text/jsonb; real ZCode tool output can carry them.
+    const withNul: ShapedMessage[] = [
+      { role: 'user', parts: [{ type: 'text', text: 'a\u0000b\u0007c' }] },
+      {
+        role: 'assistant',
+        parts: [
+          { type: 'tool', callID: 'c1', tool: 'Bash', status: 'completed', input: { cmd: 'x\u0000y' }, output: 'out\u0000\u001Bine' },
+        ],
+      },
+    ];
+    for (const preset of ['strict', 'normal', 'none'] as const) {
+      const { messages } = prepareContent(withNul, preset);
+      const all = JSON.stringify(messages);
+      // No NUL or other stripped C0 chars survive.
+      expect(all).not.toContain('\u0000');
+      expect(all).not.toContain('\u0007');
+      expect(all).not.toContain('\u001B');
+      // Content around the stripped chars is preserved, and \n \r \t are kept.
+      expect(messages[0]!.parts[0]!.text).toBe('abc');
+      const tool = messages[1]!.parts[0]!;
+      expect((tool.input as { cmd: string }).cmd).toBe('xy');
+      expect(tool.output).toBe('outine');
+    }
+    // \n \r \t are deliberately preserved (they are legitimate).
+    const withNewlines: ShapedMessage[] = [{ role: 'user', parts: [{ type: 'text', text: 'l1\nl2\rl3\tl4' }] }];
+    expect(prepareContent(withNewlines, 'none').messages[0]!.parts[0]!.text).toBe('l1\nl2\rl3\tl4');
+  });
 });

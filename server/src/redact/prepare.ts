@@ -24,11 +24,18 @@ export interface PreparedContent {
   messageCount: number;
 }
 
+// Postgres rejects NUL (\u0000) in text/jsonb columns, and other C0 control
+// characters (except the common \n \r \t) are noise that can come from binary-ish
+// tool output. Strip them in the authoritative pass so the persisted content is
+// always storable. This is storage-safety, not redaction, so it applies to every
+// preset (including 'none').
+const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
+
 function redactPart(part: ShapedPart, preset: Preset, add: (counts: Record<string, number>) => void): ShapedPart {
   const red = (s: string): string => {
     const r = redactText(s, preset);
     add(r.counts);
-    return r.text;
+    return r.text.replace(CONTROL_CHARS_RE, '');
   };
   const out: ShapedPart = { ...part };
   if (part.text !== undefined) out.text = red(part.text);

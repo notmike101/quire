@@ -9,7 +9,7 @@
   "scripts": {
     "typecheck": "tsc",
     "test": "vitest run",
-    "build": "tsup src/index.ts --format esm --no-dts"
+    "build": "tsup"
   },
   "devDependencies": {
     "@types/node": "^22",
