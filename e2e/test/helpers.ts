@@ -51,6 +51,36 @@ export async function createShare(
   return await res.json();
 }
 
+/** A session whose user message is a `system` part (harness-injected reminder). */
+export function systemNoticeSession(): object {
+  return {
+    sessionId: 'sess_system',
+    title: 'System Notice Session',
+    model: 'test-model',
+    messages: [
+      {
+        role: 'user',
+        time: new Date(Date.UTC(2026, 0, 1, 12, 0)).toISOString(),
+        parts: [{ type: 'system', text: 'Continue working toward the active session goal.\n\nhidden objective body' }],
+      },
+      {
+        role: 'assistant',
+        time: new Date(Date.UTC(2026, 0, 1, 12, 1)).toISOString(),
+        parts: [{ type: 'text', text: 'acknowledged' }],
+      },
+    ],
+  };
+}
+
+export async function createSystemNoticeShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
+  const res = await request.post('/api/chats', {
+    headers: { authorization: `Bearer ${API_KEY}` },
+    data: { session: systemNoticeSession() },
+  });
+  expect(res.status()).toBe(201);
+  return await res.json();
+}
+
 export async function createChunkedShare(
   request: APIRequestContext,
   opts: { perChunk?: number } = {},

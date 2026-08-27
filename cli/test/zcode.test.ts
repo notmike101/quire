@@ -44,7 +44,7 @@ describe('zcode adapter', () => {
     expect(s.title).toBe('Fixture Session');
     expect(s.model).toBe('test-model');
     expect(s.provider).toBe('test-provider');
-    expect(s.messages).toHaveLength(2); // system message skipped
+    expect(s.messages).toHaveLength(3); // system message skipped
     expect(s.messages[0]!.role).toBe('user');
     expect(s.messages[0]!.parts).toEqual([{ type: 'text', text: 'hello world' }]);
     const assistant = s.messages[1]!;
@@ -54,6 +54,19 @@ describe('zcode adapter', () => {
     expect(tool.callID).toBe('c1');
     expect(tool.input).toEqual({ command: 'ls' });
     expect(tool.output!).toContain('[truncated');
+  });
+
+  it('splits a pure <system-reminder> user message into a system part', async () => {
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const s = await makeZcodeAdapter(fixtureDb).loadSession('sess_fixture');
+    const reminderMsg = s.messages[2]!;
+    expect(reminderMsg.role).toBe('user');
+    expect(reminderMsg.parts).toHaveLength(1);
+    expect(reminderMsg.parts[0]!.type).toBe('system');
+    // The nested <untrusted_objective> stays inside the system block content.
+    expect(reminderMsg.parts[0]!.text).toContain('active session goal');
+    expect(reminderMsg.parts[0]!.text).toContain('<untrusted_objective>');
+    expect(reminderMsg.parts[0]!.text).toContain('make the thing');
   });
 
   it('loadSession throws for an unknown id', async () => {

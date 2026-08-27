@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useMessages } from './composables/useMessages';
-import type { ShareMessage } from './api';
+import type { ShareMessage, SharePart } from './api';
 import UserMessage from './components/UserMessage.vue';
 import AssistantMessage from './components/AssistantMessage.vue';
 import PasswordGate from './components/PasswordGate.vue';
@@ -37,8 +37,10 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function userText(message: ShareMessage): string {
-  return message.parts.filter((p) => p.type === 'text').map((p) => p.text ?? '').join('\n');
+function userParts(message: ShareMessage): SharePart[] {
+  // Text and system parts render in the bubble column; tool/reasoning parts
+  // don't appear on user messages in practice, but filter to be safe.
+  return message.parts.filter((p) => p.type === 'text' || p.type === 'system');
 }
 </script>
 
@@ -79,7 +81,7 @@ function userText(message: ShareMessage): string {
       </header>
       <main class="mx-auto w-full max-w-[760px] px-4 pb-16">
         <template v-for="message in messages" :key="message.seq">
-          <UserMessage v-if="message.role === 'user'" :text="userText(message)" />
+          <UserMessage v-if="message.role === 'user'" :parts="userParts(message)" />
           <AssistantMessage v-else :message="message" />
         </template>
         <div v-if="loadingMore" class="py-4 text-center text-sm text-neutral-400 dark:text-neutral-500">Loading more…</div>

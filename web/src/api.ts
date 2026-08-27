@@ -1,5 +1,5 @@
 export interface SharePart {
-  type: 'text' | 'tool' | 'reasoning';
+  type: 'text' | 'tool' | 'reasoning' | 'system';
   text?: string;
   callID?: string;
   tool?: string;

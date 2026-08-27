@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue';
 import { renderMarkdown } from '../markdown';
 import ToolCard from './ToolCard.vue';
 import ReasoningBlock from './ReasoningBlock.vue';
+import SystemNotice from './SystemNotice.vue';
 import type { ShareMessage, SharePart } from '../api';
 
 const props = defineProps<{ message: ShareMessage }>();
@@ -10,7 +11,8 @@ const props = defineProps<{ message: ShareMessage }>();
 type RenderedPart =
   | { kind: 'html'; html: string }
   | { kind: 'tool'; part: SharePart }
-  | { kind: 'reasoning'; part: SharePart };
+  | { kind: 'reasoning'; part: SharePart }
+  | { kind: 'system'; part: SharePart };
 
 const parts = ref<RenderedPart[]>([]);
 
@@ -21,6 +23,8 @@ onMounted(async () => {
       out.push({ kind: 'html', html: await renderMarkdown(part.text ?? '') });
     } else if (part.type === 'tool') {
       out.push({ kind: 'tool', part });
+    } else if (part.type === 'system') {
+      out.push({ kind: 'system', part });
     } else {
       out.push({ kind: 'reasoning', part });
     }
@@ -34,6 +38,7 @@ onMounted(async () => {
     <template v-for="(item, i) in parts" :key="i">
       <div v-if="item.kind === 'html'" class="prose-quire" v-html="item.html" />
       <ToolCard v-else-if="item.kind === 'tool'" :part="item.part" />
+      <SystemNotice v-else-if="item.kind === 'system'" :text="item.part.text ?? ''" />
       <ReasoningBlock v-else :text="item.part.text ?? ''" />
     </template>
   </div>

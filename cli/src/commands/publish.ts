@@ -48,6 +48,7 @@ function printPreview(messages: ShapedMessage[], summary: Record<string, number>
     for (const p of m.parts) {
       if (p.type === 'text') out(`[${m.role}] ${clip(p.text ?? '', 200)}`);
       else if (p.type === 'reasoning') out(`[${m.role}] (reasoning, ${p.text?.length ?? 0} chars)`);
+      else if (p.type === 'system') out(`[${m.role}] (system notice, ${p.text?.length ?? 0} chars)`);
       else if (p.type === 'tool') out(`[${m.role}] tool ${p.tool ?? '?'} (${p.status ?? 'pending'})`);
     }
   }

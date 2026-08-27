@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createShare, createChunkedShare, OPENAI_KEY } from './helpers';
+import { createShare, createChunkedShare, createSystemNoticeShare, OPENAI_KEY } from './helpers';
 
 test.describe('share viewer', () => {
   test('renders the first page and redacts secrets server-side', async ({ page, request }) => {
@@ -104,5 +104,18 @@ test.describe('share viewer', () => {
     // chunk1 messages render after (user messages are even-indexed: chunk1 i=0,2 -> "chunk1 message 1", "chunk1 message 3")
     await expect(page.getByText('chunk1 message 1', { exact: true })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('chunk1 message 3', { exact: true })).toBeVisible();
+  });
+
+  test('a system part renders as a collapsed notice, not a user bubble', async ({ page, request }) => {
+    const { token } = await createSystemNoticeShare(request);
+    await page.goto(`/chats/${token}`);
+    await expect(page.getByRole('heading', { name: 'System Notice Session' })).toBeVisible();
+    // The collapsed chip shows the label…
+    await expect(page.getByText('goal continuation', { exact: true })).toBeVisible({ timeout: 15000 });
+    // …but the block body is hidden until expanded.
+    await expect(page.getByText('hidden objective body')).toHaveCount(0);
+    // Expanding reveals the body.
+    await page.getByRole('button', { name: /goal continuation/ }).click();
+    await expect(page.getByText('hidden objective body')).toBeVisible();
   });
 });

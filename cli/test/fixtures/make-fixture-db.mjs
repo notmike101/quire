@@ -24,6 +24,7 @@ const insMsg = db.prepare('insert into message (id, session_id, data, sequence) 
 insMsg.run('m1', 'sess_fixture', JSON.stringify({ role: 'user' }), 1);
 insMsg.run('m2', 'sess_fixture', JSON.stringify({ role: 'assistant', modelID: 'test-model', providerID: 'test-provider' }), 2);
 insMsg.run('m3', 'sess_fixture', JSON.stringify({ role: 'system' }), 3);
+insMsg.run('m4', 'sess_fixture', JSON.stringify({ role: 'user' }), 4);
 const insPart = db.prepare('insert into part (id, message_id, session_id, data, sequence) values (?,?,?,?,?)');
 insPart.run('p1', 'm1', 'sess_fixture', JSON.stringify({ type: 'text', text: 'hello world' }), 1);
 insPart.run('p2', 'm2', 'sess_fixture', JSON.stringify({ type: 'text', text: 'hi there' }), 1);
@@ -31,5 +32,8 @@ insPart.run('p3', 'm2', 'sess_fixture', JSON.stringify({ type: 'tool', callID: '
 insPart.run('p4', 'm2', 'sess_fixture', JSON.stringify({ type: 'reasoning', text: 'thinking out loud' }), 3);
 insPart.run('p5', 'm2', 'sess_fixture', JSON.stringify({ type: 'step-start' }), 4);
 insPart.run('p6', 'm2', 'sess_fixture', JSON.stringify({ type: 'compaction' }), 5);
+// A harness-injected goal-continuation reminder: the whole user message is a
+// <system-reminder> block, which the adapter must split into a `system` part.
+insPart.run('p7', 'm4', 'sess_fixture', JSON.stringify({ type: 'text', text: '<system-reminder>\nContinue working toward the active session goal.\n\n<untrusted_objective>\nmake the thing\n</untrusted_objective>\n</system-reminder>' }), 1);
 db.close();
 console.log(`fixture db written to ${dbPath}`);

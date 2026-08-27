@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
 import { truncateOutput } from '../shape.js';
+import { extractSystemParts } from '../system.js';
 
 export function claudeProjectsDir(): string {
   return join(homedir(), '.claude', 'projects');
@@ -127,10 +128,10 @@ export function makeClaudeCodeAdapter(projectsDir: string = claudeProjectsDir())
               .filter((b) => b.type === 'text' && typeof b.text === 'string')
               .map((b) => b.text as string);
             if (texts.length === 0) continue;
-            messages.push({ role: 'user', parts: texts.map((t) => ({ type: 'text', text: t })), time: ev.timestamp });
+            messages.push({ role: 'user', parts: extractSystemParts(texts.map((t) => ({ type: 'text', text: t }))), time: ev.timestamp });
             lastAssistant = undefined;
           } else if (typeof content === 'string' && content.length > 0) {
-            messages.push({ role: 'user', parts: [{ type: 'text', text: content }], time: ev.timestamp });
+            messages.push({ role: 'user', parts: extractSystemParts([{ type: 'text', text: content }]), time: ev.timestamp });
             lastAssistant = undefined;
           }
         } else if (ev.type === 'assistant') {
@@ -143,7 +144,7 @@ export function makeClaudeCodeAdapter(projectsDir: string = claudeProjectsDir())
             else if (b.type === 'tool_use' && typeof b.id === 'string') parts.push({ type: 'tool', callID: b.id, tool: b.name, input: b.input });
           }
           if (parts.length === 0) continue;
-          const msg: ShapedMessage = { role: 'assistant', parts, time: ev.timestamp };
+          const msg: ShapedMessage = { role: 'assistant', parts: extractSystemParts(parts), time: ev.timestamp };
           messages.push(msg);
           lastAssistant = msg;
           if (typeof ev.message?.model === 'string') model = ev.message.model;

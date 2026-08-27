@@ -4,6 +4,7 @@ import UserMessage from '../src/components/UserMessage.vue';
 import ToolCard from '../src/components/ToolCard.vue';
 import ReasoningBlock from '../src/components/ReasoningBlock.vue';
 import AssistantMessage from '../src/components/AssistantMessage.vue';
+import SystemNotice from '../src/components/SystemNotice.vue';
 import { renderMarkdown } from '../src/markdown';
 import type { ShareMessage, SharePart } from '../src/api';
 
@@ -22,9 +23,45 @@ describe('renderMarkdown', () => {
 });
 
 describe('UserMessage', () => {
-  it('renders the text in a bubble', () => {
-    const w = mount(UserMessage, { props: { text: 'hello from user' } });
+  it('renders text parts in a bubble', () => {
+    const w = mount(UserMessage, { props: { parts: [{ type: 'text', text: 'hello from user' }] } });
     expect(w.text()).toContain('hello from user');
+  });
+
+  it('renders a system part as a collapsed notice, not a bubble', async () => {
+    const w = mount(UserMessage, {
+      props: {
+        parts: [
+          { type: 'text', text: 'real user text' },
+          { type: 'system', text: 'Continue working toward the active session goal.\nobjective body' },
+        ],
+      },
+    });
+    expect(w.text()).toContain('real user text');
+    // The notice chip is collapsed by default: its label shows, the body does not.
+    expect(w.text()).toContain('goal continuation');
+    expect(w.text()).not.toContain('objective body');
+    await w.find('button').trigger('click');
+    expect(w.text()).toContain('objective body');
+  });
+});
+
+describe('SystemNotice', () => {
+  it('is collapsed by default and expands on click', async () => {
+    const w = mount(SystemNotice, { props: { text: 'hidden harness note' } });
+    expect(w.text()).not.toContain('hidden harness note');
+    await w.find('button').trigger('click');
+    expect(w.text()).toContain('hidden harness note');
+  });
+
+  it('labels goal-continuation reminders', () => {
+    const w = mount(SystemNotice, { props: { text: 'Continue working toward the active session goal.' } });
+    expect(w.text()).toContain('goal continuation');
+  });
+
+  it('falls back to a generic label', () => {
+    const w = mount(SystemNotice, { props: { text: 'some other note' } });
+    expect(w.text()).toContain('system reminder');
   });
 });
 
@@ -71,5 +108,19 @@ describe('AssistantMessage', () => {
     await flushPromises();
     expect(w.html()).toContain('<strong>bold</strong>');
     expect(w.text()).toContain('Read');
+  });
+
+  it('renders a system part as a collapsed notice', async () => {
+    const message: ShareMessage = {
+      chunkSeq: 0,
+      seq: 2,
+      role: 'assistant',
+      time: null,
+      parts: [{ type: 'system', text: 'Continue working toward the active session goal.\nhidden body' }],
+    };
+    const w = mount(AssistantMessage, { props: { message } });
+    await flushPromises();
+    expect(w.text()).toContain('goal continuation');
+    expect(w.text()).not.toContain('hidden body');
   });
 });

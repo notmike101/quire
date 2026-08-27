@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const partSchema = z
   .object({
-    type: z.enum(['text', 'tool', 'reasoning']),
+    type: z.enum(['text', 'tool', 'reasoning', 'system']),
     text: z.string().max(1_000_000).optional(),
     callID: z.string().max(200).optional(),
     tool: z.string().max(200).optional(),
