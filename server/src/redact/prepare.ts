@@ -1,6 +1,14 @@
 import { redactText, walkStrings } from './redact.js';
 import type { Preset } from './rules.js';
 
+export interface ShapedImage {
+  src?: string; // data: URI — NOT redacted (it's the image, not a secret)
+  mime?: string;
+  alt?: string;
+  bytes?: number;
+  tooLarge?: boolean;
+}
+
 export interface ShapedPart {
   type: 'text' | 'tool' | 'reasoning' | 'system' | 'image';
   text?: string;
@@ -9,13 +17,16 @@ export interface ShapedPart {
   status?: string;
   input?: unknown;
   output?: string;
-  // image parts (type: 'image'):
-  src?: string; // data: URI — NOT redacted (it's the image, not a secret)
+  // tool parts: images the agent viewed, rendered inside the tool card's
+  // collapsible body (Read attachments, screenshot tool output, etc.).
+  images?: ShapedImage[];
+  // standalone image parts (type: 'image'): the agent's deliberate markdown
+  // screenshots in text parts — rendered expanded, outside any tool card.
+  src?: string;
   mime?: string;
   alt?: string;
   bytes?: number;
   tooLarge?: boolean;
-  collapsed?: boolean; // render collapsed by default (Read-attachment images)
 }
 
 export interface ShapedMessage {

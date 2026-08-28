@@ -158,14 +158,14 @@ export async function createImageShare(request: APIRequestContext): Promise<{ to
 }
 
 /**
- * A session whose assistant message has a `collapsed` image part (a Read-
- * attachment image). The viewer must render it as a collapsed chip by default
- * and expand it on click.
+ * A session whose assistant message has a tool part with an attached image
+ * (a Read-attachment image). The viewer must render the image inside the tool
+ * card's collapsible body, hidden by default and visible on expand.
  */
-export function collapsedImageSession(): object {
+export function toolImageSession(): object {
   return {
-    sessionId: 'sess_image_collapsed',
-    title: 'Collapsed Image Session',
+    sessionId: 'sess_tool_image',
+    title: 'Tool Image Session',
     model: 'test-model',
     messages: [
       {
@@ -179,12 +179,12 @@ export function collapsedImageSession(): object {
         parts: [
           { type: 'text', text: 'Here is what the file shows.' },
           {
-            type: 'image',
-            src: TINY_PNG_DATA_URI,
-            mime: 'image/png',
-            alt: 'Read image',
-            bytes: 70,
-            collapsed: true,
+            type: 'tool',
+            tool: 'Read',
+            status: 'completed',
+            input: { file_path: '/tmp/example.png' },
+            output: '[Attached image/png: Read image]',
+            images: [{ src: TINY_PNG_DATA_URI, mime: 'image/png', alt: 'Read image', bytes: 70 }],
           },
         ],
       },
@@ -192,10 +192,10 @@ export function collapsedImageSession(): object {
   };
 }
 
-export async function createCollapsedImageShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
+export async function createToolImageShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
   const res = await request.post('/api/chats', {
     headers: { authorization: `Bearer ${API_KEY}` },
-    data: { session: collapsedImageSession() },
+    data: { session: toolImageSession() },
   });
   expect(res.status()).toBe(201);
   return await res.json();

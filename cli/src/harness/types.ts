@@ -1,3 +1,11 @@
+export interface ShapedImage {
+  src?: string; // data: URI (e.g. "data:image/jpeg;base64,…"); absent when tooLarge
+  mime?: string; // "image/jpeg" | "image/png" | …
+  alt?: string; // short label, e.g. "Read image" or "cactus_v3.png"
+  bytes?: number; // original file size in bytes
+  tooLarge?: boolean; // true when the image exceeded the embed cap (no src)
+}
+
 export interface ShapedPart {
   type: 'text' | 'tool' | 'reasoning' | 'system' | 'image';
   text?: string;
@@ -6,13 +14,16 @@ export interface ShapedPart {
   status?: string;
   input?: unknown;
   output?: string;
-  // image parts (type: 'image'):
-  src?: string; // data: URI (e.g. "data:image/jpeg;base64,…"); absent when tooLarge
-  mime?: string; // "image/jpeg" | "image/png" | …
-  alt?: string; // short label, e.g. "Read image" or "cactus_v3.png"
-  bytes?: number; // original file size in bytes
-  tooLarge?: boolean; // true when the image exceeded the embed cap (no src)
-  collapsed?: boolean; // render collapsed by default (Read-attachment images)
+  // tool parts: images the agent viewed, rendered inside the tool card's
+  // collapsible body (Read attachments, screenshot tool output, etc.).
+  images?: ShapedImage[];
+  // standalone image parts (type: 'image'): the agent's deliberate markdown
+  // screenshots in text parts — rendered expanded, outside any tool card.
+  src?: string;
+  mime?: string;
+  alt?: string;
+  bytes?: number;
+  tooLarge?: boolean;
 }
 
 export interface ShapedMessage {

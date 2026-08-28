@@ -82,6 +82,42 @@ describe('ToolCard', () => {
     const w = mount(ToolCard, { props: { part: { ...part, status: 'error' } } });
     expect(w.find('span.rounded-full').classes()).toContain('bg-red-100');
   });
+
+  it('renders attached images inside the collapsible body', async () => {
+    const dataUri = 'data:image/png;base64,AAA';
+    const w = mount(ToolCard, {
+      props: {
+        part: {
+          ...part,
+          images: [{ src: dataUri, mime: 'image/png', alt: 'Read image', bytes: 68 }],
+        },
+      },
+    });
+    // Collapsed by default: the image count badge shows, the <img> does not.
+    expect(w.text()).toContain('1 image');
+    expect(w.find('img').exists()).toBe(false);
+    // Expanding reveals the image.
+    await w.find('button').trigger('click');
+    const img = w.find('img');
+    expect(img.exists()).toBe(true);
+    expect(img.attributes('src')).toBe(dataUri);
+    expect(img.attributes('alt')).toBe('Read image');
+  });
+
+  it('shows a placeholder for tooLarge attached images', async () => {
+    const w = mount(ToolCard, {
+      props: {
+        part: {
+          ...part,
+          images: [{ mime: 'image/png', alt: 'big', bytes: 3_000_000, tooLarge: true }],
+        },
+      },
+    });
+    await w.find('button').trigger('click');
+    expect(w.find('img').exists()).toBe(false);
+    expect(w.text()).toContain('image too large to embed');
+    expect(w.text()).toContain('2.9 MB');
+  });
 });
 
 describe('ReasoningBlock', () => {
@@ -173,23 +209,5 @@ describe('ImagePart', () => {
     expect(w.find('img').exists()).toBe(false);
     expect(w.text()).toContain('image too large to embed');
     expect(w.text()).toContain('2.9 MB');
-  });
-
-  it('renders a collapsed image as a chip (img hidden) until expanded', async () => {
-    const w = mount(ImagePart, { props: { part: { type: 'image', src: 'data:image/png;base64,AAA', mime: 'image/png', alt: 'Read image', collapsed: true } } });
-    // Collapsed by default: a chip is shown, the <img> is not.
-    expect(w.find('img').exists()).toBe(false);
-    expect(w.find('button').exists()).toBe(true);
-    expect(w.text()).toContain('image · Read image');
-    // Clicking the chip expands the image.
-    await w.find('button').trigger('click');
-    expect(w.find('img').exists()).toBe(true);
-    expect(w.find('img').attributes('src')).toBe('data:image/png;base64,AAA');
-  });
-
-  it('renders a non-collapsed image inline (no chip)', () => {
-    const w = mount(ImagePart, { props: { part: { type: 'image', src: 'data:image/png;base64,AAA', mime: 'image/png', alt: 'shot' } } });
-    expect(w.find('img').exists()).toBe(true);
-    expect(w.find('button').exists()).toBe(false);
   });
 });

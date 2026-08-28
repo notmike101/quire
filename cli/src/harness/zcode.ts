@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { HarnessAdapter, HarnessSessionInfo, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
+import type { HarnessAdapter, HarnessSessionInfo, ShapedImage, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
 import { truncateOutput } from '../shape.js';
 import { extractSystemParts, extractReasoningParts } from '../system.js';
 import { readArtifactDataUri, fileToDataUri, mimeFromExtension, isImageMime, MAX_IMAGE_BYTES } from '../image.js';
@@ -48,14 +48,15 @@ interface RawPart {
 }
 
 /**
- * Extract image parts from a tool part's attachments (ZCode stores viewed images
- * as data-URI artifacts referenced by `state.attachments[]`). Returns image parts
- * to be emitted immediately after the tool part, or [] if none.
+ * Extract images from a tool part's attachments (ZCode stores viewed images
+ * as data-URI artifacts referenced by `state.attachments[]`). Returns images
+ * to be attached to the tool part (rendered inside its collapsible body), or
+ * [] if none.
  */
-function imagePartsFromAttachments(raw: RawPart, artifactDir: string): ShapedPart[] {
+function imagesFromAttachments(raw: RawPart, artifactDir: string): ShapedImage[] {
   const attachments = raw.state?.attachments;
   if (!attachments || attachments.length === 0) return [];
-  const out: ShapedPart[] = [];
+  const out: ShapedImage[] = [];
   for (const att of attachments) {
     if (att.type !== 'file' || !isImageMime(att.mime)) continue;
     if (!att.url) continue;
@@ -63,17 +64,14 @@ function imagePartsFromAttachments(raw: RawPart, artifactDir: string): ShapedPar
     if (!toolResultId) continue;
     const uri = readArtifactDataUri(artifactDir, toolResultId);
     const alt = att.filename && att.filename !== 'Read image' ? att.filename : 'Read image';
-    // Read-attachment images are the agent inspecting a file — context, not a
-    // deliverable. Mark them collapsed so the viewer tucks them behind a chip by
-    // default (the agent's deliberate markdown screenshots stay expanded).
     if (!uri) {
-      out.push({ type: 'image', mime: att.mime, alt, bytes: att.metadata?.sizeBytes, tooLarge: true, collapsed: true });
+      out.push({ mime: att.mime, alt, bytes: att.metadata?.sizeBytes, tooLarge: true });
       continue;
     }
     if (uri.bytes > MAX_IMAGE_BYTES) {
-      out.push({ type: 'image', mime: uri.mime, alt, bytes: uri.bytes, tooLarge: true, collapsed: true });
+      out.push({ mime: uri.mime, alt, bytes: uri.bytes, tooLarge: true });
     } else {
-      out.push({ type: 'image', src: uri.dataUri, mime: uri.mime, alt, bytes: uri.bytes, collapsed: true });
+      out.push({ src: uri.dataUri, mime: uri.mime, alt, bytes: uri.bytes });
     }
   }
   return out;
@@ -81,10 +79,10 @@ function imagePartsFromAttachments(raw: RawPart, artifactDir: string): ShapedPar
 
 /**
  * Best-effort: resolve a screenshot tool call's on-disk file (input.filename
- * relative to the session working dir) to an image part. Returns [] if the file
+ * relative to the session working dir) to an image. Returns [] if the file
  * is gone or not an image — the markdown link in the tool output still renders.
  */
-function imagePartFromScreenshotFile(raw: RawPart, workDir: string | undefined): ShapedPart[] {
+function imageFromScreenshotFile(raw: RawPart, workDir: string | undefined): ShapedImage[] {
   if (!workDir) return [];
   const input = raw.state?.input as { filename?: string } | undefined;
   const filename = input?.filename;
@@ -94,10 +92,10 @@ function imagePartFromScreenshotFile(raw: RawPart, workDir: string | undefined):
   const filePath = join(workDir, filename);
   const uri = fileToDataUri(filePath, mime);
   if (!uri) return [];
-    if (uri.bytes > MAX_IMAGE_BYTES) {
-      return [{ type: 'image', mime: uri.mime, alt: filename, bytes: uri.bytes, tooLarge: true, collapsed: true }];
-    }
-    return [{ type: 'image', src: uri.dataUri, mime: uri.mime, alt: filename, bytes: uri.bytes, collapsed: true }];
+  if (uri.bytes > MAX_IMAGE_BYTES) {
+    return [{ mime: uri.mime, alt: filename, bytes: uri.bytes, tooLarge: true }];
+  }
+  return [{ src: uri.dataUri, mime: uri.mime, alt: filename, bytes: uri.bytes }];
 }
 
 function isScreenshotTool(tool: string | undefined): boolean {
@@ -184,23 +182,23 @@ function partToShaped(raw: RawPart, artifactDir: string, workDir: string | undef
       return typeof raw.text === 'string' ? [{ type: 'reasoning', text: raw.text }] : [];
     case 'tool': {
       const output = typeof raw.state?.output === 'string' ? truncateOutput(raw.state.output) : undefined;
-      const parts: ShapedPart[] = [
-        {
-          type: 'tool',
-          callID: raw.callID,
-          tool: raw.tool,
-          status: raw.state?.status,
-          input: raw.state?.input,
-          output,
-        },
-      ];
       // Images the agent viewed: from Read attachments (data-URI artifacts) and,
-      // best-effort, from screenshot tool calls' on-disk files.
-      parts.push(...imagePartsFromAttachments(raw, artifactDir));
+      // best-effort, from screenshot tool calls' on-disk files. Attached to the
+      // tool part so the viewer renders them inside its collapsible body.
+      const images: ShapedImage[] = [...imagesFromAttachments(raw, artifactDir)];
       if (isScreenshotTool(raw.tool)) {
-        parts.push(...imagePartFromScreenshotFile(raw, workDir));
+        images.push(...imageFromScreenshotFile(raw, workDir));
       }
-      return parts;
+      const toolPart: ShapedPart = {
+        type: 'tool',
+        callID: raw.callID,
+        tool: raw.tool,
+        status: raw.state?.status,
+        input: raw.state?.input,
+        output,
+      };
+      if (images.length > 0) toolPart.images = images;
+      return [toolPart];
     }
     default:
       return []; // step-start, step-finish, compaction

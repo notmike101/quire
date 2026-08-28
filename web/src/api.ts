@@ -1,3 +1,11 @@
+export interface ShareImage {
+  src?: string; // data: URI; absent when tooLarge
+  mime?: string;
+  alt?: string;
+  bytes?: number;
+  tooLarge?: boolean;
+}
+
 export interface SharePart {
   type: 'text' | 'tool' | 'reasoning' | 'system' | 'image';
   text?: string;
@@ -6,13 +14,16 @@ export interface SharePart {
   status?: string;
   input?: unknown;
   output?: string;
-  // image parts (type: 'image'):
-  src?: string; // data: URI; absent when tooLarge
+  // tool parts: images the agent viewed, rendered inside the tool card's
+  // collapsible body (Read attachments, screenshot tool output, etc.).
+  images?: ShareImage[];
+  // standalone image parts (type: 'image'): the agent's deliberate markdown
+  // screenshots in text parts — rendered expanded, outside any tool card.
+  src?: string;
   mime?: string;
   alt?: string;
   bytes?: number;
   tooLarge?: boolean;
-  collapsed?: boolean; // render collapsed by default (Read-attachment images)
 }
 
 export interface ShareMessage {

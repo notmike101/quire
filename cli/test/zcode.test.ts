@@ -84,10 +84,10 @@ describe('zcode adapter', () => {
     expect(s.messages[0]!.parts).toEqual([{ type: 'text', text: 'hello world' }]);
     const assistant = s.messages[1]!;
     // p2 text, p3 tool, p4 reasoning, p8 think-block text (split), p9 empty
-    // think-block text (dropped to a text fallback), p11 Read-image tool + its
-    // image part (emitted after the tool part).
+    // think-block text (dropped to a text fallback), p11 Read-image tool (with
+    // the image attached to the tool part, not a separate part).
     expect(assistant.parts.map((p) => p.type)).toEqual([
-      'text', 'tool', 'reasoning', 'reasoning', 'text', 'text', 'tool', 'image',
+      'text', 'tool', 'reasoning', 'reasoning', 'text', 'text', 'tool',
     ]);
     const tool = assistant.parts[1]!;
     expect(tool.tool).toBe('Bash');
@@ -151,26 +151,25 @@ describe('zcode adapter', () => {
     await expect(makeZcodeAdapter(fixtureDb).loadSession('sess_nope')).rejects.toThrow(/not found/);
   });
 
-  it('emits an image part (data URI) after a Read-image tool part', async () => {
+  it('attaches a Read-image to the tool part (rendered inside the tool card)', async () => {
     const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
     const s = await makeZcodeAdapter(fixtureDb).loadSession('sess_fixture');
     const assistant = s.messages[1]!;
-    // The Read-image tool part is the last tool part; the image part follows it.
+    // The Read-image tool part has the image attached to it (not a separate part).
     const toolIdx = assistant.parts.findIndex((p) => p.type === 'tool' && p.callID === 'c2');
     expect(toolIdx).toBeGreaterThan(-1);
-    const img = assistant.parts[toolIdx + 1]!;
-    expect(img.type).toBe('image');
+    const tool = assistant.parts[toolIdx]!;
+    expect(tool.type).toBe('tool');
+    expect(tool.output).toBe('[Attached image/png: Read image]');
+    // The image is attached to the tool part, not emitted as a separate part.
+    expect(tool.images).toHaveLength(1);
+    const img = tool.images![0]!;
     expect(img.mime).toBe('image/png');
     expect(img.src).toBe(`data:image/png;base64,${PNG_1X1}`);
     expect(img.bytes).toBe(Buffer.byteLength(PNG_1X1, 'base64'));
-    // Read-attachment images are the agent inspecting a file — context, not a
-    // deliverable — so they render collapsed by default.
-    expect(img.collapsed).toBe(true);
-    // The tool part's output is the placeholder string, unchanged.
-    expect(assistant.parts[toolIdx]!.output).toBe('[Attached image/png: Read image]');
   });
 
-  it('emits a COLLAPSED image part after a screenshot tool part', async () => {
+  it('attaches a screenshot image to the tool part (rendered inside the tool card)', async () => {
     const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
     // Pass tempDir as the workDirOverride so the screenshot file (in tempDir)
     // resolves correctly regardless of the fixture session's /tmp working dir.
@@ -180,22 +179,18 @@ describe('zcode adapter', () => {
     // [4]=m8(assistant), [5]=m9(assistant).
     const msg = s.messages[5]!;
     expect(msg.role).toBe('assistant');
-    expect(msg.parts.map((p) => p.type)).toEqual(['tool', 'image']);
+    expect(msg.parts.map((p) => p.type)).toEqual(['tool']);
     const tool = msg.parts[0]!;
     expect(tool.type).toBe('tool');
     expect(tool.tool).toBe('mcp__playwright__browser_take_screenshot');
     expect(tool.callID).toBe('c3');
-    const img = msg.parts[1]!;
-    expect(img.type).toBe('image');
+    // The screenshot image is attached to the tool part, not a separate part.
+    expect(tool.images).toHaveLength(1);
+    const img = tool.images![0]!;
     expect(img.mime).toBe('image/png');
     expect(img.src).toBe(`data:image/png;base64,${PNG_1X1}`);
     expect(img.alt).toBe('screenshot-fix.png');
     expect(img.bytes).toBe(Buffer.byteLength(PNG_1X1, 'base64'));
-    // Screenshot-tool images are the agent's own tool output — context, not a
-    // deliverable — so they render collapsed by default (like Read-attachment
-    // images). Only the agent's deliberate markdown screenshots in text stay
-    // expanded.
-    expect(img.collapsed).toBe(true);
   });
 
   it('embeds a markdown image link in a text part as an image part', async () => {
@@ -218,9 +213,6 @@ describe('zcode adapter', () => {
     expect(img.src).toBe(`data:image/png;base64,${PNG_1X1}`);
     expect(img.alt).toBe('my screenshot');
     expect(img.bytes).toBe(Buffer.byteLength(PNG_1X1, 'base64'));
-    // A markdown screenshot is the agent's deliberate deliverable — it renders
-    // inline (expanded), NOT collapsed like a Read-attachment image.
-    expect(img.collapsed).toBeUndefined();
   });
 
   it('emits a tooLarge image part when the artifact exceeds the cap', async () => {
@@ -252,7 +244,9 @@ describe('zcode adapter', () => {
       }), 1);
       db.close();
       const s = await makeZcodeAdapter(oneOffDb).loadSession('sess_big');
-      const img = s.messages[0]!.parts.find((p) => p.type === 'image')!;
+      const tool = s.messages[0]!.parts.find((p) => p.type === 'tool')!;
+      expect(tool.images).toHaveLength(1);
+      const img = tool.images![0]!;
       expect(img.tooLarge).toBe(true);
       expect(img.src).toBeUndefined();
       expect(img.bytes).toBe(MAX_IMAGE_BYTES + 1);
