@@ -126,8 +126,8 @@ The standing process for this repo (specs and plans are committed under `docs/su
    ```bash
    pnpm --filter @quire/server build
    DATABASE_URL="postgresql://quire:quire@127.0.0.1:54329/quire_test" \
-   QUIRE_API_KEY="e2e-test-key-000000000000000000000000" \
-   UNLOCK_SECRET="e2e-unlock-secret-0000000000000000000000" \
+   QUIRE_API_KEY="e2e-test-key-0000000000000000000000" \
+   UNLOCK_SECRET="e2e-unlock-secret-0000000000000000" \
    PORT=8791 node server/dist/index.js
    ```
 
