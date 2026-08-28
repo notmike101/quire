@@ -28,16 +28,18 @@ describe('splitSystemText', () => {
     expect(segs.map((s) => s.text).join('')).toBe(text);
   });
 
-  it('splits a part that has both a quoted mention and a real injection', () => {
+  it('splits a leading real injection followed by quoted prose', () => {
+    // A real harness injection is PREPENDED to the part; any prose (including a
+    // quoted mention of the tag) comes AFTER it. The leading block is a system
+    // segment; the trailing prose is kept verbatim as one text segment.
     const text =
-      'Quoted: `<system-reminder>...</system-reminder>`\n' +
-      '<system-reminder>\nContinue working toward the active session goal.\n</system-reminder>';
+      '<system-reminder>\nContinue working toward the active session goal.\n</system-reminder>\n' +
+      'Quoted: `<system-reminder>...</system-reminder>`';
     const segs = splitSystemText(text);
-    // The quoted block is text; only the bare block becomes a system part.
-    expect(segs.filter((s) => s.kind === 'system')).toHaveLength(1);
-    expect(segs.find((s) => s.kind === 'system')!.text).toContain('active session goal');
-    // The quoted mention survives as plain text, verbatim.
-    expect(segs.map((s) => s.text).join('')).toContain('`<system-reminder>...</system-reminder>`');
+    expect(segs.map((s) => s.kind)).toEqual(['system', 'text']);
+    expect(segs[0]!.text).toContain('active session goal');
+    // The trailing quoted mention survives as plain text, verbatim.
+    expect(segs[1]!.text).toContain('`<system-reminder>...</system-reminder>`');
   });
 
   it('splits a pure reminder block into a single system segment', () => {
@@ -54,22 +56,34 @@ describe('splitSystemText', () => {
     expect(segs[0]!.text).toContain('do the thing');
   });
 
-  it('splits a mixed part into text + system + text in order', () => {
+  it('leaves an embedded reminder (text before the tag) as plain text', () => {
+    // A reminder block that is NOT at the start of the part — real user prose
+    // comes first — is not an injection. Real harness injections are prepended,
+    // never embedded mid-prose. The whole part stays one text segment.
     const text = 'Real user text here.\n<system-reminder>\nreminder body\n</system-reminder>\nTrailing text.';
-    const segs = splitSystemText(text);
-    expect(segs.map((s) => s.kind)).toEqual(['text', 'system', 'text']);
-    expect(segs[0]!.text).toBe('Real user text here.\n');
-    expect(segs[1]!.text).toBe('\nreminder body\n');
-    expect(segs[2]!.text).toBe('\nTrailing text.');
+    expect(splitSystemText(text)).toEqual([{ kind: 'text', text }]);
   });
 
-  it('handles multiple reminder blocks in one part', () => {
+  it('extracts only the leading block when a second block follows mid-prose', () => {
+    // The first block is leading (a real injection); a second block that appears
+    // after intervening prose is embedded and is left as plain text.
     const text = '<system-reminder>a</system-reminder>middle<system-reminder>b</system-reminder>';
     const segs = splitSystemText(text);
-    expect(segs.map((s) => s.kind)).toEqual(['system', 'text', 'system']);
+    expect(segs.map((s) => s.kind)).toEqual(['system', 'text']);
     expect(segs[0]!.text).toBe('a');
-    expect(segs[1]!.text).toBe('middle');
-    expect(segs[2]!.text).toBe('b');
+    expect(segs[1]!.text).toBe('middle<system-reminder>b</system-reminder>');
+  });
+
+  it('leaves a tool output that is source code quoting the tag as plain text', () => {
+    // The motivating case: a Read tool output (rendered as a text part) whose
+    // content is source code containing the literal tag string — e.g. reading a
+    // test file whose fixtures include the tag. The tag is embedded in the code,
+    // not at the start of the part, so it is never treated as an injection.
+    const text =
+      'Result of calling the Read tool:\n' +
+      '92\t    const part: ShapedPart = { type: \'text\', text: \'<system-reminder>\ngoal body\n</system-reminder>\' };\n' +
+      '93\t    expect(extractSystemParts([part])).toEqual([{ type: \'system\', text: \'\\ngoal body\\n\' }]);';
+    expect(splitSystemText(text)).toEqual([{ kind: 'text', text }]);
   });
 
   it('treats an unclosed reminder tag as plain text (nothing dropped)', () => {
@@ -116,12 +130,21 @@ describe('extractSystemParts', () => {
     expect(extractSystemParts([part])).toEqual([{ type: 'system', text: '\ngoal body\n' }]);
   });
 
-  it('splits a mixed part into text and system parts in order', () => {
-    const part: ShapedPart = { type: 'text', text: 'user said hi\n<system-reminder>\nnote\n</system-reminder>' };
+  it('splits a leading injection followed by user prose into system + text', () => {
+    // A real harness injection is prepended to the user's actual message. The
+    // leading block becomes a system part; the trailing prose stays one text part.
+    const part: ShapedPart = { type: 'text', text: '<system-reminder>\nnote\n</system-reminder>\nuser said hi' };
     expect(extractSystemParts([part])).toEqual([
-      { type: 'text', text: 'user said hi\n' },
       { type: 'system', text: '\nnote\n' },
+      { type: 'text', text: '\nuser said hi' },
     ]);
+  });
+
+  it('leaves a part with an embedded reminder (text before the tag) as one text part', () => {
+    // The tag is not at the start of the part, so it is not an injection. The
+    // whole part stays a single text part (one message), not fragments.
+    const part: ShapedPart = { type: 'text', text: 'user said hi\n<system-reminder>\nnote\n</system-reminder>' };
+    expect(extractSystemParts([part])).toEqual([part]);
   });
 
   it('preserves the order of multiple parts in a message', () => {
@@ -160,15 +183,27 @@ describe('extractSystemParts', () => {
     expect(extractSystemParts([part])).toEqual([part]);
   });
 
-  it('still splits a part that has both a quoted mention and a real injection', () => {
+  it('splits a part with a leading real injection followed by a quoted mention', () => {
+    // The real injection is prepended (leading); the quoted mention is trailing
+    // prose. Leading block → system part; the quoted mention stays in the text.
+    const part: ShapedPart = {
+      type: 'text',
+      text: '<system-reminder>\ngoal body\n</system-reminder>\nQuoted: `<system-reminder>...</system-reminder>`',
+    };
+    const out = extractSystemParts([part]);
+    expect(out.map((p) => p.type)).toEqual(['system', 'text']);
+    expect(out[0]!.text).toContain('goal body');
+    expect(out[1]!.text).toContain('`<system-reminder>...</system-reminder>`');
+  });
+
+  it('leaves a part that quotes the tag mid-prose (no leading block) as one text part', () => {
+    // The tag only appears embedded (after prose), never leading — so there is
+    // no real injection and the whole part stays one text part.
     const part: ShapedPart = {
       type: 'text',
       text: 'Quoted: `<system-reminder>...</system-reminder>`\n<system-reminder>\ngoal body\n</system-reminder>',
     };
-    const out = extractSystemParts([part]);
-    expect(out.map((p) => p.type)).toEqual(['text', 'system']);
-    expect(out[0]!.text).toContain('`<system-reminder>...</system-reminder>`');
-    expect(out[1]!.text).toContain('goal body');
+    expect(extractSystemParts([part])).toEqual([part]);
   });
 });
 

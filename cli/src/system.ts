@@ -8,13 +8,21 @@ import type { ShapedPart } from './harness/types.js';
  * part so the viewer can render them as a muted, collapsible notice instead
  * of a user bubble.
  *
- * The parser is deliberately conservative: only a well-formed, top-level
- * `<system-reminder>` block is treated as system. Nested tags (e.g.
+ * The parser is deliberately conservative. A `<system-reminder>` block is a
+ * real system injection only when it is at a MESSAGE BOUNDARY — i.e. the block
+ * starts at the very beginning of the text part (after optional whitespace).
+ * This mirrors the leading-only `think` discriminator below: real harness
+ * injections (goal continuations, todo nudges, compaction notes) are prepended
+ * to the part, never embedded mid-prose.
+ *
+ * A block that is *embedded* — with real text before it — is NOT an injection.
+ * It is either a user/assistant quoting the tag in prose, a compaction summary
+ * describing the conversation, or (the case that motivated this rule) a tool
+ * output that is source code containing the literal tag string (e.g. reading a
+ * test file whose fixtures include `<system-reminder>…</system-reminder>`).
+ * All of those are left as plain text. Nested tags (e.g.
  * `<untrusted_objective>` inside a reminder) are part of the block's content,
- * not separate segments. A block that is *quoted* — wrapped in backticks, as in
- * `` `<system-reminder>…</system-reminder>` `` — is left untouched, because a
- * user writing about the harness (or a compaction summary describing it) quotes
- * the tag inline rather than having one injected.
+ * not separate segments.
  */
 
 export interface SystemSegment {
@@ -25,53 +33,50 @@ export interface SystemSegment {
 const REMINDER_RE = /<system-reminder>([\s\S]*?)<\/system-reminder>/g;
 
 /**
- * A `<system-reminder>` block is a quoted mention (not a real injection) when it
- * is immediately preceded or followed by a backtick. Real harness injections are
- * bare tags at message boundaries; a user quoting the tag in prose wraps it in
- * backticks. This keeps user-authored text that references the tag from being
- * collapsed into a system notice.
- */
-function isBacktickQuoted(text: string, index: number, length: number): boolean {
-  const before = index > 0 ? text[index - 1] : '';
-  const after = text[index + length] ?? '';
-  return before === '`' || after === '`';
-}
-
-/**
- * Split a text part into ordered segments. A part that is entirely one
- * reminder block (ignoring surrounding whitespace) yields a single `system`
- * segment. A mixed part yields its real text plus one `system` segment per
- * injected block, in order. Quoted (backtick-wrapped) blocks are kept as plain
- * text. A part with no reminder block is returned as a single `text` segment
- * unchanged.
+ * Split a text part into ordered segments, extracting a LEADING run of
+ * well-formed `<system-reminder>` blocks. A block counts as a real injection
+ * only when it starts at the beginning of the part (after optional whitespace);
+ * a block with real text before it is embedded/quoted and is left as plain
+ * text. This mirrors the leading-only `think` discriminator: real harness
+ * injections are prepended to the part, never embedded mid-prose.
+ *
+ * A part that is entirely one reminder block (ignoring surrounding whitespace)
+ * yields a single `system` segment. A part that starts with one or more leading
+ * blocks followed by real prose yields those `system` segments plus one `text`
+ * segment for the trailing prose, in order. A part whose tag is embedded
+ * (text before it) — a quote, a compaction summary, or a tool output that is
+ * source code containing the tag — is returned as a single `text` segment
+ * unchanged. A part with no reminder block is returned unchanged.
  */
 export function splitSystemText(text: string): SystemSegment[] {
-  if (!text.includes('<system-reminder>')) return [{ kind: 'text', text }];
+  const OPEN = '<system-reminder>';
+  const CLOSE = '</system-reminder>';
+
+  // Fast path: no tag at all, or the part doesn't start with one (after
+  // whitespace). An embedded/quoted tag is never an injection.
+  const leftTrimmed = text.replace(/^\s+/, '');
+  if (!leftTrimmed.startsWith(OPEN)) return [{ kind: 'text', text }];
 
   const segments: SystemSegment[] = [];
-  let last = 0;
-  REMINDER_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = REMINDER_RE.exec(text)) !== null) {
-    if (m.index > last) {
-      const before = text.slice(last, m.index);
-      if (before.trim() !== '') segments.push({ kind: 'text', text: before });
-    }
-    // A backtick-wrapped block is a quoted mention, not an injection — emit it
-    // as plain text so the user's prose is preserved verbatim.
-    if (isBacktickQuoted(text, m.index, m[0].length)) {
-      segments.push({ kind: 'text', text: m[0] });
-    } else {
-      segments.push({ kind: 'system', text: m[1]! });
-    }
-    last = m.index + m[0].length;
+  // Consume leading reminder blocks. Each must start at the current position
+  // (after optional whitespace) to count as a real injection.
+  let pos = 0;
+  while (true) {
+    const ws = text.slice(pos).match(/^\s*/);
+    const wsLen = ws ? ws[0].length : 0;
+    const start = pos + wsLen;
+    if (!text.startsWith(OPEN, start)) break;
+    const closeIdx = text.indexOf(CLOSE, start + OPEN.length);
+    if (closeIdx === -1) break; // unclosed tag: stop, treat rest as text
+    const content = text.slice(start + OPEN.length, closeIdx);
+    segments.push({ kind: 'system', text: content });
+    pos = closeIdx + CLOSE.length;
   }
-  if (last < text.length) {
-    const after = text.slice(last);
-    if (after.trim() !== '') segments.push({ kind: 'text', text: after });
-  }
-  // No well-formed block found (e.g. an unclosed tag): treat the whole part
-  // as plain text so nothing is silently dropped.
+  // Anything after the leading blocks is the real user prose.
+  const rest = text.slice(pos);
+  if (rest.trim() !== '') segments.push({ kind: 'text', text: rest });
+  // If the part had no well-formed leading block (e.g. an unclosed tag), return
+  // the original so nothing is silently dropped.
   if (segments.length === 0) return [{ kind: 'text', text }];
   return segments;
 }
