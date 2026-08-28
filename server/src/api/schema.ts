@@ -15,6 +15,7 @@ export const partSchema = z
     alt: z.string().max(200).optional(),
     bytes: z.number().int().nonnegative().optional(),
     tooLarge: z.boolean().optional(),
+    collapsed: z.boolean().optional(), // render collapsed by default (Read images)
   })
   .strict();
 

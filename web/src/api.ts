@@ -12,6 +12,7 @@ export interface SharePart {
   alt?: string;
   bytes?: number;
   tooLarge?: boolean;
+  collapsed?: boolean; // render collapsed by default (Read-attachment images)
 }
 
 export interface ShareMessage {

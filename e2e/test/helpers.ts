@@ -157,6 +157,50 @@ export async function createImageShare(request: APIRequestContext): Promise<{ to
   return await res.json();
 }
 
+/**
+ * A session whose assistant message has a `collapsed` image part (a Read-
+ * attachment image). The viewer must render it as a collapsed chip by default
+ * and expand it on click.
+ */
+export function collapsedImageSession(): object {
+  return {
+    sessionId: 'sess_image_collapsed',
+    title: 'Collapsed Image Session',
+    model: 'test-model',
+    messages: [
+      {
+        role: 'user',
+        time: new Date(Date.UTC(2026, 0, 1, 12, 0)).toISOString(),
+        parts: [{ type: 'text', text: 'read the file' }],
+      },
+      {
+        role: 'assistant',
+        time: new Date(Date.UTC(2026, 0, 1, 12, 1)).toISOString(),
+        parts: [
+          { type: 'text', text: 'Here is what the file shows.' },
+          {
+            type: 'image',
+            src: TINY_PNG_DATA_URI,
+            mime: 'image/png',
+            alt: 'Read image',
+            bytes: 70,
+            collapsed: true,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+export async function createCollapsedImageShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
+  const res = await request.post('/api/chats', {
+    headers: { authorization: `Bearer ${API_KEY}` },
+    data: { session: collapsedImageSession() },
+  });
+  expect(res.status()).toBe(201);
+  return await res.json();
+}
+
 export async function createChunkedShare(
   request: APIRequestContext,
   opts: { perChunk?: number } = {},

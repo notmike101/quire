@@ -63,16 +63,17 @@ function imagePartsFromAttachments(raw: RawPart, artifactDir: string): ShapedPar
     if (!toolResultId) continue;
     const uri = readArtifactDataUri(artifactDir, toolResultId);
     const alt = att.filename && att.filename !== 'Read image' ? att.filename : 'Read image';
+    // Read-attachment images are the agent inspecting a file — context, not a
+    // deliverable. Mark them collapsed so the viewer tucks them behind a chip by
+    // default (the agent's deliberate markdown screenshots stay expanded).
     if (!uri) {
-      // Artifact missing (e.g. cleaned up) — emit a placeholder so the transcript
-      // still shows an image was viewed here.
-      out.push({ type: 'image', mime: att.mime, alt, bytes: att.metadata?.sizeBytes, tooLarge: true });
+      out.push({ type: 'image', mime: att.mime, alt, bytes: att.metadata?.sizeBytes, tooLarge: true, collapsed: true });
       continue;
     }
     if (uri.bytes > MAX_IMAGE_BYTES) {
-      out.push({ type: 'image', mime: uri.mime, alt, bytes: uri.bytes, tooLarge: true });
+      out.push({ type: 'image', mime: uri.mime, alt, bytes: uri.bytes, tooLarge: true, collapsed: true });
     } else {
-      out.push({ type: 'image', src: uri.dataUri, mime: uri.mime, alt, bytes: uri.bytes });
+      out.push({ type: 'image', src: uri.dataUri, mime: uri.mime, alt, bytes: uri.bytes, collapsed: true });
     }
   }
   return out;

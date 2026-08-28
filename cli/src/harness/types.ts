@@ -12,6 +12,7 @@ export interface ShapedPart {
   alt?: string; // short label, e.g. "Read image" or "cactus_v3.png"
   bytes?: number; // original file size in bytes
   tooLarge?: boolean; // true when the image exceeded the embed cap (no src)
+  collapsed?: boolean; // render collapsed by default (Read-attachment images)
 }
 
 export interface ShapedMessage {

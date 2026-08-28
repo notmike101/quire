@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createShare, createChunkedShare, createSystemNoticeShare, createReasoningShare, createImageShare, TINY_PNG_DATA_URI, OPENAI_KEY } from './helpers';
+import { createShare, createChunkedShare, createSystemNoticeShare, createReasoningShare, createImageShare, createCollapsedImageShare, TINY_PNG_DATA_URI, OPENAI_KEY } from './helpers';
 
 test.describe('share viewer', () => {
   test('renders the first page and redacts secrets server-side', async ({ page, request }) => {
@@ -143,5 +143,21 @@ test.describe('share viewer', () => {
     await expect(img).toHaveCount(1);
     await expect(img).toHaveAttribute('src', TINY_PNG_DATA_URI);
     await expect(img).toHaveAttribute('alt', 'screenshot');
+  });
+
+  test('a collapsed image part renders as a chip (img hidden) until expanded', async ({ page, request }) => {
+    const { token } = await createCollapsedImageShare(request);
+    await page.goto(`/chats/${token}`);
+    await expect(page.getByRole('heading', { name: 'Collapsed Image Session' })).toBeVisible();
+    await expect(page.getByText('Here is what the file shows.')).toBeVisible();
+    // Collapsed by default: a chip is shown, the <img> is not.
+    const chip = page.getByRole('button', { name: /image · Read image/ });
+    await expect(chip).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('img.image-part-img')).toHaveCount(0);
+    // Expanding reveals the embedded image.
+    await chip.click();
+    const img = page.locator('img.image-part-img');
+    await expect(img).toHaveCount(1);
+    await expect(img).toHaveAttribute('src', TINY_PNG_DATA_URI);
   });
 });

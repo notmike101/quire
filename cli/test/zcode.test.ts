@@ -153,6 +153,9 @@ describe('zcode adapter', () => {
     expect(img.mime).toBe('image/png');
     expect(img.src).toBe(`data:image/png;base64,${PNG_1X1}`);
     expect(img.bytes).toBe(Buffer.byteLength(PNG_1X1, 'base64'));
+    // Read-attachment images are the agent inspecting a file — context, not a
+    // deliverable — so they render collapsed by default.
+    expect(img.collapsed).toBe(true);
     // The tool part's output is the placeholder string, unchanged.
     expect(assistant.parts[toolIdx]!.output).toBe('[Attached image/png: Read image]');
   });
@@ -177,6 +180,9 @@ describe('zcode adapter', () => {
     expect(img.src).toBe(`data:image/png;base64,${PNG_1X1}`);
     expect(img.alt).toBe('my screenshot');
     expect(img.bytes).toBe(Buffer.byteLength(PNG_1X1, 'base64'));
+    // A markdown screenshot is the agent's deliberate deliverable — it renders
+    // inline (expanded), NOT collapsed like a Read-attachment image.
+    expect(img.collapsed).toBeUndefined();
   });
 
   it('emits a tooLarge image part when the artifact exceeds the cap', async () => {

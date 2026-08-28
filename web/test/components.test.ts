@@ -174,4 +174,22 @@ describe('ImagePart', () => {
     expect(w.text()).toContain('image too large to embed');
     expect(w.text()).toContain('2.9 MB');
   });
+
+  it('renders a collapsed image as a chip (img hidden) until expanded', async () => {
+    const w = mount(ImagePart, { props: { part: { type: 'image', src: 'data:image/png;base64,AAA', mime: 'image/png', alt: 'Read image', collapsed: true } } });
+    // Collapsed by default: a chip is shown, the <img> is not.
+    expect(w.find('img').exists()).toBe(false);
+    expect(w.find('button').exists()).toBe(true);
+    expect(w.text()).toContain('image · Read image');
+    // Clicking the chip expands the image.
+    await w.find('button').trigger('click');
+    expect(w.find('img').exists()).toBe(true);
+    expect(w.find('img').attributes('src')).toBe('data:image/png;base64,AAA');
+  });
+
+  it('renders a non-collapsed image inline (no chip)', () => {
+    const w = mount(ImagePart, { props: { part: { type: 'image', src: 'data:image/png;base64,AAA', mime: 'image/png', alt: 'shot' } } });
+    expect(w.find('img').exists()).toBe(true);
+    expect(w.find('button').exists()).toBe(false);
+  });
 });
