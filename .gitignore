@@ -40,3 +40,7 @@ Thumbs.db
 # Synthetic test fixtures are fine to commit
 !cli/test/fixtures/*.sqlite
 !cli/test/fixtures/*.jsonl
+
+# Agent data
+.superpowers
+.zcode
