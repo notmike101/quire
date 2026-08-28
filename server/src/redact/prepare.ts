@@ -2,13 +2,19 @@ import { redactText, walkStrings } from './redact.js';
 import type { Preset } from './rules.js';
 
 export interface ShapedPart {
-  type: 'text' | 'tool' | 'reasoning' | 'system';
+  type: 'text' | 'tool' | 'reasoning' | 'system' | 'image';
   text?: string;
   callID?: string;
   tool?: string;
   status?: string;
   input?: unknown;
   output?: string;
+  // image parts (type: 'image'):
+  src?: string; // data: URI — NOT redacted (it's the image, not a secret)
+  mime?: string;
+  alt?: string;
+  bytes?: number;
+  tooLarge?: boolean;
 }
 
 export interface ShapedMessage {

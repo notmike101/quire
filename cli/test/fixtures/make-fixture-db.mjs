@@ -48,5 +48,26 @@ insPart.run('p9', 'm2', 'sess_fixture', JSON.stringify({ type: 'text', text: T_O
 insPart.run('p7', 'm4', 'sess_fixture', JSON.stringify({ type: 'text', text: '<system-reminder>\nContinue working toward the active session goal.\n\n<untrusted_objective>\nmake the thing\n</untrusted_objective>\n</system-reminder>' }), 1);
 // Part for the model-only message — must be dropped along with its message.
 insPart.run('p10', 'm5', 'sess_fixture', JSON.stringify({ type: 'text', text: "The TodoWrite tool hasn't been used recently." }), 1);
+// A Read tool call on an image file. ZCode stores the viewed image as a data-URI
+// artifact referenced by state.attachments[]. The adapter must emit an `image`
+// part after the tool part. The artifact itself is created by the test (in a temp
+// artifacts dir), not here — the fixture only carries the attachment reference.
+insPart.run('p11', 'm2', 'sess_fixture', JSON.stringify({
+  type: 'tool',
+  callID: 'c2',
+  tool: 'Read',
+  state: {
+    status: 'completed',
+    input: { file_path: '/tmp/shot.png' },
+    output: '[Attached image/png: Read image]',
+    attachments: [{
+      type: 'file',
+      mime: 'image/png',
+      filename: 'Read image',
+      url: 'zcode-artifact://sess_fixture/tool-result-fix1',
+      metadata: { sizeBytes: 68, storageKind: 'artifact' },
+    }],
+  },
+}), 8);
 db.close();
 console.log(`fixture db written to ${dbPath}`);

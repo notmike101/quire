@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createShare, createChunkedShare, createSystemNoticeShare, createReasoningShare, OPENAI_KEY } from './helpers';
+import { createShare, createChunkedShare, createSystemNoticeShare, createReasoningShare, createImageShare, TINY_PNG_DATA_URI, OPENAI_KEY } from './helpers';
 
 test.describe('share viewer', () => {
   test('renders the first page and redacts secrets server-side', async ({ page, request }) => {
@@ -132,5 +132,16 @@ test.describe('share viewer', () => {
     // Expanding reveals the reasoning body.
     await page.getByRole('button', { name: /thinking/ }).click();
     await expect(page.getByText('let me think about this carefully step by step')).toBeVisible();
+  });
+
+  test('an image part renders as an <img> with the embedded data URI', async ({ page, request }) => {
+    const { token } = await createImageShare(request);
+    await page.goto(`/chats/${token}`);
+    await expect(page.getByRole('heading', { name: 'Image Session' })).toBeVisible();
+    await expect(page.getByText('Here it is.')).toBeVisible();
+    const img = page.locator('img.image-part-img');
+    await expect(img).toHaveCount(1);
+    await expect(img).toHaveAttribute('src', TINY_PNG_DATA_URI);
+    await expect(img).toHaveAttribute('alt', 'screenshot');
   });
 });

@@ -78,3 +78,16 @@ body {
   .prose-quire th,
   .prose-quire td { border-color: rgb(255 255 255 / 0.15); }
 }
+
+/* Embedded session images (data-URI image parts). Constrain width so a wide
+   screenshot never overflows the ~760px column; keep aspect ratio. */
+.image-part-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(0 0 0 / 0.1);
+}
+@media (prefers-color-scheme: dark) {
+  .image-part-img { border-color: rgb(255 255 255 / 0.1); }
+}

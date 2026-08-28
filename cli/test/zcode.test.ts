@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -12,15 +12,31 @@ const dir = dirname(fileURLToPath(import.meta.url));
 // in-place rewrite byte-different even with fixed timestamps (M24).
 let tempDir: string;
 let fixtureDb: string;
+// A 1×1 red PNG, base64 — the image the fixture's Read-image attachment points at.
+const PNG_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==';
+// The artifact dir we seed for the fixture's Read-image attachment. Only removed
+// in afterAll if we created it (i.e. it didn't pre-exist on the dev machine).
+let fixtureArtDir: string;
+let createdFixtureArtDir = false;
 
 beforeAll(() => {
   tempDir = mkdtempSync(join(tmpdir(), 'quire-zcode-fixture-'));
   fixtureDb = join(tempDir, 'sample-session.sqlite');
   execFileSync(process.execPath, [join(dir, 'fixtures', 'make-fixture-db.mjs'), fixtureDb]);
+  // Seed the artifact store the fixture's Read-image attachment references. The
+  // adapter resolves ~/.zcode/cli/artifacts/<sessionId>/, so write there. The
+  // fixture session id is 'sess_fixture'.
+  fixtureArtDir = join(homedir(), '.zcode', 'cli', 'artifacts', 'sess_fixture');
+  createdFixtureArtDir = !existsSync(fixtureArtDir);
+  mkdirSync(fixtureArtDir, { recursive: true });
+  writeFileSync(join(fixtureArtDir, 'abc123-media-1-tool-result-fix1.txt'), `data:image/png;base64,${PNG_1X1}`);
 });
 
 afterAll(() => {
   rmSync(tempDir, { recursive: true, force: true });
+  // Remove the artifact dir only if we created it (don't clobber a real one).
+  if (createdFixtureArtDir) rmSync(fixtureArtDir, { recursive: true, force: true });
 });
 
 describe('zcode adapter', () => {
@@ -49,9 +65,10 @@ describe('zcode adapter', () => {
     expect(s.messages[0]!.parts).toEqual([{ type: 'text', text: 'hello world' }]);
     const assistant = s.messages[1]!;
     // p2 text, p3 tool, p4 reasoning, p8 think-block text (split), p9 empty
-    // think-block text (dropped to a text fallback).
+    // think-block text (dropped to a text fallback), p11 Read-image tool + its
+    // image part (emitted after the tool part).
     expect(assistant.parts.map((p) => p.type)).toEqual([
-      'text', 'tool', 'reasoning', 'reasoning', 'text', 'text',
+      'text', 'tool', 'reasoning', 'reasoning', 'text', 'text', 'tool', 'image',
     ]);
     const tool = assistant.parts[1]!;
     expect(tool.tool).toBe('Bash');
@@ -98,5 +115,59 @@ describe('zcode adapter', () => {
   it('loadSession throws for an unknown id', async () => {
     const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
     await expect(makeZcodeAdapter(fixtureDb).loadSession('sess_nope')).rejects.toThrow(/not found/);
+  });
+
+  it('emits an image part (data URI) after a Read-image tool part', async () => {
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const s = await makeZcodeAdapter(fixtureDb).loadSession('sess_fixture');
+    const assistant = s.messages[1]!;
+    // The Read-image tool part is the last tool part; the image part follows it.
+    const toolIdx = assistant.parts.findIndex((p) => p.type === 'tool' && p.callID === 'c2');
+    expect(toolIdx).toBeGreaterThan(-1);
+    const img = assistant.parts[toolIdx + 1]!;
+    expect(img.type).toBe('image');
+    expect(img.mime).toBe('image/png');
+    expect(img.src).toBe(`data:image/png;base64,${PNG_1X1}`);
+    expect(img.bytes).toBe(Buffer.byteLength(PNG_1X1, 'base64'));
+    // The tool part's output is the placeholder string, unchanged.
+    expect(assistant.parts[toolIdx]!.output).toBe('[Attached image/png: Read image]');
+  });
+
+  it('emits a tooLarge image part when the artifact exceeds the cap', async () => {
+    // Write an oversized artifact (just over MAX_IMAGE_BYTES) for a second
+    // attachment id, then point a fresh part at it via a temp DB.
+    const { MAX_IMAGE_BYTES } = await import('../src/image.js');
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const bigToolResultId = 'tool-result-big1';
+    const bigArtifact = join(fixtureArtDir, `def456-media-1-${bigToolResultId}.txt`);
+    // A data URI whose decoded payload is MAX_IMAGE_BYTES + 1.
+    const payload = Buffer.alloc(MAX_IMAGE_BYTES + 1, 0);
+    writeFileSync(bigArtifact, `data:image/png;base64,${payload.toString('base64')}`);
+    try {
+      // Build a one-off DB with a single Read-image part referencing the big artifact.
+      const { DatabaseSync } = await import('node:sqlite');
+      const oneOffDb = join(tempDir, 'big-image.sqlite');
+      const db = new DatabaseSync(oneOffDb);
+      db.exec(`
+        create table session (id text primary key, title text, directory text, time_created integer, time_updated integer, task_type text, share_url text);
+        create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text, sequence integer);
+        create table part (id text primary key, message_id text, session_id text, data text, sequence integer);
+      `);
+      db.prepare('insert into session values (?,?,?,?,?,?,?)').run('sess_big', 'Big', '/tmp', 0, 0, 'interactive', null);
+      db.prepare('insert into message (id, session_id, data, sequence) values (?,?,?,?)').run('mb', 'sess_big', JSON.stringify({ role: 'assistant' }), 1);
+      db.prepare('insert into part values (?,?,?,?,?)').run('pb', 'mb', 'sess_big', JSON.stringify({
+        type: 'tool', callID: 'cb', tool: 'Read',
+        state: { status: 'completed', input: { file_path: '/tmp/big.png' }, output: '[Attached image/png: Read image]',
+          attachments: [{ type: 'file', mime: 'image/png', filename: 'Read image', url: `zcode-artifact://sess_big/${bigToolResultId}`, metadata: { sizeBytes: MAX_IMAGE_BYTES + 1 } }] },
+      }), 1);
+      db.close();
+      const s = await makeZcodeAdapter(oneOffDb).loadSession('sess_big');
+      const img = s.messages[0]!.parts.find((p) => p.type === 'image')!;
+      expect(img.tooLarge).toBe(true);
+      expect(img.src).toBeUndefined();
+      expect(img.bytes).toBe(MAX_IMAGE_BYTES + 1);
+    } finally {
+      rmSync(bigArtifact, { force: true });
+    }
   });
 });

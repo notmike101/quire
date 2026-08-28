@@ -128,4 +128,35 @@ describe('prepareContent', () => {
     const withNewlines: ShapedMessage[] = [{ role: 'user', parts: [{ type: 'text', text: 'l1\nl2\rl3\tl4' }] }];
     expect(prepareContent(withNewlines, 'none').messages[0]!.parts[0]!.text).toBe('l1\nl2\rl3\tl4');
   });
+
+  it('passes an image part data URI through untouched (not redacted)', () => {
+    // A base64 payload long enough to trip the generic-secret rule if it were
+    // run through redactText. The data URI must survive verbatim.
+    const payload = 'A'.repeat(200);
+    const dataUri = `data:image/png;base64,${payload}`;
+    const withImage: ShapedMessage[] = [
+      {
+        role: 'assistant',
+        parts: [
+          { type: 'image', src: dataUri, mime: 'image/png', alt: 'shot', bytes: 150 },
+          { type: 'image', mime: 'image/png', alt: 'big', bytes: 9_999_999, tooLarge: true },
+        ],
+      },
+    ];
+    for (const preset of ['strict', 'normal', 'none'] as const) {
+      const { messages, summary } = prepareContent(withImage, preset);
+      const img = messages[0]!.parts[0]!;
+      expect(img.type).toBe('image');
+      expect(img.src).toBe(dataUri); // not mangled by any rule
+      expect(img.mime).toBe('image/png');
+      expect(img.alt).toBe('shot');
+      expect(img.bytes).toBe(150);
+      // The tooLarge part (no src) keeps its fields.
+      const big = messages[0]!.parts[1]!;
+      expect(big.tooLarge).toBe(true);
+      expect(big.src).toBeUndefined();
+      // The data URI must NOT have produced any redaction counts.
+      expect(summary).toEqual({});
+    }
+  });
 });

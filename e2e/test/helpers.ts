@@ -114,6 +114,49 @@ export async function createReasoningShare(request: APIRequestContext): Promise<
   return await res.json();
 }
 
+/** A tiny 1×1 red-pixel PNG as a data URI (small enough to embed in a share). */
+export const TINY_PNG_DATA_URI =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+/** A session whose assistant message has an `image` part (embedded data URI). */
+export function imageSession(): object {
+  return {
+    sessionId: 'sess_image',
+    title: 'Image Session',
+    model: 'test-model',
+    messages: [
+      {
+        role: 'user',
+        time: new Date(Date.UTC(2026, 0, 1, 12, 0)).toISOString(),
+        parts: [{ type: 'text', text: 'show me the screenshot' }],
+      },
+      {
+        role: 'assistant',
+        time: new Date(Date.UTC(2026, 0, 1, 12, 1)).toISOString(),
+        parts: [
+          { type: 'text', text: 'Here it is.' },
+          {
+            type: 'image',
+            src: TINY_PNG_DATA_URI,
+            mime: 'image/png',
+            alt: 'screenshot',
+            bytes: 70,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+export async function createImageShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
+  const res = await request.post('/api/chats', {
+    headers: { authorization: `Bearer ${API_KEY}` },
+    data: { session: imageSession() },
+  });
+  expect(res.status()).toBe(201);
+  return await res.json();
+}
+
 export async function createChunkedShare(
   request: APIRequestContext,
   opts: { perChunk?: number } = {},

@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import UserMessage from '../src/components/UserMessage.vue';
 import ToolCard from '../src/components/ToolCard.vue';
 import ReasoningBlock from '../src/components/ReasoningBlock.vue';
+import ImagePart from '../src/components/ImagePart.vue';
 import AssistantMessage from '../src/components/AssistantMessage.vue';
 import SystemNotice from '../src/components/SystemNotice.vue';
 import { renderMarkdown } from '../src/markdown';
@@ -139,5 +140,38 @@ describe('AssistantMessage', () => {
     expect(w.text()).not.toContain('let me think about this carefully');
     await w.find('button').trigger('click');
     expect(w.text()).toContain('let me think about this carefully');
+  });
+
+  it('renders an image part as an <img> with the data URI', async () => {
+    const dataUri = 'data:image/png;base64,iVBORw0KGgo';
+    const message: ShareMessage = {
+      chunkSeq: 0,
+      seq: 4,
+      role: 'assistant',
+      time: null,
+      parts: [{ type: 'image', src: dataUri, mime: 'image/png', alt: 'screenshot', bytes: 68 }],
+    };
+    const w = mount(AssistantMessage, { props: { message } });
+    await flushPromises();
+    const img = w.find('img');
+    expect(img.exists()).toBe(true);
+    expect(img.attributes('src')).toBe(dataUri);
+    expect(img.attributes('alt')).toBe('screenshot');
+  });
+});
+
+describe('ImagePart', () => {
+  it('renders an <img> when src is present', () => {
+    const w = mount(ImagePart, { props: { part: { type: 'image', src: 'data:image/png;base64,AAA', mime: 'image/png', alt: 'shot' } } });
+    const img = w.find('img');
+    expect(img.exists()).toBe(true);
+    expect(img.attributes('src')).toBe('data:image/png;base64,AAA');
+  });
+
+  it('renders a placeholder chip when tooLarge (no src)', () => {
+    const w = mount(ImagePart, { props: { part: { type: 'image', mime: 'image/png', alt: 'big', bytes: 3_000_000, tooLarge: true } } });
+    expect(w.find('img').exists()).toBe(false);
+    expect(w.text()).toContain('image too large to embed');
+    expect(w.text()).toContain('2.9 MB');
   });
 });

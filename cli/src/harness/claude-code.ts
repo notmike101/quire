@@ -4,9 +4,16 @@ import { join } from 'node:path';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
 import { truncateOutput } from '../shape.js';
 import { extractSystemParts, extractReasoningParts } from '../system.js';
+import { MAX_IMAGE_BYTES } from '../image.js';
 
 export function claudeProjectsDir(): string {
   return join(homedir(), '.claude', 'projects');
+}
+
+interface CcImageSource {
+  type?: string;
+  media_type?: string;
+  data?: string;
 }
 
 interface CcBlock {
@@ -18,6 +25,7 @@ interface CcBlock {
   input?: unknown;
   tool_use_id?: string;
   content?: unknown;
+  source?: CcImageSource;
 }
 
 interface CcEvent {
@@ -45,6 +53,30 @@ function jsonlEvents(file: string): CcEvent[] {
 
 function toolResultText(block: CcBlock): string {
   return typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '');
+}
+
+/**
+ * Claude Code encodes images as {type:'image', source:{type:'base64',
+ * media_type, data}} blocks inside a tool_result's content array. Extract them
+ * as image parts (data URIs). Non-image content is left to toolResultText.
+ */
+function imagePartsFromToolResult(block: CcBlock): ShapedPart[] {
+  const content = block.content;
+  if (!Array.isArray(content)) return [];
+  const out: ShapedPart[] = [];
+  for (const b of content) {
+    if (!b || b.type !== 'image' || !b.source) continue;
+    const src = b.source;
+    if (src.type !== 'base64' || typeof src.data !== 'string' || !src.media_type) continue;
+    const mime = src.media_type;
+    const bytes = Buffer.byteLength(src.data, 'base64');
+    if (bytes > MAX_IMAGE_BYTES) {
+      out.push({ type: 'image', mime, alt: 'image', bytes, tooLarge: true });
+    } else {
+      out.push({ type: 'image', src: `data:${mime};base64,${src.data}`, mime, alt: 'image', bytes });
+    }
+  }
+  return out;
 }
 
 export function makeClaudeCodeAdapter(projectsDir: string = claudeProjectsDir()): HarnessAdapter {
@@ -120,7 +152,16 @@ export function makeClaudeCodeAdapter(projectsDir: string = claudeProjectsDir())
             const results = content.filter((b) => b.type === 'tool_result');
             for (const r of results) {
               const part = lastAssistant?.parts.find((p) => p.type === 'tool' && p.callID === r.tool_use_id);
-              if (part && part.type === 'tool') part.output = truncateOutput(toolResultText(r));
+              if (part && part.type === 'tool') {
+                part.output = truncateOutput(toolResultText(r));
+                // Images the tool returned (e.g. a screenshot) — emit after the
+                // tool part so the viewer shows the card, then the image.
+                const imgs = imagePartsFromToolResult(r);
+                if (imgs.length > 0 && lastAssistant) {
+                  const idx = lastAssistant.parts.indexOf(part);
+                  lastAssistant.parts.splice(idx + 1, 0, ...imgs);
+                }
+              }
             }
             // Keep sibling text blocks even when the turn also carries tool
             // results (M28) — only a tool-result-only turn is not chat.

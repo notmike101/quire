@@ -1,11 +1,17 @@
 export interface SharePart {
-  type: 'text' | 'tool' | 'reasoning' | 'system';
+  type: 'text' | 'tool' | 'reasoning' | 'system' | 'image';
   text?: string;
   callID?: string;
   tool?: string;
   status?: string;
   input?: unknown;
   output?: string;
+  // image parts (type: 'image'):
+  src?: string; // data: URI; absent when tooLarge
+  mime?: string;
+  alt?: string;
+  bytes?: number;
+  tooLarge?: boolean;
 }
 
 export interface ShareMessage {
