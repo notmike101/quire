@@ -44,9 +44,18 @@ export interface ShareMeta {
   redactions: Record<string, number>;
 }
 
+/** A user message in the full-share rail index: its seq (jump target) and a
+ * short preview for the hover tooltip. Present only on the first page. */
+export interface RailUserEntry {
+  seq: number;
+  preview: string;
+}
+
 export interface PageResponse {
   meta: ShareMeta;
   messages: ShareMessage[];
+  /** Full-share user-message index for the rail (first page only). */
+  userIndex?: RailUserEntry[];
   nextCursor: string | null;
 }
 

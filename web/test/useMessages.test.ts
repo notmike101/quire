@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { useMessages } from '../src/composables/useMessages';
-import type { ShareMessage, ShareMeta } from '../src/api';
+import type { PageResponse, ShareMessage, ShareMeta } from '../src/api';
 
 const META: ShareMeta = {
   title: 'Test Session',
@@ -12,7 +12,7 @@ const META: ShareMeta = {
   redactions: { 'api-key': 2 },
 };
 
-function makePage(count: number, start: number, nextCursor: string | null) {
+function makePage(count: number, start: number, nextCursor: string | null): PageResponse {
   return {
     meta: META,
     messages: Array.from({ length: count }, (_, i): ShareMessage => ({
@@ -92,5 +92,34 @@ describe('useMessages', () => {
     await m.submitPassword('right');
     expect(m.state.value).toBe('ready');
     expect(m.messages.value).toHaveLength(1);
+  });
+
+  it('captures the user index from the first page', async () => {
+    const body = makePage(2, 0, null);
+    body.userIndex = [{ seq: 1, preview: 'm1' }];
+    mockSequence([{ status: 200, body }]);
+    const m = useMessages('tok');
+    await m.loadFirst();
+    expect(m.userIndex.value).toEqual([{ seq: 1, preview: 'm1' }]);
+  });
+
+  it('ensureLoadedThrough loads pages until the target seq is present', async () => {
+    mockSequence([
+      { status: 200, body: makePage(50, 0, '0:50') },
+      { status: 200, body: makePage(50, 50, '0:100') },
+      { status: 200, body: makePage(20, 100, null) },
+    ]);
+    const m = useMessages('tok');
+    await m.loadFirst(); // 50 messages, seq 1..50
+    // Target seq 75 is in the second page (seq 51..100).
+    await m.ensureLoadedThrough(75);
+    expect(m.messages.value.some((x) => x.seq === 75)).toBe(true);
+    // It stops as soon as the target is present (100 messages, not all 120).
+    expect(m.messages.value).toHaveLength(100);
+    // Already present -> no further fetch.
+    const fetchMock = vi.mocked(fetch);
+    const callsBefore2 = fetchMock.mock.calls.length;
+    await m.ensureLoadedThrough(75);
+    expect(fetchMock.mock.calls.length).toBe(callsBefore2);
   });
 });

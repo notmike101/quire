@@ -111,7 +111,10 @@ body {
 }
 
 /* The sticky cluster: pinned to the viewport center. max-height is the
-   viewport budget; overflow-y engages only when the tick group exceeds it. */
+   viewport budget. overflow-y is OFF by default and only toggled on by the
+   .is-overflowing class (set in JS when the tick group actually exceeds the
+   budget) — Chromium renders an `auto` scrollbar track even when the content
+   fits, which would read as a spurious scrollbar on short rails. */
 .rail-cluster {
   position: sticky;
   top: 50%;
@@ -120,16 +123,20 @@ body {
   flex-direction: column;
   align-items: center;
   max-height: calc(100vh - 120px);
-  overflow-y: auto;
+  overflow-y: hidden;
   overflow-x: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: rgb(0 0 0 / 0.25) transparent;
 }
-.rail-cluster::-webkit-scrollbar { width: 4px; }
-.rail-cluster::-webkit-scrollbar-thumb { background: rgb(0 0 0 / 0.25); border-radius: 2px; }
+.rail-cluster.is-overflowing {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(0 0 0 / 0.15) transparent;
+}
+.rail-cluster::-webkit-scrollbar { width: 6px; }
+.rail-cluster::-webkit-scrollbar-thumb { background: rgb(0 0 0 / 0.15); border-radius: 3px; }
 @media (prefers-color-scheme: dark) {
-  .rail-cluster { scrollbar-color: rgb(255 255 255 / 0.25) transparent; }
-  .rail-cluster::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.25); }
+  .rail-cluster.is-overflowing {
+    scrollbar-color: #55555526 transparent;
+  }
 }
 
 /* One tick = a full-width button row with a 24px hit-target, the visible
@@ -140,7 +147,12 @@ body {
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 24px;
+  height: 12px;
+  /* The cluster is a flex column with a max-height budget. Without this the
+     ticks shrink to fit (400 ticks in a 600px budget → 1.5px each), collapsing
+     the dashes into a solid line. flex-shrink:0 keeps every tick at 24px so
+     the group overflows and the internal scrollbar engages. */
+  flex-shrink: 0;
   padding: 0;
   margin: 0;
   border: 0;
@@ -175,12 +187,13 @@ body {
   .rail-tick.active .rail-dash { background: rgb(255 255 255 / 0.95); }
 }
 
-/* Tooltip: to the right of the tick, pointer-only (never traps a pointer on
-   touch devices). */
+/* Tooltip: rendered `position: fixed` and positioned inline from the hovered
+   tick's rect (see MessageRail showTip). Being fixed takes it out of the
+   document flow so it can never inflate the cluster's scrollHeight (which
+   would turn the scrollbar on spuriously for a short rail). Shown/hidden by
+   the component (v-if), pointer-only (never traps a pointer on touch). */
 .rail-tip {
-  position: absolute;
-  left: 36px;
-  top: 50%;
+  position: fixed;
   transform: translateY(-50%);
   width: 230px;
   padding: 8px 11px;
@@ -191,9 +204,7 @@ body {
   font-size: 12px;
   line-height: 1.45;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
-  opacity: 0;
   pointer-events: none;
-  transition: opacity 0.1s ease;
   z-index: 40;
   white-space: normal;
 }
@@ -212,33 +223,10 @@ body {
   }
   .rail-tip .rail-tip-n { color: rgb(255 255 255 / 0.5); }
 }
-.rail-tick:hover .rail-tip,
-.rail-tick:focus-visible .rail-tip { opacity: 1; }
 @media (hover: none) {
   .rail-tip { display: none; }
 }
 
-/* Overflow affordance bars: sticky to the cluster's top/bottom edges,
-   visible only when the tick group is taller than the cluster budget and
-   there are ticks hidden on that side. */
-.rail-overflow {
-  position: sticky;
-  width: 100%;
-  padding: 3px 0;
-  font-size: 10px;
-  text-align: center;
-  color: rgb(0 0 0 / 0.5);
-  background: #ffffff;
-  border: 0;
-  cursor: pointer;
-}
-.rail-overflow.top { top: 0; border-bottom: 1px solid rgb(0 0 0 / 0.1); }
-.rail-overflow.bottom { bottom: 0; border-top: 1px solid rgb(0 0 0 / 0.1); }
-@media (prefers-color-scheme: dark) {
-  .rail-overflow { background: #141414; color: rgb(255 255 255 / 0.5); }
-  .rail-overflow.top { border-bottom-color: rgb(255 255 255 / 0.1); }
-  .rail-overflow.bottom { border-top-color: rgb(255 255 255 / 0.1); }
-}
 
 /* Targeted user message: lands below the sticky header after a jump, and
    flashes briefly to confirm the jump landed. */

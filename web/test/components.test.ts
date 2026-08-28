@@ -8,7 +8,7 @@ import AssistantMessage from '../src/components/AssistantMessage.vue';
 import SystemNotice from '../src/components/SystemNotice.vue';
 import MessageRail from '../src/components/MessageRail.vue';
 import { renderMarkdown } from '../src/markdown';
-import type { ShareMessage, SharePart } from '../src/api';
+import type { ShareMessage, SharePart, RailUserEntry } from '../src/api';
 
 // Capturing IntersectionObserver: records every constructed instance so a
 // test can fire its callback against real (stubbed) entries.
@@ -227,28 +227,30 @@ describe('ImagePart', () => {
   });
 });
 
-function railMessages(userTexts: string[], withSystemOnly = false): ShareMessage[] {
-  const msgs: ShareMessage[] = [];
+// Build a full-share user index (seq + preview) plus the matching loaded
+// messages. `loadedCount` controls how many user messages are actually in the
+// DOM (the rest are in the index but not yet loaded — the lazy-load case).
+function railFixture(userTexts: string[], loadedCount = userTexts.length) {
+  const userIndex: RailUserEntry[] = [];
+  const messages: ShareMessage[] = [];
   let seq = 1;
   for (const text of userTexts) {
-    msgs.push({
-      chunkSeq: 0,
-      seq: seq++,
-      role: 'user',
-      time: null,
-      parts: withSystemOnly
-        ? [{ type: 'system', text: 'Continue working toward the active session goal.' }]
-        : [{ type: 'text', text }],
-    });
-    msgs.push({
-      chunkSeq: 0,
-      seq: seq++,
-      role: 'assistant',
-      time: null,
-      parts: [{ type: 'text', text: 'assistant reply' }],
-    });
+    userIndex.push({ seq, preview: text.replace(/\s+/g, ' ').trim().slice(0, 80) });
+    messages.push({ chunkSeq: 0, seq: seq++, role: 'user', time: null, parts: [{ type: 'text', text }] });
+    messages.push({ chunkSeq: 0, seq: seq++, role: 'assistant', time: null, parts: [{ type: 'text', text: 'assistant reply' }] });
   }
-  return msgs;
+  // Only the first `loadedCount` user messages (and their assistant replies) are
+  // "loaded" — the rail still shows a tick for every entry in userIndex.
+  const loaded = messages.slice(0, loadedCount * 2);
+  return { userIndex, messages: loaded };
+}
+
+function railProps(fixture: ReturnType<typeof railFixture>, ensure?: (seq: number) => Promise<void>) {
+  return {
+    userIndex: fixture.userIndex,
+    messages: fixture.messages,
+    ensureLoadedThrough: ensure ?? (async () => {}),
+  };
 }
 
 describe('MessageRail', () => {
@@ -258,35 +260,40 @@ describe('MessageRail', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it('renders one tick per user message, not per assistant message', () => {
-    const w = mount(MessageRail, { props: { messages: railMessages(['a', 'b', 'c']) } });
+  it('renders one tick per user message in the full-share index, even when not all are loaded', () => {
+    const fixture = railFixture(['a', 'b', 'c'], 1); // only the first is loaded
+    const w = mount(MessageRail, { props: railProps(fixture) });
     expect(w.findAll('.rail-tick')).toHaveLength(3);
   });
 
-  it('truncates the preview to 80 chars and collapses whitespace', () => {
-    const long = 'x'.repeat(120);
-    const w = mount(MessageRail, { props: { messages: railMessages([long]) } });
+  it('shows the server-provided preview in the tooltip on hover', async () => {
+    const fixture = railFixture(['x'.repeat(120)]);
+    const w = mount(MessageRail, { props: railProps(fixture) });
+    // The tooltip is rendered on hover (v-if on tipVisible).
+    await (w.findAll('.rail-tick')[0] as any).trigger('mouseenter');
+    await flushPromises();
     const tip = w.find('.rail-tip');
-    expect(tip.text()).toContain('x'.repeat(80) + '…');
-    expect(tip.text()).not.toContain('x'.repeat(81));
-    // Whitespace collapsed: "a   b" -> "a b"
-    const w2 = mount(MessageRail, { props: { messages: railMessages(['a   b\n\nc']) } });
-    expect(w2.find('.rail-tip').text()).toContain('a b c');
+    expect(tip.exists()).toBe(true);
+    expect(tip.text()).toContain('x'.repeat(80));
   });
 
-  it('falls back to a generic label when the user message has no text part', () => {
-    const w = mount(MessageRail, { props: { messages: railMessages(['ignored'], true) } });
-    expect(w.find('.rail-tip').text()).toContain('user message');
+  it('falls back to a generic label when the preview is empty', async () => {
+    const fixture = railFixture(['ignored']);
+    fixture.userIndex[0]!.preview = '';
+    const w = mount(MessageRail, { props: railProps(fixture) });
+    await (w.findAll('.rail-tick')[0] as any).trigger('mouseenter');
+    await flushPromises();
+    const tip = w.find('.rail-tip');
+    expect(tip.exists()).toBe(true);
+    expect(tip.text()).toContain('user message');
   });
 
-  it('clicking a tick scrolls to the matching user message', async () => {
-    const msgs = railMessages(['first', 'second', 'third']);
-    const userSeqs = msgs.filter((m) => m.role === 'user').map((m) => m.seq);
+  it('clicking a loaded tick scrolls to the matching user message', async () => {
+    const fixture = railFixture(['first', 'second', 'third']);
+    const userSeqs = fixture.userIndex.map((e) => e.seq);
     for (const seq of userSeqs) {
       document.body.insertAdjacentHTML('beforeend', `<div id="msg-${seq}"></div>`);
     }
-    // jsdom does not implement scrollIntoView; capture the element (the `this`
-    // of the call) and the options argument.
     let scrolled: Element | null = null;
     let opts: ScrollToOptions | undefined;
     const orig = Element.prototype.scrollIntoView;
@@ -294,10 +301,9 @@ describe('MessageRail', () => {
       scrolled = this;
       opts = o;
     };
-    const w = mount(MessageRail, { props: { messages: msgs } });
+    const w = mount(MessageRail, { props: railProps(fixture) });
     const tick2 = w.findAll('.rail-tick')[1] as any;
     await tick2.trigger('click');
-    // The scrolled element is the second user message's jump target.
     const scrolledEl = scrolled as unknown as Element;
     expect(scrolledEl.id).toBe(`msg-${userSeqs[1]}`);
     expect(opts).toEqual({ behavior: 'smooth', block: 'start' });
@@ -306,17 +312,44 @@ describe('MessageRail', () => {
     for (const seq of userSeqs) document.getElementById(`msg-${seq}`)?.remove();
   });
 
+  it('clicking an unloaded tick loads up to it before scrolling', async () => {
+    const fixture = railFixture(['first', 'second', 'third'], 1); // only #1 loaded
+    const userSeqs = fixture.userIndex.map((e) => e.seq);
+    // Only the first message's anchor exists initially.
+    document.body.insertAdjacentHTML('beforeend', `<div id="msg-${userSeqs[0]}"></div>`);
+    const ensureCalls: number[] = [];
+    const ensure = vi.fn(async (seq: number) => {
+      ensureCalls.push(seq);
+      // Simulate the page loading: add the anchor for the target message.
+      document.body.insertAdjacentHTML('beforeend', `<div id="msg-${seq}"></div>`);
+    });
+    let scrolled: Element | null = null;
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled = this;
+    };
+    const w = mount(MessageRail, { props: railProps(fixture, ensure) });
+    const tick3 = w.findAll('.rail-tick')[2] as any;
+    await tick3.trigger('click');
+    await flushPromises();
+    expect(ensure).toHaveBeenCalledWith(userSeqs[2]);
+    expect(ensureCalls).toEqual([userSeqs[2]]);
+    expect((scrolled as unknown as Element).id).toBe(`msg-${userSeqs[2]}`);
+    Element.prototype.scrollIntoView = orig;
+    w.unmount();
+    for (const seq of userSeqs) document.getElementById(`msg-${seq}`)?.remove();
+  });
+
   it('marks the tick active when its message enters the observer band', async () => {
-    const msgs = railMessages(['first', 'second', 'third']);
-    const userSeqs = msgs.filter((m) => m.role === 'user').map((m) => m.seq);
+    const fixture = railFixture(['first', 'second', 'third']);
+    const userSeqs = fixture.userIndex.map((e) => e.seq);
     for (const seq of userSeqs) {
       document.body.insertAdjacentHTML('beforeend', `<div id="msg-${seq}"></div>`);
     }
-    const w = mount(MessageRail, { props: { messages: msgs } });
+    const w = mount(MessageRail, { props: railProps(fixture) });
     await flushPromises();
     const ticks = w.findAll('.rail-tick');
     expect(ioCapture.length).toBeGreaterThan(0);
-    // Fire the observer callback for the third user message.
     const entry = {
       isIntersecting: true,
       target: document.getElementById(`msg-${userSeqs[2]}`),
@@ -330,9 +363,9 @@ describe('MessageRail', () => {
     for (const seq of userSeqs) document.getElementById(`msg-${seq}`)?.remove();
   });
 
-  it('renders nothing when there are no user messages', () => {
+  it('renders nothing when the user index is empty', () => {
     const w = mount(MessageRail, {
-      props: { messages: [{ chunkSeq: 0, seq: 1, role: 'assistant', time: null, parts: [{ type: 'text', text: 'hi' }] }] },
+      props: railProps({ userIndex: [], messages: [] }),
     });
     expect(w.find('.rail-tick').exists()).toBe(false);
     expect(w.find('.rail-col').exists()).toBe(false);

@@ -22,6 +22,7 @@ const PAGE = {
     { seq: 1, role: 'user', time: null, parts: [{ type: 'text', text: 'hello from user' }] },
     { seq: 2, role: 'assistant', time: null, parts: [{ type: 'text', text: 'hi there' }] },
   ],
+  userIndex: [{ seq: 1, preview: 'hello from user' }],
   nextCursor: null,
 };
 
@@ -71,7 +72,7 @@ describe('App', () => {
   it('omits the rail when the share has no user messages', async () => {
     const assistantOnly = { ...PAGE, messages: [
       { seq: 1, role: 'assistant', time: null, parts: [{ type: 'text', text: 'hi there' }] },
-    ] };
+    ], userIndex: [] };
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true, status: 200, text: async () => JSON.stringify(assistantOnly),
     })));

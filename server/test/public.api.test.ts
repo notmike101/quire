@@ -122,6 +122,11 @@ describe('public content endpoint', () => {
     expect(p3.nextCursor).toBeNull();
     expect(p1.meta.title).toBe('Share page1');
     expect(p1.meta.messageCount).toBe(120);
+    // The first page returns the full-share user index (60 user messages, odd
+    // seqs 1..119); continuation pages omit it.
+    expect(p1.userIndex).toHaveLength(60);
+    expect(p1.userIndex[0]).toEqual({ seq: 1, preview: 'message 1' });
+    expect(p2.userIndex).toBeUndefined();
   });
 
   it('limit is clamped to 200 and invalid cursors restart at 0', async () => {

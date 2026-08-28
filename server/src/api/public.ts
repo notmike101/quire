@@ -56,6 +56,18 @@ function clampLimit(raw: string | undefined): number {
   return Number.isInteger(n) && n > 0 ? Math.min(n, 200) : 50;
 }
 
+/** Short preview of a user message's first text part, for the rail tooltip. */
+function userPreview(parts: unknown): string {
+  if (!Array.isArray(parts)) return '';
+  for (const p of parts) {
+    if (p && typeof p === 'object' && (p as { type?: unknown }).type === 'text') {
+      const t = (p as { text?: unknown }).text;
+      if (typeof t === 'string' && t.trim()) return t.replace(/\s+/g, ' ').trim().slice(0, 80);
+    }
+  }
+  return '';
+}
+
 interface Cursor { chunkSeq: number; seq: number }
 function parseCursor(raw: string | undefined): Cursor {
   if (raw === undefined) return { chunkSeq: 0, seq: 0 };
@@ -98,17 +110,31 @@ export function publicRoutes(deps: PublicDeps): Hono {
       }
     }
     const limit = clampLimit(c.req.query('limit'));
-    const { chunkSeq, seq } = parseCursor(c.req.query('cursor'));
+    const rawCursor = c.req.query('cursor');
+    const { chunkSeq, seq } = parseCursor(rawCursor);
     const after = or(
       gt(shareMessages.chunkSeq, chunkSeq),
       and(eq(shareMessages.chunkSeq, chunkSeq), gt(shareMessages.seq, seq)),
     );
-    const rows = await db
-      .select()
-      .from(shareMessages)
-      .where(and(eq(shareMessages.shareId, share.id), after))
-      .orderBy(asc(shareMessages.chunkSeq), asc(shareMessages.seq))
-      .limit(limit);
+    const [rows, userRows] = await Promise.all([
+      db
+        .select()
+        .from(shareMessages)
+        .where(and(eq(shareMessages.shareId, share.id), after))
+        .orderBy(asc(shareMessages.chunkSeq), asc(shareMessages.seq))
+        .limit(limit),
+      // The rail renders one tick per user message for the WHOLE share, so the
+      // viewer needs the full user-message index up front (not just the loaded
+      // page). This is a tiny projection — seq + a short preview — and is only
+      // fetched on the first page (cursor undefined).
+      rawCursor === undefined
+        ? db
+            .select({ seq: shareMessages.seq, parts: shareMessages.parts })
+            .from(shareMessages)
+            .where(and(eq(shareMessages.shareId, share.id), eq(shareMessages.role, 'user')))
+            .orderBy(asc(shareMessages.chunkSeq), asc(shareMessages.seq))
+        : Promise.resolve([] as { seq: number; parts: unknown[] }[]),
+    ]);
     const last = rows[rows.length - 1];
     const nextCursor = rows.length === limit && last ? `${last.chunkSeq}:${last.seq}` : null;
     return c.json({
@@ -122,6 +148,7 @@ export function publicRoutes(deps: PublicDeps): Hono {
         redactions: share.redactions,
       },
       messages: rows.map((r) => ({ chunkSeq: r.chunkSeq, seq: r.seq, role: r.role, time: r.time, parts: r.parts })),
+      userIndex: rawCursor === undefined ? (userRows as { seq: number; parts: unknown[] }[]).map((r) => ({ seq: r.seq, preview: userPreview(r.parts) })) : undefined,
       nextCursor,
     });
   });

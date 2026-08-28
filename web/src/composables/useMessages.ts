@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { shareApi, ShareError, type ShareMeta, type ShareMessage } from '../api';
+import { shareApi, ShareError, type ShareMeta, type ShareMessage, type RailUserEntry } from '../api';
 
 export type LoadState = 'loading' | 'ready' | 'needs_password' | 'expired' | 'not_found' | 'error';
 
@@ -10,6 +10,10 @@ export function useMessages(token: string) {
   const state = ref<LoadState>('loading');
   const meta = ref<ShareMeta | null>(null);
   const messages = ref<ShareMessage[]>([]);
+  // Full-share user-message index for the rail (seq + preview), fetched once on
+  // the first page. The rail renders one tick per entry, so all ticks are
+  // present even though the messages themselves lazy-load.
+  const userIndex = ref<RailUserEntry[]>([]);
   const loadingMore = ref(false);
   const errorMessage = ref('');
   const passwordError = ref('');
@@ -24,6 +28,7 @@ export function useMessages(token: string) {
       const page = await api.page(PAGE_SIZE);
       meta.value = page.meta;
       messages.value = page.messages;
+      userIndex.value = page.userIndex ?? [];
       nextCursor = page.nextCursor;
       exhausted = page.nextCursor === null;
       state.value = 'ready';
@@ -56,6 +61,22 @@ export function useMessages(token: string) {
     }
   }
 
+  // Load pages until the message with the given seq is present (or the share is
+  // exhausted). Used by the rail: clicking a tick whose message hasn't loaded
+  // yet fetches the intervening pages first, then the caller scrolls to it.
+  async function ensureLoadedThrough(seq: number): Promise<void> {
+    while (
+      !messages.value.some((m) => m.seq === seq) &&
+      nextCursor !== null &&
+      !exhausted
+    ) {
+      const page = await api.page(PAGE_SIZE, nextCursor);
+      messages.value = [...messages.value, ...page.messages];
+      nextCursor = page.nextCursor;
+      exhausted = page.nextCursor === null;
+    }
+  }
+
   async function submitPassword(password: string): Promise<void> {
     passwordError.value = '';
     try {
@@ -74,5 +95,5 @@ export function useMessages(token: string) {
     }
   }
 
-  return { state, meta, messages, loadingMore, errorMessage, passwordError, loadFirst, loadMore, submitPassword };
+  return { state, meta, messages, userIndex, loadingMore, errorMessage, passwordError, loadFirst, loadMore, ensureLoadedThrough, submitPassword };
 }

@@ -171,8 +171,9 @@ test.describe('share viewer', () => {
     await expect(page.getByRole('heading', { name: 'Long Session' })).toBeVisible();
     const cluster = page.locator('.rail-cluster');
     await expect(cluster).toBeVisible({ timeout: 15000 });
-    // 60 user turns -> 60 ticks (first page loads 50 messages = 25 user turns;
-    // the rest lazy-load, but the cluster is present from the first page).
+    // The server returns the full user index on the first page, so all 60 ticks
+    // render immediately (the messages lazy-load, but the rail is complete).
+    await expect(page.locator('.rail-tick')).toHaveCount(60, { timeout: 15000 });
     // Measure the cluster's center relative to the viewport at the top…
     const centerAtTop = await cluster.evaluate((el) => {
       const r = el.getBoundingClientRect();
@@ -193,32 +194,21 @@ test.describe('share viewer', () => {
     expect(Math.abs(centerAtBottom - viewportCenter)).toBeLessThan(40);
   });
 
-  test('the rail cluster scrolls internally and shows the overflow bar when ticks exceed the viewport', async ({ page, request }) => {
+  test('the rail cluster scrolls internally when ticks exceed the viewport', async ({ page, request }) => {
     const { token } = await createLongShare(request, 400);
     await page.goto(`/chats/${token}`);
     await expect(page.getByRole('heading', { name: 'Long Session' })).toBeVisible();
     const cluster = page.locator('.rail-cluster');
     await expect(cluster).toBeVisible({ timeout: 20000 });
-    // The first page loads 50 messages = 25 user turns = 25 ticks. On a
-    // ~720px-tall viewport the budget is calc(100vh - 120px) ≈ 600px; 25 ticks
-    // × 24px = 600px, right at the edge. Scroll the page to lazy-load more
-    // pages so the tick count grows well past the budget.
-    for (let i = 0; i < 6; i++) {
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await page.waitForTimeout(400);
-    }
-    // Now the cluster is scrollable (scrollHeight > clientHeight).
+    // All 400 ticks render immediately from the user index (no lazy-loading of
+    // ticks). On a ~720px-tall viewport the budget is calc(100vh - 120px) ≈
+    // 600px; 400 × 12px = 4800px, far past the budget, so the cluster is
+    // internally scrollable.
+    await expect(page.locator('.rail-tick')).toHaveCount(400, { timeout: 20000 });
     const scrollable = await cluster.evaluate((el) => el.scrollHeight > el.clientHeight);
     expect(scrollable).toBe(true);
-    // The "more below" overflow bar is visible.
-    const belowBar = page.locator('.rail-overflow.bottom');
-    await expect(belowBar).toBeVisible();
-    // Clicking it scrolls the cluster down.
-    const before = await cluster.evaluate((el) => el.scrollTop);
-    await belowBar.click();
-    await page.waitForTimeout(400);
-    const after = await cluster.evaluate((el) => el.scrollTop);
-    expect(after).toBeGreaterThan(before);
+    // The cluster has the overflow class (scrollbar visible).
+    await expect(cluster).toHaveClass(/is-overflowing/);
   });
 
   test('hovering a rail tick shows a short preview of the user message', async ({ page, request }) => {
@@ -227,22 +217,73 @@ test.describe('share viewer', () => {
     await expect(page.getByRole('heading', { name: 'Long Session' })).toBeVisible();
     const firstTick = page.locator('.rail-tick').first();
     await expect(firstTick).toBeVisible({ timeout: 15000 });
-    // The tooltip is hidden until hover.
-    const tip = page.locator('.rail-tip').first();
-    expect(await tip.evaluate((el) => getComputedStyle(el).opacity)).toBe('0');
+    // The tooltip is not in the DOM until hover (rendered on mouseenter).
+    const tip = page.locator('.rail-tip');
+    expect(await tip.count()).toBe(0);
     await firstTick.hover();
-    // On hover the tooltip becomes visible and shows the message preview.
-    await expect(tip).toHaveCSS('opacity', '1');
-    await expect(tip).toContainText('User turn number 1');
+    // On hover the tooltip appears and shows the server-provided preview of the
+    // first user message.
+    await expect(tip).toHaveCount(1);
+    await expect(tip).toContainText('User turn number 1: please do something specific and detailed about topic 0.');
+  });
+
+  test('a short rail shows no scrollbar (overflow only when ticks exceed the budget)', async ({ page, request }) => {
+    const { token } = await createLongShare(request, 8);
+    await page.goto(`/chats/${token}`);
+    await expect(page.getByRole('heading', { name: 'Long Session' })).toBeVisible();
+    await expect(page.locator('.rail-tick')).toHaveCount(8, { timeout: 15000 });
+    // The rail toggles the overflow class on a nextTick after the ticks render,
+    // so wait for that pass to land before asserting on the class.
+    await page.waitForTimeout(200);
+    // 8 ticks × 24px = 192px, well under the ~600px budget, so the cluster must
+    // NOT be internally scrollable and must not carry the overflow class (which
+    // is what turns the scrollbar on).
+    const cluster = page.locator('.rail-cluster');
+    const overflow = await cluster.evaluate((el) => ({
+      scrollable: el.scrollHeight > el.clientHeight,
+      cls: el.classList.contains('is-overflowing'),
+      oy: getComputedStyle(el).overflowY,
+    }));
+    expect(overflow.scrollable).toBe(false);
+    expect(overflow.cls).toBe(false);
+    expect(overflow.oy).toBe('hidden');
+  });
+
+  test('clicking an unloaded tick loads the messages up to it, then scrolls', async ({ page, request }) => {
+    // 60 user turns = 120 messages. The first page loads 50 messages = 25 user
+    // turns, so ticks 26..60 point at messages that are NOT loaded yet.
+    const { token } = await createLongShare(request, 60);
+    await page.goto(`/chats/${token}`);
+    await expect(page.getByRole('heading', { name: 'Long Session' })).toBeVisible();
+    const ticks = page.locator('.rail-tick');
+    await expect(ticks).toHaveCount(60, { timeout: 15000 });
+    // Tick 40 = turn 40 = user seq 79, which is past the first 50 messages.
+    const target = page.locator('#msg-79');
+    expect(await target.count()).toBe(0);
+    await ticks.nth(39).click();
+    // The click must load pages until seq 79 exists, then scroll it into view.
+    await expect(target).toBeVisible({ timeout: 20000 });
+    // The jump uses a smooth scroll, and the rail re-targets it once after the
+    // lazy-loaded document settles. Give it time to finish before measuring
+    // (toBeVisible resolves as soon as the element enters the viewport,
+    // mid-scroll).
+    await page.waitForTimeout(1300);
+    const box = await target.boundingBox();
+    expect(box, 'target message not found after lazy load').not.toBeNull();
+    const vh = page.viewportSize()!.height;
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y).toBeLessThan(vh / 3);
+    // The clicked tick is now active.
+    await expect(ticks.nth(39)).toHaveClass(/active/);
   });
 
   test('clicking a rail tick smooth-scrolls to the matching user message', async ({ page, request }) => {
     const { token } = await createLongShare(request, 30);
     await page.goto(`/chats/${token}`);
     await expect(page.getByRole('heading', { name: 'Long Session' })).toBeVisible();
-    // Wait for the first page (25 user turns) to render ticks.
+    // All 30 ticks render immediately from the user index.
     const ticks = page.locator('.rail-tick');
-    await expect(ticks.first()).toBeVisible({ timeout: 15000 });
+    await expect(ticks).toHaveCount(30, { timeout: 15000 });
     // Click the 5th tick (turn 5). The 5th user message should scroll into the
     // top third of the viewport and its tick becomes active.
     await ticks.nth(4).click();
@@ -264,7 +305,7 @@ test.describe('share viewer', () => {
     await page.goto(`/chats/${token}`);
     await expect(page.getByRole('heading', { name: 'Long Session' })).toBeVisible();
     const ticks = page.locator('.rail-tick');
-    await expect(ticks.first()).toBeVisible({ timeout: 15000 });
+    await expect(ticks).toHaveCount(40, { timeout: 15000 });
     // Wait for the active tick to settle (the rail pins the first tick while the
     // page layout settles after load), then assert it's the first tick.
     await page.waitForFunction(
@@ -290,10 +331,10 @@ test.describe('share viewer', () => {
     await page.goto(`/chats/${token}`);
     await expect(page.getByRole('heading', { name: 'Long Session' })).toBeVisible();
     const ticks = page.locator('.rail-tick');
-    await expect(ticks.first()).toBeVisible({ timeout: 15000 });
-    // Each tick's hit-target is at least 24px tall (the design requirement).
+    await expect(ticks).toHaveCount(12, { timeout: 15000 });
+    // Each tick's hit-target is at least 12px tall (the design requirement).
     const h = await ticks.first().evaluate((el) => el.getBoundingClientRect().height);
-    expect(h).toBeGreaterThanOrEqual(24);
+    expect(h).toBeGreaterThanOrEqual(12);
     // The rail column is present and narrow.
     const railW = await page.locator('.rail-col').evaluate((el) => el.getBoundingClientRect().width);
     expect(railW).toBeLessThanOrEqual(40);

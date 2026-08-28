@@ -12,7 +12,7 @@ import LoadingSkeleton from './components/LoadingSkeleton.vue';
 import MessageRail from './components/MessageRail.vue';
 
 const token = window.location.pathname.split('/').filter(Boolean).pop() ?? '';
-const { state, meta, messages, loadingMore, errorMessage, passwordError, loadFirst, loadMore, submitPassword } =
+const { state, meta, messages, userIndex, loadingMore, errorMessage, passwordError, loadFirst, loadMore, ensureLoadedThrough, submitPassword } =
   useMessages(token);
 
 const sentinel = ref<HTMLElement | null>(null);
@@ -81,7 +81,7 @@ function userParts(message: ShareMessage): SharePart[] {
         </div>
       </header>
       <div class="mx-auto flex w-full max-w-[800px] items-stretch">
-        <MessageRail :messages="messages" />
+        <MessageRail :user-index="userIndex" :messages="messages" :ensure-loaded-through="ensureLoadedThrough" />
         <main class="min-w-0 flex-1 px-4 pb-16">
           <template v-for="message in messages" :key="message.seq">
             <div v-if="message.role === 'user'" :id="`msg-${message.seq}`" class="msg-target">
