@@ -5,6 +5,7 @@ import type { HarnessAdapter, HarnessSessionInfo, ShapedMessage, ShapedPart, Sha
 import { truncateOutput } from '../shape.js';
 import { extractSystemParts, extractReasoningParts } from '../system.js';
 import { readArtifactDataUri, fileToDataUri, mimeFromExtension, isImageMime, MAX_IMAGE_BYTES } from '../image.js';
+import { fileURLToPath } from 'node:url';
 
 export function zcodeDbPath(): string {
   return join(homedir(), '.zcode', 'cli', 'db', 'db.sqlite');
@@ -102,11 +103,82 @@ function isScreenshotTool(tool: string | undefined): boolean {
   return typeof tool === 'string' && /take_screenshot/i.test(tool);
 }
 
+/**
+ * A markdown image link: `![alt](target)`. Captures [1]=alt, [2]=target. The
+ * target is matched loosely (anything up to the closing paren, no whitespace or
+ * nested parens); `markdownImagePart` then validates it is a local image file
+ * (file:// URL, Windows drive path, or a path with an image extension) and
+ * returns null for anything else (e.g. a remote https URL), leaving the link
+ * untouched.
+ */
+const MD_IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+
+/**
+ * Resolve a markdown image link's local file to an image part. Returns null if
+ * the target is not a local image file (e.g. a remote https URL), the file is
+ * missing, or it exceeds the embed cap (the link is then left in the text and
+ * redacted on the server).
+ */
+function markdownImagePart(alt: string, target: string): ShapedPart | null {
+  // Only local files are embeddable: file:// URLs, Windows drive paths
+  // (C:\…), or bare relative/POSIX paths. Remote URLs (http/https) are left
+  // alone — they render as ordinary markdown links.
+  const isLocal =
+    target.startsWith('file://') ||
+    /^[A-Za-z]:[\\/]/.test(target) ||
+    !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(target); // no scheme → bare path
+  if (!isLocal) return null;
+  let filePath: string;
+  try {
+    if (target.startsWith('file://')) filePath = fileURLToPath(target);
+    else filePath = target;
+  } catch {
+    return null;
+  }
+  const mime = mimeFromExtension(filePath);
+  if (!mime) return null;
+  const uri = fileToDataUri(filePath, mime);
+  if (!uri) return null;
+  if (uri.bytes > MAX_IMAGE_BYTES) {
+    return { type: 'image', mime: uri.mime, alt: alt || filePath, bytes: uri.bytes, tooLarge: true };
+  }
+  return { type: 'image', src: uri.dataUri, mime: uri.mime, alt: alt || filePath, bytes: uri.bytes };
+}
+
+/**
+ * Embed markdown image links (`![alt](file:///…)`) in a text part as `image`
+ * parts. Each link is replaced by a short placeholder in the text and an image
+ * part is emitted immediately after it, so the transcript shows the actual image
+ * instead of a redacted `file:///…` path. Links whose file is gone or too large
+ * are left untouched (they get redacted server-side as before).
+ */
+function embedMarkdownImages(text: string): { text: string; images: ShapedPart[] } {
+  const images: ShapedPart[] = [];
+  let out = '';
+  let last = 0;
+  let m: RegExpExecArray | null;
+  MD_IMAGE_RE.lastIndex = 0;
+  while ((m = MD_IMAGE_RE.exec(text)) !== null) {
+    const part = markdownImagePart(m[1] ?? '', m[2] ?? '');
+    if (!part) continue; // not a local image file — leave the link in place
+    out += text.slice(last, m.index) + `![${m[1] ?? ''}]`;
+    images.push(part);
+    last = m.index + m[0].length;
+  }
+  out += text.slice(last);
+  return { text: out, images };
+}
+
 
 function partToShaped(raw: RawPart, artifactDir: string, workDir: string | undefined): ShapedPart[] {
   switch (raw.type) {
-    case 'text':
-      return typeof raw.text === 'string' ? [{ type: 'text', text: raw.text }] : [];
+    case 'text': {
+      if (typeof raw.text !== 'string') return [];
+      // Embed local markdown image links as image parts (the agent's "here's the
+      // screenshot" messages reference on-disk files via ![alt](file:///…)).
+      const { text, images } = embedMarkdownImages(raw.text);
+      return [{ type: 'text', text }, ...images];
+    }
     case 'reasoning':
       return typeof raw.text === 'string' ? [{ type: 'reasoning', text: raw.text }] : [];
     case 'tool': {

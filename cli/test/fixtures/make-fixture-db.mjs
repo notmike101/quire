@@ -37,6 +37,11 @@ insMsg.run('m6', 'sess_fixture', JSON.stringify({ role: 'user', summary: { kind:
 // `summary` field, so the adapter must KEEP it — proving the drop is driven by
 // the structural marker, not by matching the phrase in the text.
 insMsg.run('m7', 'sess_fixture', JSON.stringify({ role: 'user' }), 7);
+// An assistant message whose text embeds a local markdown image link
+// (![alt](file:///…)). The adapter must read the on-disk file and emit an
+// `image` part after the (link-stripped) text part. The file itself is created
+// by the test (in a temp dir), not here.
+insMsg.run('m8', 'sess_fixture', JSON.stringify({ role: 'assistant' }), 8);
 const insPart = db.prepare('insert into part (id, message_id, session_id, data, sequence) values (?,?,?,?,?)');
 insPart.run('p1', 'm1', 'sess_fixture', JSON.stringify({ type: 'text', text: 'hello world' }), 1);
 insPart.run('p2', 'm2', 'sess_fixture', JSON.stringify({ type: 'text', text: 'hi there' }), 1);
@@ -84,5 +89,13 @@ insPart.run('p11', 'm2', 'sess_fixture', JSON.stringify({
     }],
   },
 }), 8);
+// Part for m8: an assistant text message embedding a local markdown image link.
+// The adapter must read the on-disk file (seeded by the test) and emit an
+// `image` part after the link-stripped text. The target path is injected via the
+// MD_IMAGE_PATH env var (a file:// URL) so the test can point it at a temp file
+// it creates — the committed fixture defaults to a /tmp path that the test
+// overwrites.
+const mdImagePath = process.env.MD_IMAGE_PATH ?? 'file:///tmp/quire-md-image-fix.png';
+insPart.run('p14', 'm8', 'sess_fixture', JSON.stringify({ type: 'text', text: `Here is the result:\n\n![my screenshot](${mdImagePath})\n\nDone.` }), 1);
 db.close();
 console.log(`fixture db written to ${dbPath}`);

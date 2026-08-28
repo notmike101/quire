@@ -15,6 +15,10 @@ let fixtureDb: string;
 // A 1×1 red PNG, base64 — the image the fixture's Read-image attachment points at.
 const PNG_1X1 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==';
+// The on-disk file the fixture's markdown image link (m8) points at. Created in
+// beforeAll after tempDir exists; the path is injected into the fixture via the
+// MD_IMAGE_PATH env var so it resolves to a real, readable file on any platform.
+let mdImageFile: string;
 // The artifact dir we seed for the fixture's Read-image attachment. Only removed
 // in afterAll if we created it (i.e. it didn't pre-exist on the dev machine).
 let fixtureArtDir: string;
@@ -23,6 +27,11 @@ let createdFixtureArtDir = false;
 beforeAll(() => {
   tempDir = mkdtempSync(join(tmpdir(), 'quire-zcode-fixture-'));
   fixtureDb = join(tempDir, 'sample-session.sqlite');
+  // Seed the on-disk file the markdown image link (m8) references, then inject
+  // its file:// URL into the fixture so the adapter can read it.
+  mdImageFile = join(tempDir, 'md-image-fix.png');
+  writeFileSync(mdImageFile, Buffer.from(PNG_1X1, 'base64'));
+  process.env.MD_IMAGE_PATH = `file://${mdImageFile.replace(/\\/g, '/')}`;
   execFileSync(process.execPath, [join(dir, 'fixtures', 'make-fixture-db.mjs'), fixtureDb]);
   // Seed the artifact store the fixture's Read-image attachment references. The
   // adapter resolves ~/.zcode/cli/artifacts/<sessionId>/, so write there. The
@@ -60,7 +69,7 @@ describe('zcode adapter', () => {
     expect(s.title).toBe('Fixture Session');
     expect(s.model).toBe('test-model');
     expect(s.provider).toBe('test-provider');
-    expect(s.messages).toHaveLength(4); // system + model-only + continuation dropped
+    expect(s.messages).toHaveLength(5); // system + model-only + continuation dropped
     expect(s.messages[0]!.role).toBe('user');
     expect(s.messages[0]!.parts).toEqual([{ type: 'text', text: 'hello world' }]);
     const assistant = s.messages[1]!;
@@ -105,8 +114,8 @@ describe('zcode adapter', () => {
     // The fixture has 7 user/assistant messages: m1 (real user), m2 (assistant),
     // m4 (real user w/ system reminder), m5 (model-only todo nudge), m6
     // (continuation summary, no metadata), m7 (real user quoting the phrase).
-    // m3 is a system message (skipped); m5 and m6 are dropped → 4 messages.
-    expect(s.messages).toHaveLength(4);
+    // m3 is a system message (skipped); m5 and m6 are dropped → 5 messages.
+    expect(s.messages).toHaveLength(5);
     // No message may carry the model-only todo-nudge text.
     const allText = s.messages.flatMap((m) => m.parts)
       .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && typeof p.text === 'string');
@@ -146,6 +155,28 @@ describe('zcode adapter', () => {
     expect(img.bytes).toBe(Buffer.byteLength(PNG_1X1, 'base64'));
     // The tool part's output is the placeholder string, unchanged.
     expect(assistant.parts[toolIdx]!.output).toBe('[Attached image/png: Read image]');
+  });
+
+  it('embeds a markdown image link in a text part as an image part', async () => {
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const s = await makeZcodeAdapter(fixtureDb).loadSession('sess_fixture');
+    // m8 is the last message: an assistant text message with a ![alt](file://…)
+    // link. The adapter reads the on-disk file and emits an image part after the
+    // link-stripped text.
+    const msg = s.messages[s.messages.length - 1]!;
+    expect(msg.role).toBe('assistant');
+    expect(msg.parts.map((p) => p.type)).toEqual(['text', 'image']);
+    // The text keeps the alt text but the file:// link is replaced by it.
+    expect(msg.parts[0]!.type).toBe('text');
+    expect(msg.parts[0]!.text).toBe('Here is the result:\n\n![my screenshot]\n\nDone.');
+    expect(msg.parts[0]!.text).not.toContain('file://');
+    // The image part carries the embedded data URI of the seeded file.
+    const img = msg.parts[1]!;
+    expect(img.type).toBe('image');
+    expect(img.mime).toBe('image/png');
+    expect(img.src).toBe(`data:image/png;base64,${PNG_1X1}`);
+    expect(img.alt).toBe('my screenshot');
+    expect(img.bytes).toBe(Buffer.byteLength(PNG_1X1, 'base64'));
   });
 
   it('emits a tooLarge image part when the artifact exceeds the cap', async () => {
