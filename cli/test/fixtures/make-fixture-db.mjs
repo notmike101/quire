@@ -28,6 +28,15 @@ insMsg.run('m4', 'sess_fixture', JSON.stringify({ role: 'user' }), 4);
 // A harness-injected user message the model sees but the user never typed
 // (visibility: "model-only"). The adapter must drop it entirely.
 insMsg.run('m5', 'sess_fixture', JSON.stringify({ role: 'user', metadata: { visibility: 'model-only', source: 'todo_reminder' } }), 5);
+// A harness-injected compaction/continuation summary: re-injected as a USER
+// message tagged with a top-level `summary` field (NO metadata/visibility,
+// unlike model-only context). The adapter must drop it — it is not something
+// the user typed. The `summary` field is the structural discriminator.
+insMsg.run('m6', 'sess_fixture', JSON.stringify({ role: 'user', summary: { kind: 'compaction', tokens: 1234 } }), 6);
+// A REAL user message that merely QUOTES the continuation phrase. It has NO
+// `summary` field, so the adapter must KEEP it — proving the drop is driven by
+// the structural marker, not by matching the phrase in the text.
+insMsg.run('m7', 'sess_fixture', JSON.stringify({ role: 'user' }), 7);
 const insPart = db.prepare('insert into part (id, message_id, session_id, data, sequence) values (?,?,?,?,?)');
 insPart.run('p1', 'm1', 'sess_fixture', JSON.stringify({ type: 'text', text: 'hello world' }), 1);
 insPart.run('p2', 'm2', 'sess_fixture', JSON.stringify({ type: 'text', text: 'hi there' }), 1);
@@ -48,6 +57,12 @@ insPart.run('p9', 'm2', 'sess_fixture', JSON.stringify({ type: 'text', text: T_O
 insPart.run('p7', 'm4', 'sess_fixture', JSON.stringify({ type: 'text', text: '<system-reminder>\nContinue working toward the active session goal.\n\n<untrusted_objective>\nmake the thing\n</untrusted_objective>\n</system-reminder>' }), 1);
 // Part for the model-only message — must be dropped along with its message.
 insPart.run('p10', 'm5', 'sess_fixture', JSON.stringify({ type: 'text', text: "The TodoWrite tool hasn't been used recently." }), 1);
+// Part for the continuation summary (m6) — leading phrase, no metadata. Must
+// be dropped along with its message.
+insPart.run('p12', 'm6', 'sess_fixture', JSON.stringify({ type: 'text', text: 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion.\n\n1. Primary Request and Intent: make the cactus.' }), 1);
+// Part for the real user message (m7) that QUOTES the phrase with text before
+// it — must be KEPT as a normal user message.
+insPart.run('p13', 'm7', 'sess_fixture', JSON.stringify({ type: 'text', text: 'I saw a message starting with "This session is being continued from a previous conversation" that I did not type. Please check.' }), 1);
 // A Read tool call on an image file. ZCode stores the viewed image as a data-URI
 // artifact referenced by state.attachments[]. The adapter must emit an `image`
 // part after the tool part. The artifact itself is created by the test (in a temp

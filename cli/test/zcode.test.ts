@@ -60,7 +60,7 @@ describe('zcode adapter', () => {
     expect(s.title).toBe('Fixture Session');
     expect(s.model).toBe('test-model');
     expect(s.provider).toBe('test-provider');
-    expect(s.messages).toHaveLength(3); // system message skipped
+    expect(s.messages).toHaveLength(4); // system + model-only + continuation dropped
     expect(s.messages[0]!.role).toBe('user');
     expect(s.messages[0]!.parts).toEqual([{ type: 'text', text: 'hello world' }]);
     const assistant = s.messages[1]!;
@@ -102,14 +102,29 @@ describe('zcode adapter', () => {
   it('drops harness-injected model-only user messages', async () => {
     const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
     const s = await makeZcodeAdapter(fixtureDb).loadSession('sess_fixture');
-    // The fixture has 5 user/assistant messages: m1 (real user), m2 (assistant),
-    // m4 (real user w/ system reminder), and m5 (model-only todo nudge). m3 is a
-    // system message (skipped) and m5 is model-only (dropped) → 3 messages.
-    expect(s.messages).toHaveLength(3);
+    // The fixture has 7 user/assistant messages: m1 (real user), m2 (assistant),
+    // m4 (real user w/ system reminder), m5 (model-only todo nudge), m6
+    // (continuation summary, no metadata), m7 (real user quoting the phrase).
+    // m3 is a system message (skipped); m5 and m6 are dropped → 4 messages.
+    expect(s.messages).toHaveLength(4);
     // No message may carry the model-only todo-nudge text.
     const allText = s.messages.flatMap((m) => m.parts)
       .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && typeof p.text === 'string');
     expect(allText.some((p) => p.text.includes('TodoWrite'))).toBe(false);
+  });
+
+  it('drops a continuation summary (summary field) but keeps a user message that quotes the phrase', async () => {
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const s = await makeZcodeAdapter(fixtureDb).loadSession('sess_fixture');
+    const allText = s.messages.flatMap((m) => m.parts)
+      .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && typeof p.text === 'string');
+    // The harness-injected continuation summary (m6, tagged with a `summary`
+    // field) must be dropped entirely.
+    expect(allText.some((p) => p.text.startsWith('This session is being continued'))).toBe(false);
+    // A REAL user message that merely quotes the phrase (m7, NO `summary` field)
+    // must be kept verbatim — proving the drop is driven by the structural
+    // marker, not by matching the phrase in the text.
+    expect(allText.some((p) => p.text.includes('I did not type'))).toBe(true);
   });
 
   it('loadSession throws for an unknown id', async () => {

@@ -22,6 +22,11 @@ interface MessageData {
   model?: string;
   providerID?: string;
   metadata?: { visibility?: string; source?: string };
+  // Present ONLY on harness-injected compaction/continuation summaries (the
+  // re-injected prior-conversation context). No real user message or assistant
+  // message carries it — it is the authoritative "not user input" marker for
+  // this class, distinct from metadata.visibility (which these lack).
+  summary?: unknown;
 }
 type PartRow = { message_id: string; data: string; };
 
@@ -96,6 +101,7 @@ function imagePartFromScreenshotFile(raw: RawPart, workDir: string | undefined):
 function isScreenshotTool(tool: string | undefined): boolean {
   return typeof tool === 'string' && /take_screenshot/i.test(tool);
 }
+
 
 function partToShaped(raw: RawPart, artifactDir: string, workDir: string | undefined): ShapedPart[] {
   switch (raw.type) {
@@ -194,6 +200,14 @@ export function makeZcodeAdapter(dbPath: string = zcodeDbPath()): HarnessAdapter
           // messages marked visibility: "model-only". Drop them — they are not
           // part of the conversation the user actually had.
           if (m.data.metadata?.visibility === 'model-only') continue;
+          // On context compaction the harness re-injects the prior conversation as
+          // a USER message tagged with a top-level `summary` field. Unlike
+          // model-only context it carries NO visibility/synthetic marker, so the
+          // check above misses it and it would render as a giant fake user bubble.
+          // The `summary` field is exclusive to these (verified across the full
+          // DB: 494/494 continuation summaries, 0 real user or assistant msgs) —
+          // a structural signal, not a text match. Drop it.
+          if (role === 'user' && m.data.summary !== undefined) continue;
           const kept = byMessage.get(m.id) ?? [];
           if (kept.length === 0) continue;
           out.push({ role, parts: extractReasoningParts(extractSystemParts(kept)) });
