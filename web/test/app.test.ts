@@ -54,4 +54,30 @@ describe('App', () => {
     await flushPromises();
     expect(w.text()).toContain('Password required');
   });
+
+  it('renders the message rail with one tick per user message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200, text: async () => JSON.stringify(PAGE),
+    })));
+    const w = mount(App);
+    await flushPromises();
+    // PAGE has one user message (seq 1) and one assistant message.
+    expect(w.find('.rail-col').exists()).toBe(true);
+    expect(w.findAll('.rail-tick')).toHaveLength(1);
+    // The user message is wrapped in a jump target the rail can resolve.
+    expect(w.find('#msg-1').exists()).toBe(true);
+  });
+
+  it('omits the rail when the share has no user messages', async () => {
+    const assistantOnly = { ...PAGE, messages: [
+      { seq: 1, role: 'assistant', time: null, parts: [{ type: 'text', text: 'hi there' }] },
+    ] };
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200, text: async () => JSON.stringify(assistantOnly),
+    })));
+    const w = mount(App);
+    await flushPromises();
+    expect(w.find('.rail-col').exists()).toBe(false);
+    expect(w.findAll('.rail-tick')).toHaveLength(0);
+  });
 });

@@ -9,6 +9,7 @@ import ExpiredPage from './components/ExpiredPage.vue';
 import NotFoundPage from './components/NotFoundPage.vue';
 import ErrorPage from './components/ErrorPage.vue';
 import LoadingSkeleton from './components/LoadingSkeleton.vue';
+import MessageRail from './components/MessageRail.vue';
 
 const token = window.location.pathname.split('/').filter(Boolean).pop() ?? '';
 const { state, meta, messages, loadingMore, errorMessage, passwordError, loadFirst, loadMore, submitPassword } =
@@ -79,17 +80,22 @@ function userParts(message: ShareMessage): SharePart[] {
           >{{ Object.values(meta?.redactions ?? {}).reduce((a, b) => a + b, 0) }} redacted</span>
         </div>
       </header>
-      <main class="mx-auto w-full max-w-[760px] px-4 pb-16">
-        <template v-for="message in messages" :key="message.seq">
-          <UserMessage v-if="message.role === 'user'" :parts="userParts(message)" />
-          <AssistantMessage v-else :message="message" />
-        </template>
+      <div class="mx-auto flex w-full max-w-[800px] items-stretch">
+        <MessageRail :messages="messages" />
+        <main class="min-w-0 flex-1 px-4 pb-16">
+          <template v-for="message in messages" :key="message.seq">
+            <div v-if="message.role === 'user'" :id="`msg-${message.seq}`" class="msg-target">
+              <UserMessage :parts="userParts(message)" />
+            </div>
+            <AssistantMessage v-else :message="message" />
+          </template>
         <div v-if="loadingMore" class="py-4 text-center text-sm text-neutral-400 dark:text-neutral-500">Loading more…</div>
         <div v-else-if="messages.length === 0" class="py-16 text-center text-sm text-neutral-400 dark:text-neutral-500">
           This session has no shareable messages.
         </div>
         <div ref="sentinel" class="h-1" />
-      </main>
+        </main>
+      </div>
     </template>
   </div>
 </template>

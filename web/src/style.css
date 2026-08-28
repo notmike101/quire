@@ -91,3 +91,177 @@ body {
 @media (prefers-color-scheme: dark) {
   .image-part-img { border-color: rgb(255 255 255 / 0.1); }
 }
+
+/* ---- Message tick navigation rail (centered cluster) ----
+   The rail is an in-flow flex column at the left edge, as tall as the
+   message list, so it scrolls in lockstep with the content (zero JS on
+   page scroll). Inside it, the tick cluster is sticky-pinned to the
+   VIEWPORT vertical center — it stays put while the conversation scrolls
+   past. When the tick group is taller than the viewport budget, the group
+   scrolls internally inside the still-centered container. */
+
+/* In-flow rail column: full height of the content wrapper (the flex row
+   stretch), narrow fixed width. The content wrapper's padding-left keeps
+   the column clear of the text. */
+.rail-col {
+  flex: 0 0 40px;
+  width: 40px;
+  align-self: stretch;
+  position: relative;
+}
+
+/* The sticky cluster: pinned to the viewport center. max-height is the
+   viewport budget; overflow-y engages only when the tick group exceeds it. */
+.rail-cluster {
+  position: sticky;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(0 0 0 / 0.25) transparent;
+}
+.rail-cluster::-webkit-scrollbar { width: 4px; }
+.rail-cluster::-webkit-scrollbar-thumb { background: rgb(0 0 0 / 0.25); border-radius: 2px; }
+@media (prefers-color-scheme: dark) {
+  .rail-cluster { scrollbar-color: rgb(255 255 255 / 0.25) transparent; }
+  .rail-cluster::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.25); }
+}
+
+/* One tick = a full-width button row with a 24px hit-target, the visible
+   dash centered, and the tooltip absolutely positioned to the right. */
+.rail-tick {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 24px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.rail-tick .rail-dash {
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+  background: rgb(0 0 0 / 0.3);
+  transition: width 0.12s ease, background-color 0.12s ease, height 0.12s ease;
+}
+@media (prefers-color-scheme: dark) {
+  .rail-tick .rail-dash { background: rgb(255 255 255 / 0.35); }
+}
+.rail-tick:hover .rail-dash,
+.rail-tick:focus-visible .rail-dash {
+  width: 18px;
+  background: rgb(0 0 0 / 0.55);
+}
+@media (prefers-color-scheme: dark) {
+  .rail-tick:hover .rail-dash,
+  .rail-tick:focus-visible .rail-dash { background: rgb(255 255 255 / 0.65); }
+}
+.rail-tick.active .rail-dash {
+  width: 22px;
+  height: 3px;
+  background: rgb(0 0 0 / 0.9);
+}
+@media (prefers-color-scheme: dark) {
+  .rail-tick.active .rail-dash { background: rgb(255 255 255 / 0.95); }
+}
+
+/* Tooltip: to the right of the tick, pointer-only (never traps a pointer on
+   touch devices). */
+.rail-tip {
+  position: absolute;
+  left: 36px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 230px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  border: 1px solid rgb(0 0 0 / 0.12);
+  background: #ffffff;
+  color: rgb(0 0 0 / 0.85);
+  font-size: 12px;
+  line-height: 1.45;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+  z-index: 40;
+  white-space: normal;
+}
+.rail-tip .rail-tip-n {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 10.5px;
+  color: rgb(0 0 0 / 0.45);
+}
+@media (prefers-color-scheme: dark) {
+  .rail-tip {
+    background: #1c1c1c;
+    border-color: rgb(255 255 255 / 0.15);
+    color: rgb(255 255 255 / 0.9);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.5);
+  }
+  .rail-tip .rail-tip-n { color: rgb(255 255 255 / 0.5); }
+}
+.rail-tick:hover .rail-tip,
+.rail-tick:focus-visible .rail-tip { opacity: 1; }
+@media (hover: none) {
+  .rail-tip { display: none; }
+}
+
+/* Overflow affordance bars: sticky to the cluster's top/bottom edges,
+   visible only when the tick group is taller than the cluster budget and
+   there are ticks hidden on that side. */
+.rail-overflow {
+  position: sticky;
+  width: 100%;
+  padding: 3px 0;
+  font-size: 10px;
+  text-align: center;
+  color: rgb(0 0 0 / 0.5);
+  background: #ffffff;
+  border: 0;
+  cursor: pointer;
+}
+.rail-overflow.top { top: 0; border-bottom: 1px solid rgb(0 0 0 / 0.1); }
+.rail-overflow.bottom { bottom: 0; border-top: 1px solid rgb(0 0 0 / 0.1); }
+@media (prefers-color-scheme: dark) {
+  .rail-overflow { background: #141414; color: rgb(255 255 255 / 0.5); }
+  .rail-overflow.top { border-bottom-color: rgb(255 255 255 / 0.1); }
+  .rail-overflow.bottom { border-top-color: rgb(255 255 255 / 0.1); }
+}
+
+/* Targeted user message: lands below the sticky header after a jump, and
+   flashes briefly to confirm the jump landed. */
+.msg-target {
+  scroll-margin-top: 24px;
+}
+.msg-flash {
+  animation: msg-flash 1.1s ease;
+}
+@keyframes msg-flash {
+  0% { background-color: rgb(0 0 0 / 0.08); }
+  100% { background-color: transparent; }
+}
+@media (prefers-color-scheme: dark) {
+  @keyframes msg-flash {
+    0% { background-color: rgb(255 255 255 / 0.1); }
+    100% { background-color: transparent; }
+  }
+}
+
+/* Narrow viewports: the rail stays (it's only 40px) but the content
+   wrapper's left padding shrinks so the column doesn't squeeze the text. */
+@media (max-width: 640px) {
+  .rail-col { flex-basis: 32px; width: 32px; }
+  .rail-tip { left: 28px; width: 180px; }
+}

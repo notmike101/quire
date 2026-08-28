@@ -201,6 +201,56 @@ export async function createToolImageShare(request: APIRequestContext): Promise<
   return await res.json();
 }
 
+/**
+ * A long session with `userTurns` user messages, each followed by an assistant
+ * reply of varied length (some short, some with tool chips + code) so the page
+ * is genuinely tall. Used to exercise the message rail's viewport anchoring and
+ * overflow behavior.
+ */
+export function longSession(userTurns: number): object {
+  const messages: object[] = [];
+  for (let i = 0; i < userTurns; i++) {
+    messages.push({
+      role: 'user',
+      time: new Date(Date.UTC(2026, 0, 1, 12, i)).toISOString(),
+      parts: [{ type: 'text', text: `User turn number ${i + 1}: please do something specific and detailed about topic ${i}.` }],
+    });
+    // Vary assistant length: short, medium, or long (with a code block).
+    const len = i % 3;
+    const parts: object[] = [{ type: 'text', text: `Assistant reply to turn ${i + 1}.` }];
+    if (len >= 1) {
+      parts.push({ type: 'text', text: 'Here is some context to make this reply longer so the page scrolls.' });
+    }
+    if (len === 2) {
+      parts.push({ type: 'text', text: '```ts\nconst x = ' + i + ';\nconsole.log(x);\n```' });
+    }
+    messages.push({
+      role: 'assistant',
+      time: new Date(Date.UTC(2026, 0, 1, 12, i, 30)).toISOString(),
+      parts,
+    });
+  }
+  return {
+    sessionId: 'sess_long',
+    title: 'Long Session',
+    model: 'test-model',
+    provider: 'test-provider',
+    messages,
+  };
+}
+
+export async function createLongShare(
+  request: APIRequestContext,
+  userTurns: number,
+): Promise<{ token: string; url: string }> {
+  const res = await request.post('/api/chats', {
+    headers: { authorization: `Bearer ${API_KEY}` },
+    data: { session: longSession(userTurns) },
+  });
+  expect(res.status()).toBe(201);
+  return await res.json();
+}
+
 export async function createChunkedShare(
   request: APIRequestContext,
   opts: { perChunk?: number } = {},

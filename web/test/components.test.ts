@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import UserMessage from '../src/components/UserMessage.vue';
 import ToolCard from '../src/components/ToolCard.vue';
@@ -6,8 +6,23 @@ import ReasoningBlock from '../src/components/ReasoningBlock.vue';
 import ImagePart from '../src/components/ImagePart.vue';
 import AssistantMessage from '../src/components/AssistantMessage.vue';
 import SystemNotice from '../src/components/SystemNotice.vue';
+import MessageRail from '../src/components/MessageRail.vue';
 import { renderMarkdown } from '../src/markdown';
 import type { ShareMessage, SharePart } from '../src/api';
+
+// Capturing IntersectionObserver: records every constructed instance so a
+// test can fire its callback against real (stubbed) entries.
+let ioCapture: unknown[] = [];
+class CapturingIntersectionObserver {
+  readonly cb: IntersectionObserverCallback;
+  constructor(cb: IntersectionObserverCallback) {
+    this.cb = cb;
+    ioCapture.push(this);
+  }
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
 
 describe('renderMarkdown', () => {
   it('renders markdown and highlights fenced code with shiki', async () => {
@@ -209,5 +224,117 @@ describe('ImagePart', () => {
     expect(w.find('img').exists()).toBe(false);
     expect(w.text()).toContain('image too large to embed');
     expect(w.text()).toContain('2.9 MB');
+  });
+});
+
+function railMessages(userTexts: string[], withSystemOnly = false): ShareMessage[] {
+  const msgs: ShareMessage[] = [];
+  let seq = 1;
+  for (const text of userTexts) {
+    msgs.push({
+      chunkSeq: 0,
+      seq: seq++,
+      role: 'user',
+      time: null,
+      parts: withSystemOnly
+        ? [{ type: 'system', text: 'Continue working toward the active session goal.' }]
+        : [{ type: 'text', text }],
+    });
+    msgs.push({
+      chunkSeq: 0,
+      seq: seq++,
+      role: 'assistant',
+      time: null,
+      parts: [{ type: 'text', text: 'assistant reply' }],
+    });
+  }
+  return msgs;
+}
+
+describe('MessageRail', () => {
+  beforeEach(() => {
+    ioCapture = [];
+    vi.stubGlobal('IntersectionObserver', CapturingIntersectionObserver);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('renders one tick per user message, not per assistant message', () => {
+    const w = mount(MessageRail, { props: { messages: railMessages(['a', 'b', 'c']) } });
+    expect(w.findAll('.rail-tick')).toHaveLength(3);
+  });
+
+  it('truncates the preview to 80 chars and collapses whitespace', () => {
+    const long = 'x'.repeat(120);
+    const w = mount(MessageRail, { props: { messages: railMessages([long]) } });
+    const tip = w.find('.rail-tip');
+    expect(tip.text()).toContain('x'.repeat(80) + '…');
+    expect(tip.text()).not.toContain('x'.repeat(81));
+    // Whitespace collapsed: "a   b" -> "a b"
+    const w2 = mount(MessageRail, { props: { messages: railMessages(['a   b\n\nc']) } });
+    expect(w2.find('.rail-tip').text()).toContain('a b c');
+  });
+
+  it('falls back to a generic label when the user message has no text part', () => {
+    const w = mount(MessageRail, { props: { messages: railMessages(['ignored'], true) } });
+    expect(w.find('.rail-tip').text()).toContain('user message');
+  });
+
+  it('clicking a tick scrolls to the matching user message', async () => {
+    const msgs = railMessages(['first', 'second', 'third']);
+    const userSeqs = msgs.filter((m) => m.role === 'user').map((m) => m.seq);
+    for (const seq of userSeqs) {
+      document.body.insertAdjacentHTML('beforeend', `<div id="msg-${seq}"></div>`);
+    }
+    // jsdom does not implement scrollIntoView; capture the element (the `this`
+    // of the call) and the options argument.
+    let scrolled: Element | null = null;
+    let opts: ScrollToOptions | undefined;
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element, o?: ScrollToOptions) {
+      scrolled = this;
+      opts = o;
+    };
+    const w = mount(MessageRail, { props: { messages: msgs } });
+    const tick2 = w.findAll('.rail-tick')[1] as any;
+    await tick2.trigger('click');
+    // The scrolled element is the second user message's jump target.
+    const scrolledEl = scrolled as unknown as Element;
+    expect(scrolledEl.id).toBe(`msg-${userSeqs[1]}`);
+    expect(opts).toEqual({ behavior: 'smooth', block: 'start' });
+    Element.prototype.scrollIntoView = orig;
+    w.unmount();
+    for (const seq of userSeqs) document.getElementById(`msg-${seq}`)?.remove();
+  });
+
+  it('marks the tick active when its message enters the observer band', async () => {
+    const msgs = railMessages(['first', 'second', 'third']);
+    const userSeqs = msgs.filter((m) => m.role === 'user').map((m) => m.seq);
+    for (const seq of userSeqs) {
+      document.body.insertAdjacentHTML('beforeend', `<div id="msg-${seq}"></div>`);
+    }
+    const w = mount(MessageRail, { props: { messages: msgs } });
+    await flushPromises();
+    const ticks = w.findAll('.rail-tick');
+    expect(ioCapture.length).toBeGreaterThan(0);
+    // Fire the observer callback for the third user message.
+    const entry = {
+      isIntersecting: true,
+      target: document.getElementById(`msg-${userSeqs[2]}`),
+    } as unknown as IntersectionObserverEntry;
+    const io = ioCapture[ioCapture.length - 1] as { cb: IntersectionObserverCallback };
+    io.cb([entry], {} as unknown as IntersectionObserver);
+    await flushPromises();
+    expect((ticks[2] as any).classes()).toContain('active');
+    expect((ticks[0] as any).classes()).not.toContain('active');
+    w.unmount();
+    for (const seq of userSeqs) document.getElementById(`msg-${seq}`)?.remove();
+  });
+
+  it('renders nothing when there are no user messages', () => {
+    const w = mount(MessageRail, {
+      props: { messages: [{ chunkSeq: 0, seq: 1, role: 'assistant', time: null, parts: [{ type: 'text', text: 'hi' }] }] },
+    });
+    expect(w.find('.rail-tick').exists()).toBe(false);
+    expect(w.find('.rail-col').exists()).toBe(false);
   });
 });
