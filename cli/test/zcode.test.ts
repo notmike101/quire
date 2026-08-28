@@ -19,6 +19,8 @@ const PNG_1X1 =
 // beforeAll after tempDir exists; the path is injected into the fixture via the
 // MD_IMAGE_PATH env var so it resolves to a real, readable file on any platform.
 let mdImageFile: string;
+// The on-disk file the fixture's screenshot tool call (m9/p15) references.
+let screenshotFile: string;
 // The artifact dir we seed for the fixture's Read-image attachment. Only removed
 // in afterAll if we created it (i.e. it didn't pre-exist on the dev machine).
 let fixtureArtDir: string;
@@ -32,6 +34,14 @@ beforeAll(() => {
   mdImageFile = join(tempDir, 'md-image-fix.png');
   writeFileSync(mdImageFile, Buffer.from(PNG_1X1, 'base64'));
   process.env.MD_IMAGE_PATH = `file://${mdImageFile.replace(/\\/g, '/')}`;
+  // The screenshot tool call's input.filename. The fixture session's working
+  // dir is /tmp (POSIX), which doesn't exist on Windows. We create a temp
+  // working dir, put the screenshot file there, and pass it to the adapter via
+  // the workDirOverride parameter so the join resolves correctly on all
+  // platforms.
+  screenshotFile = join(tempDir, 'screenshot-fix.png');
+  writeFileSync(screenshotFile, Buffer.from(PNG_1X1, 'base64'));
+  process.env.SCREENSHOT_FILENAME = 'screenshot-fix.png';
   execFileSync(process.execPath, [join(dir, 'fixtures', 'make-fixture-db.mjs'), fixtureDb]);
   // Seed the artifact store the fixture's Read-image attachment references. The
   // adapter resolves ~/.zcode/cli/artifacts/<sessionId>/, so write there. The
@@ -69,7 +79,7 @@ describe('zcode adapter', () => {
     expect(s.title).toBe('Fixture Session');
     expect(s.model).toBe('test-model');
     expect(s.provider).toBe('test-provider');
-    expect(s.messages).toHaveLength(5); // system + model-only + continuation dropped
+    expect(s.messages).toHaveLength(6); // system + model-only + continuation dropped
     expect(s.messages[0]!.role).toBe('user');
     expect(s.messages[0]!.parts).toEqual([{ type: 'text', text: 'hello world' }]);
     const assistant = s.messages[1]!;
@@ -114,8 +124,8 @@ describe('zcode adapter', () => {
     // The fixture has 7 user/assistant messages: m1 (real user), m2 (assistant),
     // m4 (real user w/ system reminder), m5 (model-only todo nudge), m6
     // (continuation summary, no metadata), m7 (real user quoting the phrase).
-    // m3 is a system message (skipped); m5 and m6 are dropped → 5 messages.
-    expect(s.messages).toHaveLength(5);
+    // m3 is a system message (skipped); m5 and m6 are dropped → 6 messages.
+    expect(s.messages).toHaveLength(6);
     // No message may carry the model-only todo-nudge text.
     const allText = s.messages.flatMap((m) => m.parts)
       .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && typeof p.text === 'string');
@@ -160,13 +170,41 @@ describe('zcode adapter', () => {
     expect(assistant.parts[toolIdx]!.output).toBe('[Attached image/png: Read image]');
   });
 
+  it('emits a COLLAPSED image part after a screenshot tool part', async () => {
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    // Pass tempDir as the workDirOverride so the screenshot file (in tempDir)
+    // resolves correctly regardless of the fixture session's /tmp working dir.
+    const s = await makeZcodeAdapter(fixtureDb, tempDir).loadSession('sess_fixture');
+    // m9 (index 5 of 6): a screenshot tool call. The messages are:
+    // [0]=m1(user), [1]=m2(assistant), [2]=m4(user), [3]=m7(user),
+    // [4]=m8(assistant), [5]=m9(assistant).
+    const msg = s.messages[5]!;
+    expect(msg.role).toBe('assistant');
+    expect(msg.parts.map((p) => p.type)).toEqual(['tool', 'image']);
+    const tool = msg.parts[0]!;
+    expect(tool.type).toBe('tool');
+    expect(tool.tool).toBe('mcp__playwright__browser_take_screenshot');
+    expect(tool.callID).toBe('c3');
+    const img = msg.parts[1]!;
+    expect(img.type).toBe('image');
+    expect(img.mime).toBe('image/png');
+    expect(img.src).toBe(`data:image/png;base64,${PNG_1X1}`);
+    expect(img.alt).toBe('screenshot-fix.png');
+    expect(img.bytes).toBe(Buffer.byteLength(PNG_1X1, 'base64'));
+    // Screenshot-tool images are the agent's own tool output — context, not a
+    // deliverable — so they render collapsed by default (like Read-attachment
+    // images). Only the agent's deliberate markdown screenshots in text stay
+    // expanded.
+    expect(img.collapsed).toBe(true);
+  });
+
   it('embeds a markdown image link in a text part as an image part', async () => {
     const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
     const s = await makeZcodeAdapter(fixtureDb).loadSession('sess_fixture');
-    // m8 is the last message: an assistant text message with a ![alt](file://…)
+    // m8 (index 4 of 6): an assistant text message with a ![alt](file://…)
     // link. The adapter reads the on-disk file and emits an image part after the
-    // link-stripped text.
-    const msg = s.messages[s.messages.length - 1]!;
+    // link-stripped text. m9 (the screenshot tool call) follows it.
+    const msg = s.messages[4]!;
     expect(msg.role).toBe('assistant');
     expect(msg.parts.map((p) => p.type)).toEqual(['text', 'image']);
     // The text keeps the alt text but the file:// link is replaced by it.

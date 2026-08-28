@@ -94,10 +94,10 @@ function imagePartFromScreenshotFile(raw: RawPart, workDir: string | undefined):
   const filePath = join(workDir, filename);
   const uri = fileToDataUri(filePath, mime);
   if (!uri) return [];
-  if (uri.bytes > MAX_IMAGE_BYTES) {
-    return [{ type: 'image', mime: uri.mime, alt: filename, bytes: uri.bytes, tooLarge: true }];
-  }
-  return [{ type: 'image', src: uri.dataUri, mime: uri.mime, alt: filename, bytes: uri.bytes }];
+    if (uri.bytes > MAX_IMAGE_BYTES) {
+      return [{ type: 'image', mime: uri.mime, alt: filename, bytes: uri.bytes, tooLarge: true, collapsed: true }];
+    }
+    return [{ type: 'image', src: uri.dataUri, mime: uri.mime, alt: filename, bytes: uri.bytes, collapsed: true }];
 }
 
 function isScreenshotTool(tool: string | undefined): boolean {
@@ -207,7 +207,7 @@ function partToShaped(raw: RawPart, artifactDir: string, workDir: string | undef
   }
 }
 
-export function makeZcodeAdapter(dbPath: string = zcodeDbPath()): HarnessAdapter {
+export function makeZcodeAdapter(dbPath: string = zcodeDbPath(), workDirOverride?: string): HarnessAdapter {
   const open = (): DatabaseSync => new DatabaseSync(dbPath, { readOnly: true });
 
   return {
@@ -248,7 +248,7 @@ export function makeZcodeAdapter(dbPath: string = zcodeDbPath()): HarnessAdapter
           | undefined;
         if (!sess) throw new Error(`ZCode session not found: ${id}`);
         const artifactDir = zcodeArtifactsDir(id);
-        const workDir = sess.directory ?? undefined;
+        const workDir = workDirOverride ?? sess.directory ?? undefined;
         const rows = db
           .prepare('select id, data from message where session_id = ? order by sequence')
           .all(id) as { id: string; data: string }[];

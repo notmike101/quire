@@ -42,6 +42,12 @@ insMsg.run('m7', 'sess_fixture', JSON.stringify({ role: 'user' }), 7);
 // `image` part after the (link-stripped) text part. The file itself is created
 // by the test (in a temp dir), not here.
 insMsg.run('m8', 'sess_fixture', JSON.stringify({ role: 'assistant' }), 8);
+// An assistant message with a screenshot tool call (e.g. an MCP
+// browser_take_screenshot). The adapter resolves input.filename relative to the
+// session working dir and emits a COLLAPSED image part after the tool part.
+// The on-disk file is created by the test (temp dir); the path is injected via
+// the SCREENSHOT_FILENAME env var.
+insMsg.run('m9', 'sess_fixture', JSON.stringify({ role: 'assistant' }), 9);
 const insPart = db.prepare('insert into part (id, message_id, session_id, data, sequence) values (?,?,?,?,?)');
 insPart.run('p1', 'm1', 'sess_fixture', JSON.stringify({ type: 'text', text: 'hello world' }), 1);
 insPart.run('p2', 'm2', 'sess_fixture', JSON.stringify({ type: 'text', text: 'hi there' }), 1);
@@ -97,5 +103,15 @@ insPart.run('p11', 'm2', 'sess_fixture', JSON.stringify({
 // overwrites.
 const mdImagePath = process.env.MD_IMAGE_PATH ?? 'file:///tmp/quire-md-image-fix.png';
 insPart.run('p14', 'm8', 'sess_fixture', JSON.stringify({ type: 'text', text: `Here is the result:\n\n![my screenshot](${mdImagePath})\n\nDone.` }), 1);
+// Part for m9: a screenshot tool call. input.filename is relative to the
+// session working dir (the fixture's directory is /tmp, so the test points the
+// env var at an absolute temp path that the adapter's join() resolves as-is).
+const screenshotFilename = process.env.SCREENSHOT_FILENAME ?? '/tmp/quire-screenshot-fix.png';
+insPart.run('p15', 'm9', 'sess_fixture', JSON.stringify({
+  type: 'tool',
+  callID: 'c3',
+  tool: 'mcp__playwright__browser_take_screenshot',
+  state: { status: 'completed', input: { filename: screenshotFilename }, output: 'Screenshot saved to shot.png' },
+}), 1);
 db.close();
 console.log(`fixture db written to ${dbPath}`);
