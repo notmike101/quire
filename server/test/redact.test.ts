@@ -191,3 +191,27 @@ describe('prepareContent', () => {
     expect(prepareContent(withMeta, 'none').messages[0]!.parts[0]!.alt).toBe(alt);
   });
 });
+
+describe('Chain F widened rules', () => {
+  it('redacts an 8-char generic secret (floor lowered to 8)', () => {
+    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'password=abcd1234' }] }], 'strict');
+    expect(JSON.stringify(out.messages)).not.toContain('abcd1234');
+    expect(out.summary['generic-secret']).toBe(1);
+  });
+  it('redacts a query-string DSN credential (?password=)', () => {
+    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'postgres://db.example.com/app?password=hunter22' }] }], 'strict');
+    expect(JSON.stringify(out.messages)).not.toContain('hunter22');
+  });
+  it('redacts a non-eyJ JWT', () => {
+    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'token abcdefgh1234.ijklmnop5678.rstuvwx9012' }] }], 'strict');
+    expect(JSON.stringify(out.messages)).not.toContain('abcdefgh1234.ijklmnop5678');
+  });
+  it('redacts a bare high-entropy token (no bearer keyword)', () => {
+    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'use ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 here' }] }], 'strict');
+    expect(JSON.stringify(out.messages)).not.toContain('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
+  });
+  it('does NOT redact ordinary 24-char prose identifiers (false-positive guard)', () => {
+    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'the quick brown fox jumps over the lazy dog near' }] }], 'strict');
+    expect(JSON.stringify(out.messages)).toContain('the quick brown fox');
+  });
+});

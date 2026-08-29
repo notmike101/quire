@@ -18,7 +18,9 @@ export const rules: RedactRule[] = [
   },
   {
     category: 'jwt',
-    pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}/g,
+    // Chain F: the eyJ branch is preferred (real JWTs start with the base64 of
+    // '{"'); the generic branch also catches non-eyJ three-segment dot tokens.
+    pattern: /\b(?:eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}|[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{6,})\b/g,
     presets: ['strict', 'normal'],
   },
   {
@@ -38,9 +40,11 @@ export const rules: RedactRule[] = [
   },
   {
     category: 'connection-string',
-    pattern: /\b(postgres(ql)?|mysql|mongodb(\+srv)?|redis|amqp):\/\/[^/\s:@]+:[^@\s]+@/g,
+    // Chain F: the first branch is the user:pass@host form; the second catches
+    // query-string credentials (?password=… / &token=…) that carry no user@host.
+    pattern: /\b(postgres(ql)?|mysql|mongodb(\+srv)?|redis|amqp):\/\/[^/\s:@]+:[^@\s]+@|(?::|&|\?)(password|passwd|pwd|token|key|secret)s?=[^&\s]+/gi,
     presets: ['strict', 'normal'],
-    replace: (_m, scheme) => `${scheme}://[REDACTED:connection-string]@`,
+    replace: (m, scheme, _q, _s, credKey) => (scheme ? `${scheme}://[REDACTED:connection-string]@` : `${credKey}=[REDACTED:connection-string]`),
   },
   {
     category: 'bearer-token',
@@ -49,9 +53,19 @@ export const rules: RedactRule[] = [
   },
   {
     category: 'generic-secret',
-    pattern: /\b(api[_-]?key|secret|token|passwd|password)(\s*[:=]\s*)(['"]?)([A-Za-z0-9+/=_\-]{16,})\3/gi,
+    // Chain F: floor lowered 16→8 and the key-name list widened so short
+    // secrets and more naming conventions are caught.
+    pattern: /\b(api[_-]?key|secret|token|passwd|password|auth|credential|access|jwt|session|cookie|dsn|conn|private)(\s*[:=]\s*)(['"]?)([A-Za-z0-9+/=_\-]{8,})\3/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key, sep, _q, _v) => `${key}${sep}[REDACTED:generic-secret]`,
+  },
+  {
+    category: 'bare-token',
+    // Chain F: a keyword-less high-entropy fallback. Runs LAST so the specific
+    // rules above claim their spans first; the lookaround requires at least one
+    // of . _ - so ordinary long prose words (no separators) are not redacted.
+    pattern: /\b(?=[A-Za-z0-9._-]*[._-])[A-Za-z0-9._-]{24,}\b/g,
+    presets: ['strict', 'normal'],
   },
   {
     category: 'private-ip',

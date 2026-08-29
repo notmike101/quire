@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createShare, createChunkedShare, createSystemNoticeShare, createReasoningShare, createImageShare, createToolImageShare, createLongShare, TINY_PNG_DATA_URI, OPENAI_KEY } from './helpers';
+import { createShare, createChunkedShare, createSystemNoticeShare, createReasoningShare, createImageShare, createToolImageShare, createLongShare, createRuleShare, RULE_SECRETS, TINY_PNG_DATA_URI, OPENAI_KEY } from './helpers';
 
 test.describe('share viewer', () => {
   test('renders the first page and redacts secrets server-side', async ({ page, request }) => {
@@ -14,6 +14,19 @@ test.describe('share viewer', () => {
     // The hard security property: the raw secret never reaches the viewer's DOM.
     const body = await page.locator('body').innerText();
     expect(body).not.toContain(OPENAI_KEY);
+  });
+
+  test('each redaction rule redacts its secret before it reaches the DOM (Chain F)', async ({ page, request }) => {
+    for (const entry of RULE_SECRETS) {
+      const { token } = await createRuleShare(request, entry);
+      await page.goto(`/chats/${token}`);
+      await expect(page.getByRole('heading', { name: `Rule ${entry.label}` })).toBeVisible({ timeout: 15000 });
+      const body = await page.locator('body').innerText();
+      // For connection-string the scheme+host legitimately survive (only the
+      // credential is redacted), so assert on the credential, not the full raw.
+      const needle = entry.needle ?? entry.raw;
+      expect(body, `${entry.label}: raw secret leaked to DOM`).not.toContain(needle);
+    }
   });
 
   test('lazy-loads subsequent pages when scrolling', async ({ page, request }) => {

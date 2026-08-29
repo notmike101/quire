@@ -251,6 +251,82 @@ export async function createLongShare(
   return await res.json();
 }
 
+// Chain F: one secret per redaction rule. `raw` is the full secret that must
+// never reach the DOM; `text` wraps it in prose so the rule fires in context.
+// For `connection-string` the scheme+host legitimately survive (only the
+// credential is redacted), so the test asserts on `needle` (the credential)
+// rather than `raw`.
+export const RULE_SECRETS: { label: string; text: string; raw: string; needle?: string }[] = [
+  {
+    label: 'private-key',
+    raw: '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxF9zUlKb2fElpXQf7U00mJVKoHq7q\n-----END RSA PRIVATE KEY-----',
+    text: 'here: -----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxF9zUlKb2fElpXQf7U00mJVKoHq7q\n-----END RSA PRIVATE KEY-----',
+  },
+  {
+    label: 'jwt',
+    raw: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXw',
+    text: 'jwt: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXw',
+  },
+  {
+    label: 'aws-access-key',
+    raw: 'AKIAIOSFODNN7EXAMPLE',
+    text: 'aws: AKIAIOSFODNN7EXAMPLE',
+  },
+  {
+    label: 'connection-string',
+    raw: 'postgres://user:secretpw@db.example.com/app',
+    text: 'dsn: postgres://user:secretpw@db.example.com/app',
+    needle: 'secretpw',
+  },
+  {
+    label: 'bearer-token',
+    raw: 'ghp_LIVESECRET0123456789ABCDEF',
+    text: 'auth: Bearer ghp_LIVESECRET0123456789ABCDEF',
+  },
+  {
+    label: 'generic-secret',
+    raw: 'abcd1234efgh5678',
+    text: 'cfg: api_key=abcd1234efgh5678',
+  },
+  {
+    label: 'private-ip',
+    raw: '10.0.0.5',
+    text: 'host 10.0.0.5 seen',
+  },
+  {
+    label: 'local-path',
+    raw: '/home/user/.ssh/id_rsa',
+    text: 'file /home/user/.ssh/id_rsa read',
+  },
+];
+
+export async function createRuleShare(
+  request: APIRequestContext,
+  entry: { label: string; text: string },
+): Promise<{ token: string }> {
+  const res = await request.post('/api/chats', {
+    headers: { authorization: `Bearer ${API_KEY}` },
+    data: {
+      session: {
+        sessionId: `sess_rule_${entry.label}`,
+        title: `Rule ${entry.label}`,
+        model: 'test-model',
+        messages: [
+          {
+            role: 'user',
+            time: new Date(Date.UTC(2026, 0, 1, 12, 0)).toISOString(),
+            parts: [{ type: 'text', text: entry.text }],
+          },
+        ],
+      },
+      preset: 'strict',
+    },
+  });
+  expect(res.status()).toBe(201);
+  const body = await res.json();
+  return { token: body.token };
+}
+
 export async function createChunkedShare(
   request: APIRequestContext,
   opts: { perChunk?: number } = {},
