@@ -200,13 +200,16 @@ describe('unlock endpoint', () => {
     expect(res.status).toBe(429);
   });
 
-  it('400 no_password when the share has no password', async () => {
+  it('404 (no liveness oracle) when the share has no password', async () => {
+    // A live share without a password must not reveal its liveness: the unlock
+    // endpoint returns the same 404 as an unknown token (no_password would let
+    // an attacker separate live from dead tokens).
     await seedShare('nopw');
     const res = await app.request('/api/public/chats/nopw/unlock', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'x' }),
     });
-    expect(res.status).toBe(400);
-    expect((await json(res)).error.code).toBe('no_password');
+    expect(res.status).toBe(404);
+    expect((await json(res)).error.code).toBe('not_found');
   });
 });
 

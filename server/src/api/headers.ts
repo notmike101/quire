@@ -47,38 +47,41 @@ export function securityHeaders(): MiddlewareHandler {
 // is defense-in-depth, not the primary guard.)
 export function bodyLimit(maxBytes: number = MAX_UPLOAD_BYTES): MiddlewareHandler {
   return async (c, next) => {
-    const len = Number(c.req.header('content-length') ?? 0);
-    if (Number.isFinite(len) && len > maxBytes) {
+    // Cheap fast path: reject an oversized DECLARED length before reading.
+    const declared = Number(c.req.header('content-length') ?? 0);
+    if (Number.isFinite(declared) && declared > maxBytes) {
       return c.json({ error: { code: 'too_large', message: 'Request body too large' } }, 413);
     }
-    if (!c.req.header('content-length')) {
-      const reader = c.req.raw.body?.getReader();
-      if (reader) {
-        const chunks: Uint8Array[] = [];
-        let received = 0;
-        try {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            received += value.byteLength;
-            if (received > maxBytes) {
-              await reader.cancel().catch(() => {});
-              return c.json({ error: { code: 'too_large', message: 'Request body too large' } }, 413);
-            }
-            chunks.push(value);
+    // Always stream-count the ACTUAL bytes. Counting only when content-length is
+    // absent (the old behavior) let a client declare a small length and stream a
+    // large body past the cap. The body is replaced with the buffered bytes so
+    // downstream handlers still read the full payload.
+    const reader = c.req.raw.body?.getReader();
+    if (reader) {
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          received += value.byteLength;
+          if (received > maxBytes) {
+            await reader.cancel().catch(() => {});
+            return c.json({ error: { code: 'too_large', message: 'Request body too large' } }, 413);
           }
-        } catch {
-          await reader.cancel().catch(() => {});
-          throw new HTTPException(400, { message: 'Failed to read request body' });
+          chunks.push(value);
         }
-        const body = new Uint8Array(received);
-        let offset = 0;
-        for (const chunk of chunks) {
-          body.set(chunk, offset);
-          offset += chunk.byteLength;
-        }
-        c.req.raw = new Request(c.req.raw, { body, method: c.req.raw.method });
+      } catch {
+        await reader.cancel().catch(() => {});
+        throw new HTTPException(400, { message: 'Failed to read request body' });
       }
+      const body = new Uint8Array(received);
+      let offset = 0;
+      for (const chunk of chunks) {
+        body.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      c.req.raw = new Request(c.req.raw, { body, method: c.req.raw.method });
     }
     await next();
   };

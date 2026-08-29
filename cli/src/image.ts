@@ -138,6 +138,10 @@ export function fileToDataUri(
     return null;
   }
   if (size > maxBytes) return null;
+  // Resolve the real path once and read THAT, so the containment check and the
+  // read operate on the same file (no check-then-read TOCTOU: a symlink swapped
+  // in between the check and the read cannot point the read outside the root).
+  let readPath = filePath;
   if (root !== undefined) {
     let canonical: string;
     let rootCanonical: string;
@@ -148,10 +152,11 @@ export function fileToDataUri(
       return null;
     }
     if (canonical !== rootCanonical && !canonical.startsWith(rootCanonical + sep)) return null;
+    readPath = canonical;
   }
   let buf: Buffer;
   try {
-    buf = readFileSync(filePath);
+    buf = readFileSync(readPath);
   } catch {
     return null;
   }

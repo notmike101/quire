@@ -87,6 +87,13 @@ describe('static SPA', () => {
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('console.log(1)');
   });
+  it('rejects path traversal out of /assets', async () => {
+    for (const p of ['/assets/../index.html', '/assets/..%2F..%2Findex.html']) {
+      const res = await app.request(p, { redirect: 'manual' });
+      expect(res.status).not.toBe(200);
+      expect(await res.text()).not.toContain('Quire');
+    }
+  });
   it('serves a robots.txt that disallows all crawling', async () => {
     const res = await app.request('/robots.txt');
     expect(res.status).toBe(200);

@@ -250,6 +250,15 @@ describe('ImagePart', () => {
       expect(w.find('img').exists()).toBe(false);
     }
   });
+
+  it('rejects svg+xml data URIs (SMIL can execute script; never a screenshot)', () => {
+    const svg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPg==';
+    const w = mount(ImagePart, { props: { part: { type: 'image', src: svg, mime: 'image/svg+xml', alt: 'x' } } });
+    expect(w.find('img').exists()).toBe(false);
+    // concrete raster types are still accepted
+    const png = mount(ImagePart, { props: { part: { type: 'image', src: 'data:image/png;base64,AAA', mime: 'image/png', alt: 'x' } } });
+    expect(png.find('img').exists()).toBe(true);
+  });
 });
 
 // Build a full-share user index (seq + preview) plus the matching loaded

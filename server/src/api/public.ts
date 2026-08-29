@@ -26,14 +26,16 @@ function isWellFormedIp(s: string): boolean {
   return false;
 }
 
-// Behind the documented reverse proxy the leftmost XFF hop is the real client
-// IP. The server is loopback-bound and fronted by a proxy that sets XFF, so a
-// direct client cannot inject a spoofed value — the proxy overwrites it. We
-// still VALIDATE the hop is a well-formed IP and fall back to x-real-ip, then
-// the socket address, so a malformed/absent header cannot pick the key. If the
-// server is ever exposed directly, set TRUST_PROXY=false to ignore XFF entirely
-// and rate-limit on the socket address (which would then be the proxy).
-export function clientIp(c: Context, trustProxy = true): string {
+// The rate-limit / lockout key MUST be a value the client cannot control. By
+// default (trustProxy=false) we use the socket address, which is always safe:
+// a direct client cannot spoof it. When a deployment fronts the server with a
+// proxy that OVERWRITES (not appends) X-Forwarded-For, it sets TRUST_PROXY=true
+// so the leftmost XFF hop (the real client IP) is used instead; we still
+// validate the hop is a well-formed IP and fall back to x-real-ip, then the
+// socket address, so a malformed/absent header cannot pick the key. Trusting a
+// client-supplied header without that overwrite guarantee lets an attacker
+// cycle XFF values to evade the per-IP unlock lockout and content throttle.
+export function clientIp(c: Context, trustProxy = false): string {
   if (trustProxy) {
     const xff = c.req.header('x-forwarded-for');
     if (xff) {
@@ -180,8 +182,11 @@ export function publicRoutes(deps: PublicDeps): Hono {
     if (share.expiresAt && share.expiresAt.getTime() <= Date.now()) {
       return c.json({ error: { code: 'expired', message: 'This share has expired' } }, 410);
     }
+    // A live share without a password returns the same 404 as an unknown token:
+    // a distinct no_password response would let an attacker separate live from
+    // dead tokens (a liveness oracle).
     if (!share.passwordHash) {
-      return c.json({ error: { code: 'no_password', message: 'This share has no password' } }, 400);
+      return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
     }
     const key = `${share.token}:${clientIp(c, config.trustProxy)}`;
     if (await deps.unlockLimiter.isLocked(key)) {
