@@ -26,6 +26,7 @@ export interface PublishValues {
   preset?: string;
   yes?: boolean;
   noChunk?: boolean;
+  confirmRaw?: boolean;
 }
 
 export interface PublishDeps {
@@ -94,6 +95,13 @@ export async function runPublish(values: PublishValues, positionals: string[], d
 
   const preset = values.preset ?? 'strict';
   if (!PRESETS.includes(preset)) throw new Error(`unknown --preset "${preset}" (use ${PRESETS.join(', ')})`);
+  // Chain D: a fully unredacted publish is high-consequence and must be an
+  // explicit, deliberate act. --yes alone is not enough — the caller must
+  // pass --confirm-raw. This aborts BEFORE preview/create, so nothing is
+  // published.
+  if (preset === 'none' && values.confirmRaw !== true) {
+    throw new Error('refusing to publish unredacted without --confirm-raw (add --confirm-raw to publish a fully unredacted share)');
+  }
   const expiresAt = values.expires ? parseExpiry(values.expires) : undefined;
 
   // Resolve --password: a "random"/"generate"/"auto" keyword becomes a fresh

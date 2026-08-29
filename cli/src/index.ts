@@ -7,7 +7,7 @@ const USAGE = `quire — share AI coding sessions as expiring, password-protecte
 Usage:
   quire publish [sessionId] [--current] [--harness zcode|claude-code]
                 [--password <pw|random>] [--expires <dur|ISO|tomorrow|today|week|month|year>]
-                [--preset strict|normal|none] [--no-chunk] [--yes]
+                [--preset strict|normal|none] [--confirm-raw] [--no-chunk] [--yes]
   quire list
   quire revoke <token> [--yes]
   quire update <token> [--password <pw|random>] [--expires <dur|ISO|tomorrow|today|week|month|year>]
@@ -16,6 +16,7 @@ Usage:
   publish requires --current or a session id (no interactive picker).
   --password random generates a random secret and prints it once.
   --yes skips the confirmation prompt (for agents/scripts).
+  --confirm-raw is required for --preset none (a fully unredacted share).
 
 Config: QUIRE_SERVER_URL + QUIRE_API_KEY (env) or ~/.quire/config.json
 `;
@@ -44,9 +45,19 @@ async function main(): Promise<void> {
           expires: { type: 'string' },
           preset: { type: 'string' },
           yes: { type: 'boolean', default: false },
+          // Node's parseArgs does not map kebab-case flags to camelCase option
+          // keys, so each multi-word flag needs BOTH spellings. Without the
+          // kebab alias, `--no-chunk` / `--confirm-raw` are rejected as unknown
+          // (verified on Node 26).
           noChunk: { type: 'boolean', default: false },
+          'no-chunk': { type: 'boolean', default: false },
+          confirmRaw: { type: 'boolean', default: false },
+          'confirm-raw': { type: 'boolean', default: false },
         },
       });
+      // Fold the kebab-case aliases into the camelCase keys the commands read.
+      values.noChunk = (values as Record<string, unknown>)['no-chunk'] === true || values.noChunk === true;
+      values.confirmRaw = (values as Record<string, unknown>)['confirm-raw'] === true || values.confirmRaw === true;
       if (command === 'publish') await runPublish(values, positionals);
       if (command === 'list') await runList();
       if (command === 'revoke') await runRevoke(positionals[0], values);

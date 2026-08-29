@@ -28,6 +28,12 @@ describe('plugin manifest', () => {
     expect(md).not.toContain('relay that prompt');
     // It must NOT pass the free-text instruction as a positional argument.
     expect(md).not.toContain('quire publish --current $ARGUMENTS');
+    // Chain D: `none` is gated — only on an explicit raw phrase, and it must
+    // stop-and-confirm (no --yes) rather than auto-publishing unredacted.
+    expect(md).toContain('--confirm-raw');
+    expect(md).toMatch(/no redaction|raw|unredacted/);
+    expect(md).toMatch(/stop and ask|ask the user to confirm/);
+    expect(md).toContain('do NOT pass `--yes`');
   });
 
   it('ships a README', () => {

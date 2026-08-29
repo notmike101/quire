@@ -75,7 +75,8 @@ describe('runPublish (unit)', () => {
 
   it('passes the preset through to preview and create', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
-    await runPublish({ yes: true, preset: 'none' }, ['sess_a'], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} });
+    // Chain D: a `none` preset now requires confirmRaw to proceed.
+    await runPublish({ yes: true, preset: 'none', confirmRaw: true }, ['sess_a'], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} });
     expect(fakeApi.preview).toHaveBeenCalledWith(expect.anything(), 'none');
     expect(fakeApi.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ preset: 'none' }));
   });
@@ -169,6 +170,29 @@ describe('runPublish (unit)', () => {
     await runPublish({ current: true, yes: true, noChunk: true }, [], { adapter: fakeAdapter as never, api: noChunkApi as never, chunker: chunker as never, out: () => {} });
     expect(chunker).not.toHaveBeenCalled();
     expect(calls).toEqual(['create']);
+  });
+
+  it('refuses --preset none without --confirm-raw even under --yes (Chain D)', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    const api = {
+      preview: vi.fn(async () => ({ messages: [], summary: {}, bytes: 0, messageCount: 0 })),
+      create: vi.fn(),
+    };
+    await expect(
+      runPublish({ current: true, yes: true, preset: 'none' }, [], { adapter: fakeAdapter as never, api: api as never, out: () => {} }),
+    ).rejects.toThrow(/confirm-raw/);
+    expect(api.preview).not.toHaveBeenCalled();
+    expect(api.create).not.toHaveBeenCalled();
+  });
+
+  it('publishes --preset none with --confirm-raw (Chain D)', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    const api = {
+      preview: vi.fn(async () => ({ messages: [], summary: {}, bytes: 0, messageCount: 0 })),
+      create: vi.fn(async () => ({ token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, uploadId: 'u'.repeat(32), chunkCount: 1, summary: {}, bytes: 0, messageCount: 0 })),
+    };
+    await runPublish({ current: true, yes: true, preset: 'none', confirmRaw: true }, [], { adapter: fakeAdapter as never, api: api as never, out: () => {} });
+    expect(api.create).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -325,5 +349,26 @@ describe('runPublish (process)', () => {
     const { code, stdout, stderr } = await runCli(['revoke', 't'.repeat(22), '--yes'], '');
     expect(code, `stderr: ${stderr}`).toBe(0);
     expect(stdout).toContain('Revoked');
+  });
+
+  it('refuses --preset none without --confirm-raw even under --yes (Chain D, real binary)', { timeout: 30000 }, async () => {
+    // Exercises the real parseArgs path: the kebab --confirm-raw must be a
+    // recognized option (Node does not map kebab→camel), and `none` must abort
+    // before any create call.
+    const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode', '--preset', 'none', '--yes'], '');
+    expect(code, `stderr: ${stderr}`).not.toBe(0);
+    expect(`${stdout}${stderr}`).toContain('confirm-raw');
+    expect(createCalls).toHaveLength(3); // nothing new published
+  });
+
+  it('publishes --preset none with --confirm-raw (Chain D, real binary)', { timeout: 30000 }, async () => {
+    // The kebab --confirm-raw flag must parse (not "Unknown option") and allow
+    // the unredacted publish to proceed.
+    const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode', '--preset', 'none', '--confirm-raw', '--yes'], '');
+    expect(code, `stderr: ${stderr}`).toBe(0);
+    expect(stdout).toContain('/chats/');
+    expect(createCalls).toHaveLength(4);
+    const body = createCalls[3] as { preset?: string };
+    expect(body.preset).toBe('none');
   });
 });
