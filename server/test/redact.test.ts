@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { prepareContent } from '../src/redact/prepare.js';
 import type { ShapedMessage, ShapedSession } from '../src/redact/prepare.js';
+import { redactText, walkStrings } from '../src/redact/redact.js';
 
 const secrets = {
   privateKey: '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA7fakekeymaterial000000\n-----END RSA PRIVATE KEY-----',
@@ -526,16 +527,155 @@ describe('Round 4 fixes', () => {
   it('does not stack-overflow on a deeply nested input (depth cap)', () => {
     // z.unknown() input has no depth limit in the schema; a 100k-deep structure
     // would stack-overflow a recursive walk. The iterative walk with a depth cap
-    // survives and passes the deep subtree through unchanged.
+    // survives. Round 5: the over-deep subtree is COLLAPSED to a JSON string (and
+    // redacted) at the cap, so it is no longer passed through structurally — a
+    // 512-deep tool input is not meaningful structure, and collapsing preserves
+    // the security property (no secret persists unredacted).
     let deep: Record<string, unknown> = { leaf: 'ok' };
     for (let i = 0; i < 100_000; i++) deep = { nested: deep };
     const out = prepareContent(
       { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'tool', callID: 'c1', tool: 'Bash', status: 'ok', input: deep, output: 'x' }] }] },
       'strict',
     );
-    // It completed without throwing, and the structure is preserved.
+    // It completed without throwing. Walk down to the cap: the subtree is now a
+    // JSON string (the collapsed form), not a 100k-deep object.
     let probe: unknown = out.messages[0]!.parts[0]!.input;
-    for (let i = 0; i < 100_000; i++) probe = (probe as { nested: unknown }).nested;
-    expect(probe).toEqual({ leaf: 'ok' });
+    for (let i = 0; i < 512; i++) probe = (probe as { nested: unknown }).nested;
+    expect(typeof probe).toBe('string');
+    // The collapsed string still contains the leaf value (structure flattened,
+    // content preserved).
+    expect(probe as string).toContain('ok');
+  });
+});
+
+describe('Round 5 fixes', () => {
+  // A 24-char token that ONLY the bare-token fallback matches (no sk-/ghp_/AKIA
+  // prefix, contains a non-hex g-z letter, not pure hex).
+  const BARE = 'Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2';
+
+  it('redacts a secret split by zero-width chars (U+200B) — High', () => {
+    // An attacker can split a contiguous secret run with zero-width spaces so
+    // the bare-token fallback (24+ char alnum run) and the prefix rules both
+    // miss it. redactText now matches on a zero-width-stripped copy of the text,
+    // so the rules see the secret in the clear.
+    const split = ' ' + 'Zz9Yy8Xx7Ww6\u200bVv5Uu4Tt3Ss2' + ' ';
+    const r = redactText(split, 'strict');
+    expect(r.text).toBe(' [REDACTED:bare-token] ');
+    expect(r.counts['bare-token']).toBe(1);
+  });
+
+  it('preserves zero-width chars OUTSIDE a redacted span (no CJK/emoji over-redaction)', () => {
+    // Zero-width chars are intentional in CJK text and ZWJ emoji sequences. The
+    // fix matches on stripped text but maps replacements back to the original,
+    // so zero-width chars that fall OUTSIDE a matched span survive; only those
+    // inside a redacted span are consumed.
+    const around = 'a\u200b ' + BARE + ' \u200bb';
+    const r = redactText(around, 'strict');
+    expect(r.text).toBe('a\u200b [REDACTED:bare-token] \u200bb');
+  });
+
+  it('leaves clean text with zero-width chars unchanged', () => {
+    const r = redactText('hi\u200bthere\u200d', 'strict');
+    expect(r.text).toBe('hi\u200bthere\u200d');
+    expect(r.counts).toEqual({});
+  });
+
+  it('redacts a BOM (U+FEFF) before a space-bounded token, preserving the BOM', () => {
+    const r = redactText('\ufeff ' + BARE + ' ', 'strict');
+    expect(r.text).toBe('\ufeff [REDACTED:bare-token] ');
+  });
+
+  it('redacts Map values and string keys in tool input — Medium', () => {
+    // A Map's values (and string keys) can carry secrets. walkStrings now walks
+    // them in place via .set() (a Map is not indexable like an object).
+    const m = new Map<string, unknown>([['api_key', BARE]]);
+    walkStrings(m, (s) => redactText(s, 'strict').text);
+    expect(m.get('api_key')).toBe('[REDACTED:bare-token]');
+
+    const m2 = new Map<unknown, unknown>([[BARE, 'v']]);
+    walkStrings(m2, (s) => redactText(s, 'strict').text);
+    expect(m2.has('[REDACTED:bare-token]')).toBe(true);
+    expect(m2.has(BARE)).toBe(false);
+  });
+
+  it('redacts Set elements in tool input — Medium', () => {
+    const s = new Set<string>([BARE]);
+    walkStrings(s, (x) => (typeof x === 'string' ? redactText(x, 'strict').text : x));
+    expect(s.has('[REDACTED:bare-token]')).toBe(true);
+    expect(s.has(BARE)).toBe(false);
+  });
+
+  it('redacts symbol-keyed string values in tool input — Medium', () => {
+    // Object.keys excludes symbol keys; a secret stored under a symbol key was
+    // never visited. walkStrings now iterates getOwnPropertySymbols too.
+    const sym = Symbol('k');
+    const obj: Record<PropertyKey, unknown> = { a: 1, [sym]: BARE };
+    walkStrings(obj, (s) => redactText(s, 'strict').text);
+    expect(obj[sym]).toBe('[REDACTED:bare-token]');
+    expect(obj.a).toBe(1); // clean sibling untouched
+  });
+
+  it('redacts a secret nested DEEPER than the depth cap (collapse, not skip) — High', () => {
+    // The old walk SKIPPED over-deep nodes (a complete redaction bypass for any
+    // secret nested >512 deep). Round 5 collapses the over-deep subtree to a
+    // JSON string and runs it through the rules, so the secret is still caught.
+    function deep(n: number, v: unknown): unknown {
+      let x = v;
+      for (let i = 0; i < n; i++) x = { v: x };
+      return x;
+    }
+    const out = prepareContent(
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'tool', callID: 'c1', tool: 'Bash', status: 'ok', input: deep(600, BARE), output: 'x' }] }] },
+      'strict',
+    );
+    // Walk down to the cap: the subtree is a collapsed JSON string.
+    let leaf: unknown = out.messages[0]!.parts[0]!.input;
+    for (let i = 0; i < 512 && typeof leaf === 'object' && leaf !== null; i++) leaf = (leaf as { v: unknown }).v;
+    const ls = typeof leaf === 'string' ? leaf : JSON.stringify(leaf);
+    expect(ls).toContain('[REDACTED:');
+    expect(ls).not.toContain(BARE);
+  });
+
+  it('redacts a base64 payload with a secret + trailing non-UTF-8 bytes — Medium', () => {
+    // The old redactSrc required the WHOLE base64 payload to decode to valid
+    // UTF-8, so a secret followed by even one non-UTF-8 byte disabled the scan.
+    // Round 5 finds the longest valid-UTF-8 prefix and scans it.
+    const payload = Buffer.concat([Buffer.from(BARE, 'utf8'), Buffer.from([0xff, 0xfe, 0x00, 0x01])]);
+    const evil = 'data:text/plain;base64,' + payload.toString('base64');
+    const out = prepareContent(
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: evil, mime: 'text/plain', alt: 'x', bytes: payload.length }] }] },
+      'strict',
+    );
+    expect(out.messages[0]!.parts[0]!.src).toBe('data:text/plain;base64,REDACTED');
+    expect(out.summary['bare-token']).toBe(1);
+  });
+
+  it('does NOT redact a real binary image (no valid-UTF-8 prefix >= 8 bytes)', () => {
+    // Over-redaction guard: a real image decodes to dense binary with no
+    // meaningful valid-UTF-8 prefix, so it is skipped. The data URI survives.
+    const pngish = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa, 0xf9, 0xf8, 0xf7, 0xf6]);
+    const dataUri = 'data:image/png;base64,' + pngish.toString('base64');
+    const out = prepareContent(
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: dataUri, mime: 'image/png', alt: 'shot', bytes: pngish.length }] }] },
+      'strict',
+    );
+    expect(out.messages[0]!.parts[0]!.src).toBe(dataUri);
+    expect(out.summary).toEqual({});
+  });
+
+  it('walks a clean Map/Set/symbol structure without mangling it', () => {
+    // Lossless round-trip: clean values in a Map/Set/symbol-keyed object must
+    // survive unchanged (the rules never match an ordinary value).
+    const sym = Symbol('k');
+    const m = new Map<string, unknown>([['k', 'clean']]);
+    const s = new Set<string>(['clean']);
+    const obj: Record<PropertyKey, unknown> = { a: 1, [sym]: 'clean' };
+    walkStrings(m, (x) => redactText(x, 'strict').text);
+    walkStrings(s, (x) => (typeof x === 'string' ? redactText(x, 'strict').text : x));
+    walkStrings(obj, (x) => redactText(x, 'strict').text);
+    expect(m.get('k')).toBe('clean');
+    expect(s.has('clean')).toBe(true);
+    expect(obj[sym]).toBe('clean');
+    expect(obj.a).toBe(1);
   });
 });

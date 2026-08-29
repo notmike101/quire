@@ -76,14 +76,30 @@ const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
 // A hit replaces the whole payload (we cannot partially redact a data-URI
 // without corrupting it). Non-data-URI srcs (same-origin /assets/ paths) pass
 // through untouched.
-function isValidUtf8(buf: Buffer): boolean {
-  try {
-    const s = buf.toString('utf8');
-    // A round-trip through utf8 is lossless iff the bytes were valid utf8.
-    return Buffer.byteLength(s, 'utf8') === buf.length;
-  } catch {
-    return false;
+// Round 5: find the longest prefix of buf that is valid UTF-8. A real image
+// decodes to dense binary (no valid-UTF-8 prefix of any meaningful length), but
+// a secret embedded at the START of the payload followed by a few non-UTF-8
+// bytes (the old exploit) has a long valid-UTF-8 prefix. We scan that prefix.
+// A prefix shorter than 8 bytes is treated as binary (noise, not a secret).
+function longestValidUtf8Prefix(buf: Buffer): string | null {
+  // Walk from the end, shrinking until the prefix round-trips losslessly.
+  // Binary image data will fail quickly (the first few bytes are invalid);
+  // a text secret will have a long valid prefix.
+  let hi = buf.length;
+  let lo = 0;
+  // Binary search for the largest valid prefix length.
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    const sub = buf.subarray(0, mid);
+    const s = sub.toString('utf8');
+    if (Buffer.byteLength(s, 'utf8') === sub.length) {
+      lo = mid; // mid is valid, try longer
+    } else {
+      hi = mid - 1; // mid is invalid, try shorter
+    }
   }
+  if (lo < 8) return null; // too short to be a meaningful secret
+  return buf.subarray(0, lo).toString('utf8');
 }
 function redactSrc(src: string, preset: Preset, add: (counts: Record<string, number>) => void): string {
   const m = /^data:([^,]*),(.+)$/.exec(src);
@@ -105,15 +121,16 @@ function redactSrc(src: string, preset: Preset, add: (counts: Record<string, num
   const payload = m[2];
   let text: string | null = null;
   if (/;base64/i.test(header)) {
-    // base64 payload: decode and scan the decoded bytes (only if they are
-    // valid UTF-8 — a real image is binary and is skipped).
+    // base64 payload: decode and scan the longest valid-UTF-8 prefix (Round 5:
+    // the old code required the WHOLE payload to be valid UTF-8, so a secret
+    // followed by even one non-UTF-8 byte disabled the scan entirely).
     let buf: Buffer;
     try {
       buf = Buffer.from(payload, 'base64');
     } catch {
       return src;
     }
-    if (buf.length > 0 && isValidUtf8(buf)) text = buf.toString('utf8');
+    if (buf.length > 0) text = longestValidUtf8Prefix(buf);
   } else {
     // plaintext payload (data:text/plain, etc.): scan verbatim.
     text = payload;
