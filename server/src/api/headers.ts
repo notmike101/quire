@@ -37,14 +37,17 @@ export function securityHeaders(): MiddlewareHandler {
 
 // Caps the request body. The `content-length` header is checked first as a
 // cheap fast path (before any body is read) and rejects an oversized
-// declaration. A body with no `content-length` (chunked) is then streamed,
-// counted, and buffered; the request body is replaced with the buffered bytes
-// so downstream handlers still read the full payload. Once the cap is exceeded
-// the stream is torn down and a 413 is returned — so a header-less client
-// cannot smuggle an oversized body past the limit. (A client that lies about
-// its content-length — declares small, streams large — is not caught here; the
-// server is loopback-bound behind a proxy that enforces its own limit, so this
-// is defense-in-depth, not the primary guard.)
+// declaration. The body is then ALWAYS streamed and counted (a client that
+// declares a small length but streams a large body is caught by the running
+// count, not just the header). The request body is replaced with the buffered
+// bytes so downstream handlers still read the full payload.
+//
+// Round 4: the moment the running count exceeds the cap the stream is torn
+// down and a 413 is returned WITHOUT buffering the excess — the old code
+// pushed every chunk into `chunks[]` first and only checked the cap after, so
+// a chunked (no-content-length) body of arbitrary size was fully memory-buffered
+// before the reject. That is a memory-exhaustion DoS: the shipped compose stack
+// has no fronting proxy to catch it, so this middleware is the only guard.
 export function bodyLimit(maxBytes: number = MAX_UPLOAD_BYTES): MiddlewareHandler {
   return async (c, next) => {
     // Cheap fast path: reject an oversized DECLARED length before reading.
@@ -52,10 +55,7 @@ export function bodyLimit(maxBytes: number = MAX_UPLOAD_BYTES): MiddlewareHandle
     if (Number.isFinite(declared) && declared > maxBytes) {
       return c.json({ error: { code: 'too_large', message: 'Request body too large' } }, 413);
     }
-    // Always stream-count the ACTUAL bytes. Counting only when content-length is
-    // absent (the old behavior) let a client declare a small length and stream a
-    // large body past the cap. The body is replaced with the buffered bytes so
-    // downstream handlers still read the full payload.
+    // Always stream-count the ACTUAL bytes.
     const reader = c.req.raw.body?.getReader();
     if (reader) {
       const chunks: Uint8Array[] = [];
@@ -66,6 +66,7 @@ export function bodyLimit(maxBytes: number = MAX_UPLOAD_BYTES): MiddlewareHandle
           if (done) break;
           received += value.byteLength;
           if (received > maxBytes) {
+            // Over the cap: stop immediately, do NOT buffer the excess.
             await reader.cancel().catch(() => {});
             return c.json({ error: { code: 'too_large', message: 'Request body too large' } }, 413);
           }

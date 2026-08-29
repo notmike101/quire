@@ -36,6 +36,13 @@
       "when": 1787986800489,
       "tag": "0004_deep_valkyrie",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788009899591,
+      "tag": "0005_nice_wolf_cub",
+      "breakpoints": true
     }
   ]
 }

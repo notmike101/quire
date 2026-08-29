@@ -1,0 +1,1 @@
+ALTER TABLE "unlock_lockouts" ADD COLUMN "last_seen" timestamp with time zone;

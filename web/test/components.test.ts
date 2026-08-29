@@ -36,6 +36,37 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('<script>alert');
     expect(html).toContain('&lt;script&gt;');
   });
+
+  it('drops javascript: links (Round 4)', async () => {
+    const html = await renderMarkdown('[click me](javascript:alert(1))');
+    expect(html).not.toContain('href="javascript:');
+    expect(html).not.toContain('<a ');
+    // The label is still rendered as plain text.
+    expect(html).toContain('click me');
+  });
+
+  it('drops data: and vbscript: links (Round 4)', async () => {
+    const html1 = await renderMarkdown('[x](data:text/html,<script>alert(1)</script>)');
+    expect(html1).not.toContain('href="data:');
+    expect(html1).not.toContain('<a ');
+    const html2 = await renderMarkdown('[x](vbscript:msgbox(1))');
+    expect(html2).not.toContain('href="vbscript:');
+    expect(html2).not.toContain('<a ');
+  });
+
+  it('keeps http/https/mailto/relative links (Round 4)', async () => {
+    expect(await renderMarkdown('[a](https://example.com)')).toContain('href="https://example.com"');
+    expect(await renderMarkdown('[a](http://example.com)')).toContain('href="http://example.com"');
+    expect(await renderMarkdown('[a](mailto:x@example.com)')).toContain('href="mailto:x@example.com"');
+    expect(await renderMarkdown('[a](/relative/path)')).toContain('href="/relative/path"');
+    expect(await renderMarkdown('[a](#fragment)')).toContain('href="#fragment"');
+  });
+
+  it('drops obfuscated javascript: links (entity-encoded colon) (Round 4)', async () => {
+    const html = await renderMarkdown('[x](javascript&#58;alert(1))');
+    expect(html).not.toContain('<a ');
+    expect(html).not.toMatch(/href="javascript/i);
+  });
 });
 
 describe('UserMessage', () => {

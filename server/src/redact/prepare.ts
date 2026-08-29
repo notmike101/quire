@@ -87,7 +87,20 @@ function isValidUtf8(buf: Buffer): boolean {
 }
 function redactSrc(src: string, preset: Preset, add: (counts: Record<string, number>) => void): string {
   const m = /^data:([^,]*),(.+)$/.exec(src);
-  if (!m || !m[1] || !m[2]) return src;
+  if (!m || !m[1] || !m[2]) {
+    // Round 4: a NON-data-URI src is a free URL — the API accepts any string up
+    // to 4 MB, so it can be a connection string (postgres://user:pass@host), a
+    // URL with a query-string token (?api_key=…), a JWT in the path, etc. The
+    // old code returned it untouched, a complete redaction bypass. Run the full
+    // rule set over the whole URL so embedded credentials are redacted; a clean
+    // same-origin /assets/ path or ordinary URL is unchanged.
+    const r = redactText(src, preset);
+    if (Object.values(r.counts).some((v) => v > 0)) {
+      add(r.counts);
+      return r.text.replace(CONTROL_CHARS_RE, '');
+    }
+    return src;
+  }
   const header = m[1];
   const payload = m[2];
   let text: string | null = null;

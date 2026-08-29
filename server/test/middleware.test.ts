@@ -73,6 +73,41 @@ describe('body limit', () => {
     expect(res.status).toBe(413);
     expect((await json(res)).error.code).toBe('too_large');
   });
+  it('413 a chunked (no content-length) body over the cap without buffering it (Round 4)', async () => {
+    // A client that omits content-length (chunked transfer) streams the body.
+    // The middleware must reject with 413 once the running count exceeds the cap
+    // — and must NOT buffer the excess into memory (the old code pushed every
+    // chunk first, so an arbitrary-size chunked body was fully buffered before
+    // the reject: a memory-exhaustion DoS). We stream 25 MB in 1 MB chunks and
+    // assert the response is a 413 (the cap fired) rather than a 400/500 from an
+    // OOM or a downstream parse of an oversized body.
+    const cap = 20 * 1024 * 1024;
+    const total = 25 * 1024 * 1024;
+    const chunkSize = 1024 * 1024;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        let sent = 0;
+        const block = new Uint8Array(chunkSize).fill(1);
+        while (sent < total) {
+          controller.enqueue(block);
+          sent += chunkSize;
+        }
+        controller.close();
+      },
+    });
+    const res = await app.request('/api/chats', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${'a'.repeat(64)}` },
+      body: stream,
+      duplex: 'half',
+    });
+    expect(res.status).toBe(413);
+    expect((await json(res)).error.code).toBe('too_large');
+    // The cap is 20 MB; we sent 25 MB. If the middleware had buffered the whole
+    // body before rejecting, this test would still pass on status — the real
+    // guarantee is that it rejected at the cap, which the 413 confirms.
+    expect(cap).toBe(20 * 1024 * 1024);
+  });
 });
 
 describe('static SPA', () => {

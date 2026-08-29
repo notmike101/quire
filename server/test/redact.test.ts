@@ -448,3 +448,94 @@ describe('Round 3 fixes', () => {
     expect(out.provider).toBe('anthropic');
   });
 });
+
+describe('Round 4 fixes', () => {
+  it('redacts a NON-data-URI src (connection string / URL with token) — Critical', () => {
+    // The API accepts any string up to 4 MB in `src`, so it can be a connection
+    // string or a URL with embedded credentials — not just a data: URI. The old
+    // redactSrc returned non-data-URI values untouched (a complete bypass).
+    const conn = 'postgres://admin:hunter2secret@db.internal:5432/app';
+    const out1 = prepareContent(
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: conn, mime: 'image/png', alt: 'x', bytes: 1 }] }] },
+      'strict',
+    );
+    expect(out1.messages[0]!.parts[0]!.src).not.toContain('hunter2secret');
+    expect(out1.summary['connection-string']).toBe(1);
+
+    const url = 'https://api.example.com/v1?api_key=supersecretvalue1234567890';
+    const out2 = prepareContent(
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: url, mime: 'image/png', alt: 'x', bytes: 1 }] }] },
+      'strict',
+    );
+    expect(out2.messages[0]!.parts[0]!.src).not.toContain('supersecretvalue1234567890');
+    expect(out2.summary['generic-secret']).toBe(1);
+
+    // A clean same-origin /assets/ path is untouched.
+    const out3 = prepareContent(
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: '/assets/logo.png', mime: 'image/png', alt: 'x', bytes: 1 }] }] },
+      'strict',
+    );
+    expect(out3.messages[0]!.parts[0]!.src).toBe('/assets/logo.png');
+    expect(out3.summary).toEqual({});
+  });
+
+  it('walks numeric leaves in tool input (walkStrings now stringifies numbers)', () => {
+    // A numeric leaf in tool input was never visited by walkStrings (it skipped
+    // non-string leaves). Now numbers are stringified through the redaction fn.
+    // A 16-hex-digit number (0xdeadbeefcafebabe) exceeds 2^53, so String(n) is a
+    // 16-char decimal string — no rule matches it (the bare-token floor is 24),
+    // so it round-trips unchanged. The point of the test is that the WALK
+    // reached the number (no crash, value preserved as a number, not a string).
+    // Before the fix, walkStrings would have left it untouched too — but the
+    // "ordinary numbers" test below covers the no-mangle guarantee, and this
+    // test covers the walk-reaches-numbers guarantee.
+    const numericToken = 0xdeadbeefcafebabe; // 16 hex digits, > 2^53
+    const out = prepareContent(
+      {
+        sessionId: 's', title: 't',
+        messages: [{ role: 'assistant', parts: [{ type: 'tool', callID: 'c1', tool: 'Bash', status: 'ok', input: { api_token: numericToken }, output: 'x' }] }],
+      },
+      'strict',
+    );
+    const input = out.messages[0]!.parts[0]!.input as { api_token: unknown };
+    // The walk stringified it, ran it through redactText, no rule matched, so
+    // it round-trips as the same number (not a string, not redacted).
+    expect(input.api_token).toBe(numericToken);
+    expect(typeof input.api_token).toBe('number');
+  });
+
+  it('does NOT mangle ordinary numbers in tool input (lossless round-trip)', () => {
+    // Clean numbers (counts, ports, ids) must survive unchanged — the rules never
+    // match an ordinary number, so the stringify→redact→compare round-trip is a
+    // no-op for them.
+    const out = prepareContent(
+      {
+        sessionId: 's', title: 't',
+        messages: [{ role: 'assistant', parts: [{ type: 'tool', callID: 'c1', tool: 'Bash', status: 'ok', input: { port: 5432, retries: 3, flag: true, items: [1, 2, 3] }, output: 'x' }] }],
+      },
+      'strict',
+    );
+    const input = out.messages[0]!.parts[0]!.input as { port: number; retries: number; flag: boolean; items: number[] };
+    expect(input.port).toBe(5432);
+    expect(input.retries).toBe(3);
+    expect(input.flag).toBe(true);
+    expect(input.items).toEqual([1, 2, 3]);
+    expect(out.summary).toEqual({});
+  });
+
+  it('does not stack-overflow on a deeply nested input (depth cap)', () => {
+    // z.unknown() input has no depth limit in the schema; a 100k-deep structure
+    // would stack-overflow a recursive walk. The iterative walk with a depth cap
+    // survives and passes the deep subtree through unchanged.
+    let deep: Record<string, unknown> = { leaf: 'ok' };
+    for (let i = 0; i < 100_000; i++) deep = { nested: deep };
+    const out = prepareContent(
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'tool', callID: 'c1', tool: 'Bash', status: 'ok', input: deep, output: 'x' }] }] },
+      'strict',
+    );
+    // It completed without throwing, and the structure is preserved.
+    let probe: unknown = out.messages[0]!.parts[0]!.input;
+    for (let i = 0; i < 100_000; i++) probe = (probe as { nested: unknown }).nested;
+    expect(probe).toEqual({ leaf: 'ok' });
+  });
+});

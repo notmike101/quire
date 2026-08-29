@@ -134,4 +134,29 @@ describe('PostgresLockoutStore (Chain C)', () => {
     expect(await b.isLocked(key)).toBe(false);
     await db.execute(sql`delete from unlock_lockouts where key = ${key}`);
   });
+  it('prunes idle sub-threshold rows on the next recordFailure (Round 4)', async () => {
+    // A key-cycling attack leaves many distinct keys that never reach the
+    // threshold and are never re-touched. The opportunistic prune must drop an
+    // idle sub-threshold row (last_seen older than the lockout window) so the
+    // table does not grow without bound.
+    const idleKey = 'r4-idle-prune-key';
+    const freshKey = 'r4-fresh-prune-key';
+    const now = Date.now();
+    const lockMs = 15 * 60 * 1000;
+    await db.execute(sql`delete from unlock_lockouts where key in (${idleKey}, ${freshKey})`);
+    // Seed an IDLE sub-threshold row: count below max, last_seen 20 min ago.
+    await db.execute(sql`insert into unlock_lockouts (key, count, locked_until, last_seen)
+        values (${idleKey}, 2, null, ${new Date(now - 20 * 60 * 1000).toISOString()})`);
+    // Seed a FRESH sub-threshold row: count below max, last_seen now.
+    await db.execute(sql`insert into unlock_lockouts (key, count, locked_until, last_seen)
+        values (${freshKey}, 2, null, ${new Date(now).toISOString()})`);
+    // A recordFailure for an unrelated key triggers the global prune.
+    const store = new PostgresLockoutStore(db);
+    await store.recordFailure('r4-unrelated-key', now);
+    const [idleRow] = await db.execute(sql`select 1 from unlock_lockouts where key = ${idleKey}`);
+    const [freshRow] = await db.execute(sql`select 1 from unlock_lockouts where key = ${freshKey}`);
+    expect(idleRow).toBeUndefined(); // idle sub-threshold row was pruned
+    expect(freshRow).toBeDefined();  // fresh sub-threshold row was kept
+    await db.execute(sql`delete from unlock_lockouts where key in (${idleKey}, ${freshKey}, 'r4-unrelated-key')`);
+  });
 });

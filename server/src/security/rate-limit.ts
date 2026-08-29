@@ -84,11 +84,23 @@ export class PostgresLockoutStore implements LockoutStore {
   }
 
   async recordFailure(key: string, now: number): Promise<void> {
-    // Prune expired lockouts opportunistically so the table does not grow
-    // without bound under a (token, IP) cycling attack.
+    // Prune opportunistically so the table does not grow without bound under a
+    // (token, IP) cycling attack. Two classes are removed:
+    //   1. expired lockouts (locked_until in the past), and
+    //   2. idle sub-threshold counters — a row that has never locked and whose
+    //      last failure is older than the lockout window will never reach the
+    //      threshold on its own, so it is safe to drop. (Round 4: the old prune
+    //      removed only expired lockouts, so a one-shot burst of 100k distinct
+    //      keys left 100k sub-threshold rows that were never re-touched.)
     // postgres.js serializes raw sql parameters as text; an ISO string is the
     // canonical form Postgres accepts for a timestamptz comparison.
-    await this.db.execute(sql`delete from unlock_lockouts where locked_until is not null and locked_until < ${new Date(now).toISOString()}`);
+    const expiredBefore = new Date(now).toISOString();
+    const idleBefore = new Date(now - this.lockMs).toISOString();
+    await this.db.execute(
+      sql`delete from unlock_lockouts
+          where (locked_until is not null and locked_until < ${expiredBefore})
+             or (locked_until is null and count < ${this.maxFails} and last_seen < ${idleBefore})`,
+    );
     const rows = await this.db.select().from(unlockLockouts).where(eq(unlockLockouts.key, key)).limit(1);
     const existing = rows[0];
     let count = (existing?.count ?? 0) + 1;
@@ -97,10 +109,11 @@ export class PostgresLockoutStore implements LockoutStore {
       lockedUntil = new Date(now + this.lockMs);
       count = 0;
     }
+    const lastSeen = new Date(now);
     if (existing) {
-      await this.db.update(unlockLockouts).set({ count, lockedUntil }).where(eq(unlockLockouts.key, key));
+      await this.db.update(unlockLockouts).set({ count, lockedUntil, lastSeen }).where(eq(unlockLockouts.key, key));
     } else {
-      await this.db.insert(unlockLockouts).values({ key, count, lockedUntil });
+      await this.db.insert(unlockLockouts).values({ key, count, lockedUntil, lastSeen });
     }
   }
 

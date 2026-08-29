@@ -45,4 +45,8 @@ export const unlockLockouts = pgTable('unlock_lockouts', {
   key: text('key').primaryKey(),
   count: integer('count').notNull().default(0),
   lockedUntil: timestamp('locked_until', { withTimezone: true }),
+  // Round 4: when the key last recorded a failure. Lets the opportunistic prune
+  // drop idle sub-threshold counters (a key-cycling attack leaves rows that are
+  // never re-touched and never lock) without a scheduled cleanup job.
+  lastSeen: timestamp('last_seen', { withTimezone: true }),
 });
