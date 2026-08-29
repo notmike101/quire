@@ -160,7 +160,10 @@ export async function runPublish(values: PublishValues, positionals: string[], d
   // then append the rest in order.
   out(`Session is ${(payloadBytes / 1024 / 1024).toFixed(1)} MB — uploading in ${chunks.length} chunks…`);
   const head = { ...shaped, messages: chunks[0]! };
-  const created = await api.create(head, opts);
+  // Chain E: tell the server how many chunks to expect so the share stays
+  // hidden (404) until the upload completes. Single-request paths leave this
+  // unset (server default 1).
+  const created = await api.create(head, { ...opts, expectedChunks: chunks.length });
   for (let i = 1; i < chunks.length; i++) {
     const chunkBytes = Buffer.byteLength(JSON.stringify(chunks[i]));
     out(`Uploading chunk ${i + 1}/${chunks.length} (${(chunkBytes / 1024 / 1024).toFixed(1)} MB)…`);

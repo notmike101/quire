@@ -103,6 +103,16 @@ export function publicRoutes(deps: PublicDeps): Hono {
     if (share.expiresAt && share.expiresAt.getTime() <= Date.now()) {
       return c.json({ error: { code: 'expired', message: 'This share has expired' } }, 410);
     }
+    // Chain E: a chunked share is not ready until all expected chunks have
+    // arrived. Incomplete shares return the SAME 404 as not-found (no existence
+    // oracle) so a killed upload never serves a partial share as complete.
+    const [chunkAgg] = await db
+      .select({ n: sql<number>`count(distinct "chunk_seq")::int` })
+      .from(shareMessages)
+      .where(eq(shareMessages.shareId, share.id));
+    if ((chunkAgg?.n ?? 0) < (share.expectedChunks ?? 1)) {
+      return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
+    }
     if (share.passwordHash) {
       const value = parseCookie(c.req.header('cookie'), unlockCookieName(share.token));
       if (!verifyUnlockCookie(config.unlockSecret, share.token, value)) {

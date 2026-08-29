@@ -29,6 +29,13 @@
       "when": 1787983806874,
       "tag": "0003_abnormal_exiles",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787986800489,
+      "tag": "0004_deep_valkyrie",
+      "breakpoints": true
     }
   ]
 }

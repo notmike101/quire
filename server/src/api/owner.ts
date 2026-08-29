@@ -49,7 +49,7 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     if (!parsed.success) {
       return c.json({ error: { code: 'validation', message: parsed.error.issues[0]?.message ?? 'invalid body' } }, 400);
     }
-    const { session, preset, password, expiresAt } = parsed.data;
+    const { session, preset, password, expiresAt, expectedChunks } = parsed.data;
     const prepared = prepareContent(session.messages, preset);
     // Chain B: enforce the cumulative per-share cap at create.
     if (wouldExceedCap(0, prepared.bytes)) {
@@ -74,6 +74,7 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
           passwordHash: password ? await hashPassword(password) : null,
           preset,
           messageCount: prepared.messageCount,
+          expectedChunks,
           redactions: prepared.summary,
           bytes: prepared.bytes,
         })

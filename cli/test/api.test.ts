@@ -46,6 +46,19 @@ describe('QuireApi', () => {
     expect('expiresAt' in body).toBe(false);
   });
 
+  it('sends expectedChunks on create when provided (Chain E), omits it otherwise', async () => {
+    const fn = mockFetch(201, { token: 't', url: '/chats/t' });
+    await new QuireApi(config).create({ sessionId: 's', title: 't', messages: [] }, { preset: 'strict', expectedChunks: 3 });
+    const [, init] = fn.mock.calls[0]!;
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.expectedChunks).toBe(3);
+    // single-request path: no expectedChunks -> omitted (server default 1)
+    await new QuireApi(config).create({ sessionId: 's', title: 't', messages: [] }, { preset: 'strict' });
+    const [, init2] = fn.mock.calls[1]!;
+    const body2 = JSON.parse((init2 as RequestInit).body as string);
+    expect('expectedChunks' in body2).toBe(false);
+  });
+
   it('posts a chunk append to /api/chats/:token/chunks', async () => {
     const fn = mockFetch(200, { ok: true, messageCount: 3, bytes: 42 });
     await new QuireApi(config).createChunk('tok123', { uploadId: 'a'.repeat(32), chunkSeq: 1, messages: [] });

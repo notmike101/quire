@@ -74,6 +74,10 @@ export const createBodySchema = z
     preset: presetSchema.default('strict'),
     password: z.string().min(1).max(200).optional(),
     expiresAt: z.string().datetime({ offset: true }).optional(),
+    // Chain E: how many chunks the publisher will send. The public endpoint
+    // returns 404 until this many distinct chunkSeqs have arrived, so a killed
+    // upload never serves a partial share as complete. Default 1 (single upload).
+    expectedChunks: z.number().int().positive().max(10_000).default(1),
   })
   .strict();
 

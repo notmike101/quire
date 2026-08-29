@@ -210,6 +210,47 @@ describe('unlock endpoint', () => {
   });
 });
 
+describe('completion gate (Chain E)', () => {
+  it('returns 404 while a chunked share is incomplete, 200 once complete', async () => {
+    // Create a share expecting 2 chunks but only send chunk 0.
+    const first = await app.request('/api/chats', {
+      method: 'POST', headers: { authorization: `Bearer ${'a'.repeat(64)}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        session: { sessionId: 's_e', title: 'E', messages: [{ role: 'user', parts: [{ type: 'text', text: 'c0' }] }] },
+        expectedChunks: 2,
+      }),
+    });
+    const f = await json(first);
+    expect(first.status).toBe(201);
+    // Incomplete: only chunk 0 has arrived, 2 expected -> byte-identical 404.
+    const incomplete = await app.request(`/api/public/chats/${f.token}`);
+    expect(incomplete.status).toBe(404);
+    const unknown = await app.request('/api/public/chats/neverexisted');
+    expect(await incomplete.text()).toBe(await unknown.text());
+    // Complete it.
+    const second = await app.request(`/api/chats/${f.token}/chunks`, {
+      method: 'POST', headers: { authorization: `Bearer ${'a'.repeat(64)}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ uploadId: f.uploadId, chunkSeq: 1, messages: [{ role: 'user', parts: [{ type: 'text', text: 'c1' }] }] }),
+    });
+    expect(second.status).toBe(200);
+    const complete = await app.request(`/api/public/chats/${f.token}`);
+    expect(complete.status).toBe(200);
+    await db.execute(sql`delete from shares where token = ${f.token}`);
+  });
+
+  it('serves a single-request share immediately (expectedChunks defaults to 1)', async () => {
+    const first = await app.request('/api/chats', {
+      method: 'POST', headers: { authorization: `Bearer ${'a'.repeat(64)}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ session: { sessionId: 's_e1', title: 'E1', messages: [{ role: 'user', parts: [{ type: 'text', text: 'only' }] }] } }),
+    });
+    expect(first.status).toBe(201);
+    const f = await json(first);
+    const res = await app.request(`/api/public/chats/${f.token}`);
+    expect(res.status).toBe(200);
+    await db.execute(sql`delete from shares where token = ${f.token}`);
+  });
+});
+
 describe('rail preview (Chain B)', () => {
   it('computes the first-page userIndex preview server-side (collapses whitespace, caps at 80, first text part)', async () => {
     // A user message whose first text part has internal whitespace and a long

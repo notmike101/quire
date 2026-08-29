@@ -14,6 +14,10 @@ export const shares = pgTable('shares', {
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
   preset: text('preset').notNull().default('strict'),
   messageCount: integer('message_count').notNull().default(0),
+  // Chain E: total chunks the publisher will send. The public endpoint returns
+  // 404 until count(distinct chunk_seq) reaches this, so a killed upload never
+  // serves a partial share. Default 1 (a single-request share is complete at once).
+  expectedChunks: integer('expected_chunks').notNull().default(1),
   redactions: jsonb('redactions').notNull().default({}),
   // Chain B: bigint (number mode) — a share can grow past int32 (2 GB) up to
   // the 1 GB per-share cap, and int32 would overflow on large multi-chunk shares.

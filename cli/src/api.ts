@@ -76,7 +76,7 @@ export class QuireApi {
 
   create(
     session: unknown,
-    opts: { preset?: string; password?: string; expiresAt?: string } = {},
+    opts: { preset?: string; password?: string; expiresAt?: string; expectedChunks?: number } = {},
   ): Promise<CreateResponse> {
     return this.request('POST', '/api/chats', { session, ...opts });
   }

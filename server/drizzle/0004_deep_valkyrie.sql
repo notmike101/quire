@@ -1,0 +1,1 @@
+ALTER TABLE "shares" ADD COLUMN "expected_chunks" integer DEFAULT 1 NOT NULL;
