@@ -6,7 +6,11 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,
-  retries: 0,
+  // The compose stack's server occasionally drops the first request during its
+  // startup race ("socket hang up" on the first POST /api/chats). One retry
+  // absorbs that infra flake without masking real failures (a genuine
+  // regression fails both attempts).
+  retries: 1,
   reporter: [['list']],
   use: {
     baseURL: 'http://127.0.0.1:8790',

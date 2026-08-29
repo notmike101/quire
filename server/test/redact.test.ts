@@ -130,9 +130,10 @@ describe('prepareContent', () => {
   });
 
   it('passes an image part data URI through untouched (not redacted)', () => {
-    // A base64 payload long enough to trip the generic-secret rule if it were
-    // run through redactText. The data URI must survive verbatim.
-    const payload = 'A'.repeat(200);
+    // A base64 payload that trips NO rule: `+`/`/` interleave every alphanumeric
+    // run under 24 chars, so bare-token's hex and g-z branches both miss, and no
+    // keyword/prefix rule fires. The data URI must survive verbatim.
+    const payload = 'QUJD+REVG/R0hJ+SktM/TU5O+PUFQ/SR8';
     const dataUri = `data:image/png;base64,${payload}`;
     const withImage: ShapedMessage[] = [
       {
@@ -207,11 +208,127 @@ describe('Chain F widened rules', () => {
     expect(JSON.stringify(out.messages)).not.toContain('abcdefgh1234.ijklmnop5678');
   });
   it('redacts a bare high-entropy token (no bearer keyword)', () => {
-    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'use ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 here' }] }], 'strict');
-    expect(JSON.stringify(out.messages)).not.toContain('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
+    // Round 2: the bare-token rule is pure-hex; a hex-encoded secret is caught.
+    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'use c8f5e0a1b2c3d4e5f60718293a4b5c6d here' }] }], 'strict');
+    expect(JSON.stringify(out.messages)).not.toContain('c8f5e0a1b2c3d4e5f60718293a4b5c6d');
+    expect(out.summary['bare-token']).toBe(1);
   });
   it('does NOT redact ordinary 24-char prose identifiers (false-positive guard)', () => {
     const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'the quick brown fox jumps over the lazy dog near' }] }], 'strict');
     expect(JSON.stringify(out.messages)).toContain('the quick brown fox');
+  });
+});
+
+describe('Round 2 widened rules', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
+    prepareContent([{ role: 'user', parts: [{ type: 'text', text }] }], preset);
+
+  it('redacts an AWS secret access key (40-char base64)', () => {
+    const secret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+    const out = one(`aws secret ${secret} here`);
+    expect(JSON.stringify(out.messages)).not.toContain(secret);
+    expect(out.summary['aws-secret-key']).toBe(1);
+  });
+  it('redacts a Google API key (AIza…)', () => {
+    const key = 'AIzaSyA1234567890abcdefghijklmnopqrst';
+    const out = one(`google ${key} end`);
+    expect(JSON.stringify(out.messages)).not.toContain(key);
+    expect(out.summary['google-api-key']).toBe(1);
+  });
+  it('redacts an empty-user connection string (redis://:pass@)', () => {
+    const out = one(`cache redis://:secretpw@cache:6379 done`);
+    expect(JSON.stringify(out.messages)).not.toContain('secretpw');
+  });
+  it('redacts an ODBC ;-separated connection string (Pwd=)', () => {
+    const out = one(`Server=db;Database=app;Uid=user;Pwd=secretpw`);
+    expect(JSON.stringify(out.messages)).not.toContain('secretpw');
+  });
+  it('redacts a PGP PRIVATE KEY BLOCK', () => {
+    const block = '-----BEGIN PGP PRIVATE KEY BLOCK-----\nabc123def456\n-----END PGP PRIVATE KEY BLOCK-----';
+    const out = one(`key: ${block}`);
+    expect(JSON.stringify(out.messages)).not.toContain('abc123def456');
+    expect(out.summary['private-key']).toBe(1);
+  });
+  it('redacts a lowercase private-key header', () => {
+    const block = '-----begin rsa private key-----\nMIIBOgIBAAJBAKj34GkxF9zU\n-----end rsa private key-----';
+    const out = one(`key: ${block}`);
+    expect(JSON.stringify(out.messages)).not.toContain('MIIBOgIBAAJBAKj34GkxF9zU');
+    expect(out.summary['private-key']).toBe(1);
+  });
+  it('redacts Authorization:Bearer (no space) and BEARER (uppercase)', () => {
+    const t1 = 'Authorization:Bearer abcdef1234567890abcdef1234567890';
+    const t2 = 'BEARER abcdef1234567890abcdef1234567890';
+    const out = one(`${t1} and ${t2}`);
+    expect(JSON.stringify(out.messages)).not.toContain('abcdef1234567890abcdef1234567890');
+  });
+  it('redacts a generic secret whose value contains special chars', () => {
+    const out = one(`password=Sup3r!@Secret#2026`);
+    expect(JSON.stringify(out.messages)).not.toContain('Sup3r!@Secret#2026');
+    expect(out.summary['generic-secret']).toBe(1);
+  });
+  it('does NOT redact a UUID (false-positive guard)', () => {
+    const uuid = '123e4567-e89b-12d3-a456-426614174000';
+    const out = one(`id ${uuid} end`);
+    expect(JSON.stringify(out.messages)).toContain(uuid);
+    expect(out.summary['bare-token']).toBeUndefined();
+  });
+  it('redacts a 32-hex token (bare-token is now pure-hex)', () => {
+    // 32 hex chars: ≥24 so bare-token's hex branch fires, but <40 so the
+    // aws-secret-key rule (40-char base64) does NOT claim it first — the count
+    // lands under bare-token, which is what this test asserts.
+    const sha = 'c8f5e0a1b2c3d4e5f60718293a4b5c6d';
+    const out = one(`commit ${sha} end`);
+    expect(JSON.stringify(out.messages)).not.toContain(sha);
+    expect(out.summary['bare-token']).toBe(1);
+  });
+  it('redacts a 40-hex token (claimed by aws-secret-key, which runs first)', () => {
+    // A 40-char hex run is also a valid 40-char base64 run, so the earlier
+    // aws-secret-key rule claims the span before bare-token can. Either way the
+    // secret is redacted; this locks the attribution to aws-secret-key.
+    const sha = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
+    const out = one(`commit ${sha} end`);
+    expect(JSON.stringify(out.messages)).not.toContain(sha);
+    expect(out.summary['aws-secret-key']).toBe(1);
+  });
+  it('still redacts a prefixed token via its own rule (ghp_)', () => {
+    const tok = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const out = one(`use ${tok} now`);
+    expect(JSON.stringify(out.messages)).not.toContain(tok);
+  });
+  it('redacts a secret embedded in callID / tool / status', () => {
+    const out = prepareContent(
+      [{ role: 'assistant', parts: [{ type: 'tool', callID: 'call_1', tool: 'Bash', status: 'ok', input: { c: 'x' }, output: 'y' }] }],
+      'strict',
+    );
+    // tool name that is itself a secret token
+    const out2 = prepareContent(
+      [{ role: 'assistant', parts: [{ type: 'tool', tool: 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', status: 'ok', input: {}, output: 'y' }] }],
+      'strict',
+    );
+    expect(JSON.stringify(out2.messages)).not.toContain('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
+  });
+  it('redacts a secret hidden in an image src data-URI (plaintext), clean base64 passes', () => {
+    // A plaintext data-URI whose payload literally contains an OpenAI key. The
+    // targeted src scan (prefix keys + private-key + connection-string) catches
+    // it. (A base64-encoded secret is undetectable by pattern matching — base64
+    // encodes `sk-` into `c2st…` — so the scan is only meaningful for the
+    // plaintext form.)
+    const secret = 'sk-abcdefghijklmnopqrstuvwxyz0123456789';
+    const evil = `data:text/plain;charset=utf-8,use ${secret} now`;
+    const out = prepareContent(
+      [{ role: 'assistant', parts: [{ type: 'image', src: evil, mime: 'text/plain', alt: 'shot', bytes: 3 }] }],
+      'strict',
+    );
+    const src = out.messages[0]!.parts[0]!.src!;
+    expect(src).not.toContain(secret);
+    expect(src).toContain('REDACTED');
+    // a clean base64 payload (no targeted rule trips) passes through untouched —
+    // the over-redaction guard: a real image's base64 must survive.
+    const clean = 'data:image/png;base64,QUJD+REVG/R0hJ+SktM/TU5O+PUFQ/SR8';
+    const out2 = prepareContent(
+      [{ role: 'assistant', parts: [{ type: 'image', src: clean, mime: 'image/png', alt: 'shot', bytes: 4 }] }],
+      'strict',
+    );
+    expect(out2.messages[0]!.parts[0]!.src).toBe(clean);
   });
 });

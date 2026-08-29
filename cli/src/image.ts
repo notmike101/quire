@@ -131,13 +131,19 @@ export function fileToDataUri(
   root?: string,
 ): DataUri | null {
   if (!existsSync(filePath)) return null;
-  let size: number;
+  // Round 2: stat (FOLLOW symlinks) and reject non-regular files. A FIFO,
+  // device, or a symlink to one would otherwise pass the size check (FIFO
+  // size 0) and then block readFileSync indefinitely; isFile() is false for
+  // those, so they're dropped. A symlink to a regular file resolves to a file,
+  // so it still reads (the containment check below keeps it inside the root).
+  let st;
   try {
-    size = statSync(filePath).size;
+    st = statSync(filePath);
   } catch {
     return null;
   }
-  if (size > maxBytes) return null;
+  if (!st.isFile()) return null;
+  if (st.size > maxBytes) return null;
   // Resolve the real path once and read THAT, so the containment check and the
   // read operate on the same file (no check-then-read TOCTOU: a symlink swapped
   // in between the check and the read cannot point the read outside the root).

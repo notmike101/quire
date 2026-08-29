@@ -273,6 +273,30 @@ export const RULE_SECRETS: { label: string; text: string; raw: string; needle?: 
     text: 'aws: AKIAIOSFODNN7EXAMPLE',
   },
   {
+    // Round 2: the 40-char base64 secret access key (the credential half).
+    label: 'aws-secret-key',
+    raw: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    text: 'aws secret: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+  },
+  {
+    // Round 2: Google API key (AIza + 33 base64url chars).
+    label: 'google-api-key',
+    raw: 'AIzaSyA1234567890abcdefghijklmnopqrst',
+    text: 'google: AIzaSyA1234567890abcdefghijklmnopqrst',
+  },
+  {
+    // Round 2: Anthropic key (sk-ant- prefix) — was only covered in unit tests.
+    label: 'anthropic-key',
+    raw: 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz123456',
+    text: 'anthropic: sk-ant-api03-abcdefghijklmnopqrstuvwxyz123456',
+  },
+  {
+    // Round 2: a keyword-less 32-hex token (bare-token's pure-hex branch).
+    label: 'bare-token',
+    raw: 'c8f5e0a1b2c3d4e5f60718293a4b5c6d',
+    text: 'use c8f5e0a1b2c3d4e5f60718293a4b5c6d here',
+  },
+  {
     label: 'connection-string',
     raw: 'postgres://user:secretpw@db.example.com/app',
     text: 'dsn: postgres://user:secretpw@db.example.com/app',

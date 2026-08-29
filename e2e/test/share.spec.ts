@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createShare, createChunkedShare, createSystemNoticeShare, createReasoningShare, createImageShare, createToolImageShare, createLongShare, createRuleShare, RULE_SECRETS, TINY_PNG_DATA_URI, OPENAI_KEY } from './helpers';
+import { createShare, createChunkedShare, createSystemNoticeShare, createReasoningShare, createImageShare, createToolImageShare, createLongShare, createRuleShare, RULE_SECRETS, TINY_PNG_DATA_URI, OPENAI_KEY, API_KEY } from './helpers';
 
 test.describe('share viewer', () => {
   test('renders the first page and redacts secrets server-side', async ({ page, request }) => {
@@ -75,6 +75,54 @@ test.describe('share viewer', () => {
   test('unknown token shows the not-found page', async ({ page }) => {
     await page.goto('/chats/does-not-exist-000000000000');
     await expect(page.getByRole('heading', { name: 'Share not found' })).toBeVisible();
+  });
+
+  test('no existence oracle: unknown, revoked, and no-password tokens are byte-identical 404s', async ({ request }) => {
+    // The security invariant: an attacker must not be able to distinguish a
+    // live-but-passwordless share from a dead (unknown/revoked) one. All three
+    // must return the EXACT same status + body on the unlock endpoint.
+    const canonical = { status: 404, body: '{"error":{"code":"not_found","message":"Not found"}}' };
+
+    // (a) unknown token
+    const unknown = await request.post('/api/public/chats/does-not-exist-000000000000/unlock', {
+      data: { password: 'whatever' },
+    });
+    expect(unknown.status()).toBe(canonical.status);
+    expect(await unknown.text()).toBe(canonical.body);
+
+    // (b) revoked token: create then revoke via the owner route.
+    const { token: liveToken } = await createShare(request);
+    const revoke = await request.delete(`/api/chats/${liveToken}`, {
+      headers: { authorization: `Bearer ${API_KEY}` },
+    });
+    expect(revoke.status()).toBe(200);
+    const revoked = await request.post(`/api/public/chats/${liveToken}/unlock`, {
+      data: { password: 'whatever' },
+    });
+    expect(revoked.status()).toBe(canonical.status);
+    expect(await revoked.text()).toBe(canonical.body);
+
+    // (c) live share with NO password: unlock must 404 identically (a distinct
+    // no_password response would be a liveness oracle).
+    const { token: noPwToken } = await createShare(request);
+    const noPw = await request.post(`/api/public/chats/${noPwToken}/unlock`, {
+      data: { password: 'whatever' },
+    });
+    expect(noPw.status()).toBe(canonical.status);
+    expect(await noPw.text()).toBe(canonical.body);
+  });
+
+  test('oversized request body is rejected with a uniform 413 too_large', async ({ request }) => {
+    // The 20 MB per-request cap (bodyLimit middleware) fires before any handler.
+    // A body just over 20 MB must be rejected with the uniform error body —
+    // not a 500, not a partial parse, not a connection reset.
+    const over20MB = 'x'.repeat(20 * 1024 * 1024 + 1);
+    const res = await request.post('/api/chats', {
+      headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/json' },
+      data: JSON.stringify({ session: { sessionId: 's', title: 't', model: 'm', messages: [{ role: 'user', time: new Date(Date.UTC(2026, 0, 1)).toISOString(), parts: [{ type: 'text', text: over20MB }] }] } }),
+    });
+    expect(res.status()).toBe(413);
+    expect(await res.json()).toEqual({ error: { code: 'too_large', message: 'Request body too large' } });
   });
 
   test('respects the reader dark mode preference', async ({ browser, request }) => {

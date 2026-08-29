@@ -13,7 +13,9 @@ export interface RedactRule {
 export const rules: RedactRule[] = [
   {
     category: 'private-key',
-    pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+    // Round 2: case-insensitive header (lowercase PEM) + optional trailing
+    // "BLOCK" (PGP: "-----BEGIN PGP PRIVATE KEY BLOCK-----").
+    pattern: /-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY( BLOCK)?-----/gi,
     presets: ['strict', 'normal'],
   },
   {
@@ -26,6 +28,20 @@ export const rules: RedactRule[] = [
   {
     category: 'aws-access-key',
     pattern: /\bAKIA[0-9A-Z]{16}\b/g,
+    presets: ['strict', 'normal'],
+  },
+  {
+    category: 'aws-secret-key',
+    // Round 2: the 40-char base64 secret access key (the half of the credential
+    // pair that grants access). Distinct from the AKIA… access key ID above.
+    // Bounded by non-alphanumeric chars so it can't over-match a longer run.
+    pattern: /(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{40}={0,2}(?![A-Za-z0-9+/=])/g,
+    presets: ['strict', 'normal'],
+  },
+  {
+    category: 'google-api-key',
+    // Round 2: Google API keys (AIza + 33 base64url chars = 37 total).
+    pattern: /\bAIza[0-9A-Za-z_\-]{33}\b/g,
     presets: ['strict', 'normal'],
   },
   {
@@ -42,29 +58,44 @@ export const rules: RedactRule[] = [
     category: 'connection-string',
     // Chain F: the first branch is the user:pass@host form; the second catches
     // query-string credentials (?password=… / &token=…) that carry no user@host.
-    pattern: /\b(postgres(ql)?|mysql|mongodb(\+srv)?|redis|amqp):\/\/[^/\s:@]+:[^@\s]+@|(?::|&|\?)(password|passwd|pwd|token|key|secret)s?=[^&\s]+/gi,
+    // Round 2: more schemes (mariadb/amqps/mssql/oracle/cockroachdb/clickhouse/
+    // kafka/valkey/etcd), an OPTIONAL user (redis://:pass@), and `;` as a
+    // separator for ODBC-style strings (Server=…;Pwd=…).
+    pattern: /\b(postgres(ql)?|mysql|mariadb|mongodb(\+srv)?|redis|amqps?|mssql|oracle|cockroachdb|clickhouse|kafka|valkey|etcd):\/\/[^/\s:@]*:[^@\s]+@|(?:[;&?])(password|passwd|pwd|token|key|secret)s?=[^&\s]+/gi,
     presets: ['strict', 'normal'],
     replace: (m, scheme, _q, _s, credKey) => (scheme ? `${scheme}://[REDACTED:connection-string]@` : `${credKey}=[REDACTED:connection-string]`),
   },
   {
     category: 'bearer-token',
-    pattern: /\b(?:[Aa]uthorization:\s*Bearer\s+|bearer\s+)[A-Za-z0-9._-]{20,}/g,
+    // Round 2: case-insensitive + whitespace-tolerant (Authorization:Bearer,
+    // BEARER, AUTHORIZATION: Bearer all match now).
+    pattern: /\b(?:authorization\s*:\s*bearer\s+|bearer\s+)[A-Za-z0-9._-]{20,}/gi,
     presets: ['strict', 'normal'],
   },
   {
     category: 'generic-secret',
     // Chain F: floor lowered 16→8 and the key-name list widened so short
     // secrets and more naming conventions are caught.
-    pattern: /\b(api[_-]?key|secret|token|passwd|password|auth|credential|access|jwt|session|cookie|dsn|conn|private)(\s*[:=]\s*)(['"]?)([A-Za-z0-9+/=_\-]{8,})\3/gi,
+    // Round 2: the value charset widened to any non-quote/non-whitespace run
+    // (secret values routinely contain @ . ! # % , ; : etc.), still bounded by
+    // the closing quote backreference so a quoted value stops at its quote.
+    pattern: /\b(api[_-]?key|secret|token|passwd|password|auth|credential|access|jwt|session|cookie|dsn|conn|private)(\s*[:=]\s*)(['"]?)([^'"\s]{8,})\3/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key, sep, _q, _v) => `${key}${sep}[REDACTED:generic-secret]`,
   },
   {
     category: 'bare-token',
-    // Chain F: a keyword-less high-entropy fallback. Runs LAST so the specific
-    // rules above claim their spans first; the lookaround requires at least one
-    // of . _ - so ordinary long prose words (no separators) are not redacted.
-    pattern: /\b(?=[A-Za-z0-9._-]*[._-])[A-Za-z0-9._-]{24,}\b/g,
+    // Round 2: a keyword-less fallback. Two branches:
+    //  (1) a pure-hex run of 24+ chars — a hex-encoded secret (the 40-char AWS
+    //      secret, a hex API key). Pure hex is the over-redaction guard: it
+    //      cannot match a UUID (dashes break the run) or ordinary prose.
+    //  (2) a 24+ char run containing a non-hex letter (g-z) — catches prefixed
+    //      tokens (ghp_…, sk-…) and dotted identifiers that the specific rules
+    //      above missed. The lookaround requires the non-hex letter so a pure
+    //      hex run is only matched by branch (1), and a UUID (no g-z letter,
+    //      hex runs <24) matches neither.
+    // Runs LAST so the specific prefix rules claim their spans first.
+    pattern: /\b(?:[0-9a-fA-F]{24,}|(?=[A-Za-z0-9._-]*[g-zG-Z])[A-Za-z0-9._-]{24,})\b/g,
     presets: ['strict', 'normal'],
   },
   {

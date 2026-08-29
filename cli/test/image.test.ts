@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -160,7 +160,16 @@ describe('fileToDataUri containment (Chain A)', () => {
   it('ignores root when undefined (no containment)', () => {
     const p = join(outside, 'secret.png');
     writeFileSync(p, Buffer.from(PNG_1X1, 'base64'));
-    expect(fileToDataUri(p, 'image/png', MAX_IMAGE_BYTES)).not.toBeNull();
+    expect(fileToDataUri(p, 'image/png')).not.toBeNull();
+  });
+
+  it('refuses a non-regular file (directory) — isFile() guard', () => {
+    // Round 2: statSync + isFile() rejects non-regular files. A directory (and,
+    // on POSIX, a FIFO/device) is not a regular file, so it's dropped before any
+    // read. A directory is the cross-platform stand-in for a FIFO.
+    const d = join(root, 'dir.png');
+    mkdirSync(d);
+    expect(fileToDataUri(d, 'image/png', MAX_IMAGE_BYTES, root)).toBeNull();
   });
 });
 

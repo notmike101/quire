@@ -8,5 +8,8 @@
  */
 export function isSafeImageSrc(src: string | undefined): boolean {
   if (!src) return false;
-  return /^data:image\/(png|jpeg|jpg|webp|gif|avif);base64,/i.test(src) || src.startsWith('/');
+  // Round 2: the same-origin branch is restricted to /assets/ (the only
+  // same-origin image tree the SPA uses). A generic `/` would let a shared
+  // session emit a same-origin <img> to any internal path.
+  return /^data:image\/(png|jpeg|jpg|webp|gif|avif);base64,/i.test(src) || src.startsWith('/assets/');
 }
