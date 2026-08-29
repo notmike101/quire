@@ -210,6 +210,32 @@ describe('unlock endpoint', () => {
   });
 });
 
+describe('rail preview (Chain B)', () => {
+  it('computes the first-page userIndex preview server-side (collapses whitespace, caps at 80, first text part)', async () => {
+    // A user message whose first text part has internal whitespace and a long
+    // tail, plus a non-text part before the text part (must be skipped).
+    const longText = 'x'.repeat(120);
+    const wsText = '  hello   world  \n  again  ';
+    const [share] = await db.insert(shares).values({
+      token: 'railprev', uploadId: 'c'.repeat(32), sessionId: 'sess_railprev', title: 'Rail preview',
+      messageCount: 3,
+    }).returning();
+    if (!share) throw new Error('seed insert returned no row');
+    await db.insert(shareMessages).values([
+      { shareId: share.id, chunkSeq: 0, seq: 1, role: 'user', parts: [{ type: 'tool', tool: 'Read' }, { type: 'text', text: wsText }] },
+      { shareId: share.id, chunkSeq: 0, seq: 2, role: 'assistant', parts: [{ type: 'text', text: 'a' }] },
+      { shareId: share.id, chunkSeq: 0, seq: 3, role: 'user', parts: [{ type: 'text', text: longText }] },
+    ]);
+    const res = await json(await app.request('/api/public/chats/railprev'));
+    // Only the two user messages appear in the index, in order.
+    expect(res.userIndex).toHaveLength(2);
+    // Whitespace collapsed to single spaces and trimmed; capped at 80.
+    expect(res.userIndex[0]).toEqual({ seq: 1, preview: 'hello world again' });
+    expect(res.userIndex[1]).toEqual({ seq: 3, preview: 'x'.repeat(80) });
+    await db.execute(sql`delete from shares where token = 'railprev'`);
+  });
+});
+
 describe('clientIp (Chain C)', () => {
   // getConnInfo reads c.env.incoming.socket.remoteAddress; stub that shape so
   // the socket fallback is exercised without a real socket.

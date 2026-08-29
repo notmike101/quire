@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, integer, jsonb, primaryKey } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, integer, jsonb, primaryKey, bigint } from 'drizzle-orm/pg-core';
 
 export const shares = pgTable('shares', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -15,7 +15,9 @@ export const shares = pgTable('shares', {
   preset: text('preset').notNull().default('strict'),
   messageCount: integer('message_count').notNull().default(0),
   redactions: jsonb('redactions').notNull().default({}),
-  bytes: integer('bytes').notNull().default(0),
+  // Chain B: bigint (number mode) — a share can grow past int32 (2 GB) up to
+  // the 1 GB per-share cap, and int32 would overflow on large multi-chunk shares.
+  bytes: bigint('bytes', { mode: 'number' }).notNull().default(0),
 });
 
 export const shareMessages = pgTable(

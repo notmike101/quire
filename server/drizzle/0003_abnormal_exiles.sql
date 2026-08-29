@@ -1,0 +1,1 @@
+ALTER TABLE "shares" ALTER COLUMN "bytes" SET DATA TYPE bigint;

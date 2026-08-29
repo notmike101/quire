@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { getConnInfo } from '@hono/node-server/conninfo';
-import { and, asc, eq, gt, or } from 'drizzle-orm';
+import { and, asc, eq, gt, or, sql } from 'drizzle-orm';
 import { shares, shareMessages } from '../db/schema.js';
 import type { Db } from '../db/client.js';
 import type { Config } from '../config.js';
@@ -68,18 +68,6 @@ function clampLimit(raw: string | undefined): number {
   return Number.isInteger(n) && n > 0 ? Math.min(n, 200) : 50;
 }
 
-/** Short preview of a user message's first text part, for the rail tooltip. */
-function userPreview(parts: unknown): string {
-  if (!Array.isArray(parts)) return '';
-  for (const p of parts) {
-    if (p && typeof p === 'object' && (p as { type?: unknown }).type === 'text') {
-      const t = (p as { text?: unknown }).text;
-      if (typeof t === 'string' && t.trim()) return t.replace(/\s+/g, ' ').trim().slice(0, 80);
-    }
-  }
-  return '';
-}
-
 interface Cursor { chunkSeq: number; seq: number }
 function parseCursor(raw: string | undefined): Cursor {
   if (raw === undefined) return { chunkSeq: 0, seq: 0 };
@@ -137,15 +125,26 @@ export function publicRoutes(deps: PublicDeps): Hono {
         .limit(limit),
       // The rail renders one tick per user message for the WHOLE share, so the
       // viewer needs the full user-message index up front (not just the loaded
-      // page). This is a tiny projection — seq + a short preview — and is only
-      // fetched on the first page (cursor undefined).
+      // page). Chain B: the preview is computed SERVER-SIDE via jsonb extraction
+      // (first non-empty text part, left 80) instead of selecting the full
+      // `parts` jsonb for every user message — a long share would otherwise
+      // ship its entire transcript in this tiny projection.
       rawCursor === undefined
         ? db
-            .select({ seq: shareMessages.seq, parts: shareMessages.parts })
+            .select({
+              seq: shareMessages.seq,
+              preview: sql<string>`left(
+                coalesce(
+                  (select (elem->>'text') from jsonb_array_elements("parts") as elem
+                    where elem->>'type' = 'text' and coalesce((elem->>'text'),'') <> ''
+                    limit 1),
+                  ''
+                ), 80)`,
+            })
             .from(shareMessages)
             .where(and(eq(shareMessages.shareId, share.id), eq(shareMessages.role, 'user')))
             .orderBy(asc(shareMessages.chunkSeq), asc(shareMessages.seq))
-        : Promise.resolve([] as { seq: number; parts: unknown[] }[]),
+        : Promise.resolve([] as { seq: number; preview: string }[]),
     ]);
     const last = rows[rows.length - 1];
     const nextCursor = rows.length === limit && last ? `${last.chunkSeq}:${last.seq}` : null;
@@ -160,7 +159,7 @@ export function publicRoutes(deps: PublicDeps): Hono {
         redactions: share.redactions,
       },
       messages: rows.map((r) => ({ chunkSeq: r.chunkSeq, seq: r.seq, role: r.role, time: r.time, parts: r.parts })),
-      userIndex: rawCursor === undefined ? (userRows as { seq: number; parts: unknown[] }[]).map((r) => ({ seq: r.seq, preview: userPreview(r.parts) })) : undefined,
+      userIndex: rawCursor === undefined ? (userRows as { seq: number; preview: string }[]).map((r) => ({ seq: r.seq, preview: (r.preview ?? '').replace(/\s+/g, ' ').trim() })) : undefined,
       nextCursor,
     });
   });

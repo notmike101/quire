@@ -8,6 +8,7 @@ import { generateShareToken, generateUploadId } from '../security/token.js';
 import { hashPassword } from '../security/password.js';
 import { prepareContent } from '../redact/prepare.js';
 import { chunkBodySchema, createBodySchema, patchBodySchema, previewBodySchema } from './schema.js';
+import { MAX_SHARE_BYTES, wouldExceedCap } from './headers.js';
 
 export interface OwnerDeps {
   db: Db;
@@ -50,6 +51,10 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     }
     const { session, preset, password, expiresAt } = parsed.data;
     const prepared = prepareContent(session.messages, preset);
+    // Chain B: enforce the cumulative per-share cap at create.
+    if (wouldExceedCap(0, prepared.bytes)) {
+      return c.json({ error: { code: 'too_large', message: 'Share exceeds the 1 GB per-share cap' } }, 413);
+    }
     const token = generateShareToken();
     const uploadId = generateUploadId();
     // Both inserts are atomic: if the messages batch fails (e.g. an unexpected
@@ -105,6 +110,25 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
       return c.json({ error: { code: 'upload_id_mismatch', message: 'uploadId does not match this share' } }, 400);
     }
     const prepared = prepareContent(messages, share.preset as 'strict' | 'normal' | 'none');
+    // Chain B: enforce the cumulative per-share cap on every chunk.
+    if (wouldExceedCap(share.bytes, prepared.bytes)) {
+      return c.json({ error: { code: 'too_large', message: 'Share would exceed the 1 GB per-share cap' } }, 413);
+    }
+    // Chain B: chunks must be contiguous. The create call seeds chunk 0, so the
+    // next valid chunkSeq is (max existing chunkSeq) + 1. A duplicate is 409, a
+    // gap or out-of-order seq is 400.
+    const existing = await db
+      .select({ chunkSeq: shareMessages.chunkSeq })
+      .from(shareMessages)
+      .where(eq(shareMessages.shareId, share.id));
+    const seqs = new Set(existing.map((r) => r.chunkSeq));
+    if (seqs.has(chunkSeq)) {
+      return c.json({ error: { code: 'chunk_exists', message: 'chunkSeq already uploaded' } }, 409);
+    }
+    const maxSeq = seqs.size === 0 ? -1 : Math.max(...seqs);
+    if (chunkSeq !== maxSeq + 1) {
+      return c.json({ error: { code: 'chunk_out_of_order', message: `chunkSeq must be ${maxSeq + 1}` } }, 400);
+    }
     const result = await db.transaction(async (tx) => {
       await tx
         .insert(shareMessages)
@@ -118,10 +142,17 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
             parts: m.parts,
           })),
         );
+      // Chain B: recompute messageCount from the rows (count(*)) rather than a
+      // blind +N; bytes is the exact running total (each chunk's bytes are known
+      // at ingest). bytes is bigint now, so the arithmetic stays in SQL.
+      const [agg] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(shareMessages)
+        .where(eq(shareMessages.shareId, share.id));
       const [updated] = await tx
         .update(shares)
         .set({
-          messageCount: sql`"shares"."message_count" + ${prepared.messageCount}`,
+          messageCount: agg!.n,
           bytes: sql`"shares"."bytes" + ${prepared.bytes}`,
           redactions: sql`(${shares.redactions}) || ${JSON.stringify(prepared.summary)}::jsonb`,
         })

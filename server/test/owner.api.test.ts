@@ -3,6 +3,7 @@ import { makeDb, migrateDb, type Db } from '../src/db/client.js';
 import { createApp } from '../src/app.js';
 import { shares, shareMessages } from '../src/db/schema.js';
 import { eq, sql } from 'drizzle-orm';
+import { MAX_SHARE_BYTES, wouldExceedCap } from '../src/api/headers.js';
 
 const url = process.env.DATABASE_URL ?? 'postgres://quire:quire@localhost:54329/quire_test';
 const config = { databaseUrl: url, apiKey: 'a'.repeat(64), unlockSecret: 'b'.repeat(64), port: 8787, webDist: '' };
@@ -227,10 +228,63 @@ describe('chunked upload', () => {
   });
 
   it('404 for an append to an unknown token', async () => {
-    const res = await app.request('/api/chats/neverexisted/chunks', {
+    const res = await app.request(`/api/chats/neverexisted/chunks`, {
       method: 'POST', headers: auth,
       body: JSON.stringify({ uploadId: 'a'.repeat(32), chunkSeq: 1, messages: [] }),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('per-share cap + contiguous chunks (Chain B)', () => {
+  it('wouldExceedCap compares against the 1 GB cap', () => {
+    expect(MAX_SHARE_BYTES).toBe(1_073_741_824);
+    expect(wouldExceedCap(0, MAX_SHARE_BYTES)).toBe(false); // exactly at cap
+    expect(wouldExceedCap(0, MAX_SHARE_BYTES + 1)).toBe(true); // one byte over
+    expect(wouldExceedCap(MAX_SHARE_BYTES - 10, 11)).toBe(true);
+    expect(wouldExceedCap(1_000_000, 2_000_000)).toBe(false);
+  });
+
+  it('rejects a duplicate chunkSeq with 409', async () => {
+    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session }) });
+    const f = await json(first);
+    expect(first.status).toBe(201);
+    // chunk 0 already exists (seeded by create) -> duplicate
+    const dup = await app.request(`/api/chats/${f.token}/chunks`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ uploadId: f.uploadId, chunkSeq: 0, messages: [{ role: 'user', parts: [{ type: 'text', text: 'dup' }] }] }),
+    });
+    expect(dup.status).toBe(409);
+    expect((await json(dup)).error.code).toBe('chunk_exists');
+    await db.execute(sql`delete from shares where token = ${f.token}`);
+  });
+
+  it('rejects a non-contiguous chunkSeq with 400', async () => {
+    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session }) });
+    const f = await json(first);
+    expect(first.status).toBe(201);
+    // chunk 0 exists, so the next valid seq is 1; skipping to 2 is out-of-order
+    const skip = await app.request(`/api/chats/${f.token}/chunks`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ uploadId: f.uploadId, chunkSeq: 2, messages: [{ role: 'user', parts: [{ type: 'text', text: 'skip' }] }] }),
+    });
+    expect(skip.status).toBe(400);
+    expect((await json(skip)).error.code).toBe('chunk_out_of_order');
+    await db.execute(sql`delete from shares where token = ${f.token}`);
+  });
+
+  it('recomputes messageCount from the rows after a chunk', async () => {
+    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session }) });
+    const f = await json(first);
+    expect(first.status).toBe(201);
+    const before = f.messageCount as number;
+    const chunk = await app.request(`/api/chats/${f.token}/chunks`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ uploadId: f.uploadId, chunkSeq: 1, messages: [{ role: 'user', parts: [{ type: 'text', text: 'extra' }] }] }),
+    });
+    expect(chunk.status).toBe(200);
+    const c = await json(chunk);
+    expect(c.messageCount).toBe(before + 1);
+    await db.execute(sql`delete from shares where token = ${f.token}`);
   });
 });
