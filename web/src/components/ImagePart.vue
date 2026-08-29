@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { SharePart } from '../api';
+import { isSafeImageSrc } from '../lib/imgsrc';
 
 const props = defineProps<{ part: SharePart }>();
 
@@ -15,7 +16,7 @@ function fmtBytes(n: number | undefined): string {
 <template>
   <div class="my-3 image-part">
     <img
-      v-if="part.src"
+      v-if="isSafeImageSrc(part.src)"
       :src="part.src"
       :alt="part.alt ?? 'image'"
       loading="lazy"

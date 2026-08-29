@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync, existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
+import { isAbsolute, join, sep } from 'node:path';
 
 /**
  * Per-image embed cap (raw bytes). Base64 inflates ~33%, so 2 MB raw → ~2.7 MB
@@ -72,16 +72,43 @@ export function readArtifactDataUri(
   } catch {
     return null;
   }
-  // Match files whose name contains the toolResultId. Prefer the `-media-`
-  // variant (image attachments); fall back to any match.
-  const matches = files.filter((f) => f.includes(toolResultId));
+  // Match the toolResultId as the TRAILING filename component, extension
+  // excluded: the id is `<random>-media-1-<toolResultId>.<ext>`, so the name
+  // WITHOUT its extension must END with the id or `-<id>`. A plain substring
+  // match would let one id read another attachment's data (e.g. id "abc"
+  // matching "xyz987-media-1-tool-result-abc.txt").
+  const stem = (f: string): string => {
+    const dot = f.lastIndexOf('.');
+    return dot > 0 ? f.slice(0, dot) : f;
+  };
+  const matches = files.filter(
+    (f) => f === toolResultId || stem(f) === toolResultId || stem(f).endsWith(`-${toolResultId}`),
+  );
   if (matches.length === 0) return null;
   const media = matches.find((f) => f.includes('-media-'));
   const file = media ?? matches[0];
   if (!file) return null;
+  const filePath = join(artifactDir, file);
+  // Refuse symlinks: an attacker-placed link could point the artifact read at an
+  // arbitrary file. Real artifacts are regular files.
+  let st;
+  try {
+    st = lstatSync(filePath);
+  } catch {
+    return null;
+  }
+  if (st.isSymbolicLink()) return null;
+  // And the resolved target must stay inside the artifact dir.
+  try {
+    const canonical = realpathSync(filePath);
+    const dirCanonical = realpathSync(artifactDir);
+    if (canonical !== dirCanonical && !canonical.startsWith(dirCanonical + sep)) return null;
+  } catch {
+    return null;
+  }
   let content: string;
   try {
-    content = readFileSync(join(artifactDir, file), 'utf8');
+    content = readFileSync(filePath, 'utf8');
   } catch {
     return null;
   }
@@ -91,8 +118,18 @@ export function readArtifactDataUri(
 /**
  * Read a file from disk and convert it to a data URI. Returns null if the file
  * is missing, not a regular file, or exceeds `maxBytes`.
+ *
+ * When `root` is given, the file's canonical path (symlinks resolved) must be
+ * inside `root`'s canonical path — markdown image links and screenshot paths
+ * come from model output and must not be able to escape the session working
+ * dir to exfiltrate an arbitrary local file into the share.
  */
-export function fileToDataUri(filePath: string, mime: string, maxBytes = MAX_IMAGE_BYTES): DataUri | null {
+export function fileToDataUri(
+  filePath: string,
+  mime: string,
+  maxBytes = MAX_IMAGE_BYTES,
+  root?: string,
+): DataUri | null {
   if (!existsSync(filePath)) return null;
   let size: number;
   try {
@@ -101,6 +138,17 @@ export function fileToDataUri(filePath: string, mime: string, maxBytes = MAX_IMA
     return null;
   }
   if (size > maxBytes) return null;
+  if (root !== undefined) {
+    let canonical: string;
+    let rootCanonical: string;
+    try {
+      canonical = realpathSync(filePath);
+      rootCanonical = realpathSync(root);
+    } catch {
+      return null;
+    }
+    if (canonical !== rootCanonical && !canonical.startsWith(rootCanonical + sep)) return null;
+  }
   let buf: Buffer;
   try {
     buf = readFileSync(filePath);

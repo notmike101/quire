@@ -59,6 +59,18 @@ function redactPart(part: ShapedPart, preset: Preset, add: (counts: Record<strin
   if (part.text !== undefined) out.text = red(part.text);
   if (part.output !== undefined) out.output = red(part.output);
   if (part.input !== undefined) out.input = walkStrings(part.input, red);
+  // Image metadata (alt text, mime) is free text the model wrote — a filename
+  // like `~/.aws/credentials` or a path in alt text is a leak. `src` is the
+  // image payload itself and passes through untouched.
+  if (part.alt !== undefined) out.alt = red(part.alt);
+  if (part.mime !== undefined) out.mime = red(part.mime);
+  if (part.images !== undefined) {
+    out.images = part.images.map((img) => ({
+      ...img,
+      ...(img.alt !== undefined ? { alt: red(img.alt) } : {}),
+      ...(img.mime !== undefined ? { mime: red(img.mime) } : {}),
+    }));
+  }
   return out;
 }
 

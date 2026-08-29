@@ -17,7 +17,11 @@ db.exec('delete from part; delete from message; delete from session;');
 // across `pnpm test` runs (M24: Date.now() dirtied the tree every run).
 const now = 1787232000000;
 const insSession = db.prepare('insert into session (id, title, directory, time_created, time_updated, task_type, share_url) values (?,?,?,?,?,?,?)');
-insSession.run('sess_fixture', 'Fixture Session', '/tmp', now - 3600_000, now, 'interactive', null);
+// The session's working dir. The test injects a real temp dir (FIXTURE_WORK_DIR)
+// because markdown image links are now contained under it — the committed
+// fixture defaults to /tmp, which exists on POSIX but not on Windows.
+const workDir = process.env.FIXTURE_WORK_DIR ?? '/tmp';
+insSession.run('sess_fixture', 'Fixture Session', workDir, now - 3600_000, now, 'interactive', null);
 insSession.run('sess_older', 'Older Session', '/tmp', now - 7200_000, now - 1800_000, 'interactive', null);
 insSession.run('sess_sub', 'Subagent Session', '/tmp', now, now, 'subagent_child', null);
 const insMsg = db.prepare('insert into message (id, session_id, data, sequence) values (?,?,?,?)');

@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedImage, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
 import { truncateOutput } from '../shape.js';
 import { extractSystemParts, extractReasoningParts } from '../system.js';
@@ -90,7 +90,7 @@ function imageFromScreenshotFile(raw: RawPart, workDir: string | undefined): Sha
   const mime = mimeFromExtension(filename);
   if (!mime) return [];
   const filePath = join(workDir, filename);
-  const uri = fileToDataUri(filePath, mime);
+  const uri = fileToDataUri(filePath, mime, MAX_IMAGE_BYTES, workDir);
   if (!uri) return [];
   if (uri.bytes > MAX_IMAGE_BYTES) {
     return [{ mime: uri.mime, alt: filename, bytes: uri.bytes, tooLarge: true }];
@@ -118,7 +118,7 @@ const MD_IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
  * missing, or it exceeds the embed cap (the link is then left in the text and
  * redacted on the server).
  */
-function markdownImagePart(alt: string, target: string): ShapedPart | null {
+function markdownImagePart(alt: string, target: string, workDir: string | undefined): ShapedPart | null {
   // Only local files are embeddable: file:// URLs, Windows drive paths
   // (C:\…), or bare relative/POSIX paths. Remote URLs (http/https) are left
   // alone — they render as ordinary markdown links.
@@ -130,13 +130,16 @@ function markdownImagePart(alt: string, target: string): ShapedPart | null {
   let filePath: string;
   try {
     if (target.startsWith('file://')) filePath = fileURLToPath(target);
-    else filePath = target;
+    else if (isAbsolute(target)) filePath = target;
+    else filePath = workDir ? join(workDir, target) : target;
   } catch {
     return null;
   }
   const mime = mimeFromExtension(filePath);
   if (!mime) return null;
-  const uri = fileToDataUri(filePath, mime);
+  // Contain the read under the session working dir: a model-emitted link must
+  // not be able to point at an arbitrary local file and exfiltrate it.
+  const uri = fileToDataUri(filePath, mime, MAX_IMAGE_BYTES, workDir);
   if (!uri) return null;
   if (uri.bytes > MAX_IMAGE_BYTES) {
     return { type: 'image', mime: uri.mime, alt: alt || filePath, bytes: uri.bytes, tooLarge: true };
@@ -151,14 +154,14 @@ function markdownImagePart(alt: string, target: string): ShapedPart | null {
  * instead of a redacted `file:///…` path. Links whose file is gone or too large
  * are left untouched (they get redacted server-side as before).
  */
-function embedMarkdownImages(text: string): { text: string; images: ShapedPart[] } {
+function embedMarkdownImages(text: string, workDir: string | undefined): { text: string; images: ShapedPart[] } {
   const images: ShapedPart[] = [];
   let out = '';
   let last = 0;
   let m: RegExpExecArray | null;
   MD_IMAGE_RE.lastIndex = 0;
   while ((m = MD_IMAGE_RE.exec(text)) !== null) {
-    const part = markdownImagePart(m[1] ?? '', m[2] ?? '');
+    const part = markdownImagePart(m[1] ?? '', m[2] ?? '', workDir);
     if (!part) continue; // not a local image file — leave the link in place
     out += text.slice(last, m.index) + `![${m[1] ?? ''}]`;
     images.push(part);
@@ -175,7 +178,7 @@ function partToShaped(raw: RawPart, artifactDir: string, workDir: string | undef
       if (typeof raw.text !== 'string') return [];
       // Embed local markdown image links as image parts (the agent's "here's the
       // screenshot" messages reference on-disk files via ![alt](file:///…)).
-      const { text, images } = embedMarkdownImages(raw.text);
+      const { text, images } = embedMarkdownImages(raw.text, workDir);
       return [{ type: 'text', text }, ...images];
     }
     case 'reasoning':

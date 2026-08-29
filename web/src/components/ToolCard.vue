@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import CodeBlock from './CodeBlock.vue';
 import type { ShareImage, SharePart } from '../api';
+import { isSafeImageSrc } from '../lib/imgsrc';
 
 const props = defineProps<{ part: SharePart }>();
 const open = ref(false);
@@ -41,7 +42,7 @@ function fmtBytes(n: number | undefined): string {
       <CodeBlock v-if="part.output" :code="part.output" />
       <div v-if="part.images && part.images.length > 0" class="space-y-2 pt-1">
         <div v-for="(img, i) in part.images" :key="i" class="image-part">
-          <img v-if="img.src" :src="img.src" :alt="img.alt ?? 'image'" loading="lazy" class="image-part-img" />
+          <img v-if="isSafeImageSrc(img.src)" :src="img.src" :alt="img.alt ?? 'image'" loading="lazy" class="image-part-img" />
           <div v-else class="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/40 dark:text-neutral-400">
             <span>📷</span>
             <span class="italic">image too large to embed{{ img.bytes ? ` (${fmtBytes(img.bytes)})` : '' }}</span>

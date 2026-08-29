@@ -133,6 +133,19 @@ describe('ToolCard', () => {
     expect(w.text()).toContain('image too large to embed');
     expect(w.text()).toContain('2.9 MB');
   });
+
+  it('does not render an attached image with a non-data-URI src (Chain A)', async () => {
+    const w = mount(ToolCard, {
+      props: {
+        part: {
+          ...part,
+          images: [{ src: 'https://evil.example/x.png', mime: 'image/png', alt: 'x', bytes: 10 }],
+        },
+      },
+    });
+    await w.find('button').trigger('click');
+    expect(w.find('img').exists()).toBe(false);
+  });
 });
 
 describe('ReasoningBlock', () => {
@@ -224,6 +237,18 @@ describe('ImagePart', () => {
     expect(w.find('img').exists()).toBe(false);
     expect(w.text()).toContain('image too large to embed');
     expect(w.text()).toContain('2.9 MB');
+  });
+
+  it('does not render an <img> for a non-data-URI src (Chain A)', () => {
+    for (const src of [
+      'https://evil.example/x.png',
+      'javascript:alert(1)',
+      'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
+      'file:///etc/passwd',
+    ]) {
+      const w = mount(ImagePart, { props: { part: { type: 'image', src, mime: 'image/png', alt: 'x' } } });
+      expect(w.find('img').exists()).toBe(false);
+    }
   });
 });
 

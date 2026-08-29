@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -107,5 +107,76 @@ describe('fileToDataUri', () => {
     const bigPath = join(dir, 'big.png');
     writeFileSync(bigPath, Buffer.alloc(MAX_IMAGE_BYTES + 1, 0));
     expect(fileToDataUri(bigPath, 'image/png')).toBeNull();
+  });
+});
+
+describe('fileToDataUri containment (Chain A)', () => {
+  let root: string;
+  let outside: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'quire-a-'));
+    outside = mkdtempSync(join(tmpdir(), 'quire-a-out-'));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('reads a file inside the root', () => {
+    const p = join(root, 'ok.png');
+    writeFileSync(p, Buffer.from(PNG_1X1, 'base64'));
+    const uri = fileToDataUri(p, 'image/png', MAX_IMAGE_BYTES, root);
+    expect(uri).not.toBeNull();
+    expect(uri!.dataUri).toBe(`data:image/png;base64,${PNG_1X1}`);
+  });
+
+  it('refuses a path that escapes the root via ../', () => {
+    const p = join(root, '..', 'escape.png');
+    expect(fileToDataUri(p, 'image/png', MAX_IMAGE_BYTES, root)).toBeNull();
+  });
+
+  it('refuses an absolute path outside the root', () => {
+    const p = join(outside, 'secret.png');
+    writeFileSync(p, Buffer.from(PNG_1X1, 'base64'));
+    expect(fileToDataUri(p, 'image/png', MAX_IMAGE_BYTES, root)).toBeNull();
+  });
+
+  it('refuses a symlink pointing outside the root', () => {
+    const target = join(outside, 'real.png');
+    writeFileSync(target, Buffer.from(PNG_1X1, 'base64'));
+    const link = join(root, 'link.png');
+    symlinkSync(target, link);
+    expect(fileToDataUri(link, 'image/png', MAX_IMAGE_BYTES, root)).toBeNull();
+  });
+
+  it('still reads a symlink whose target is INSIDE the root', () => {
+    const target = join(root, 'real.png');
+    writeFileSync(target, Buffer.from(PNG_1X1, 'base64'));
+    const link = join(root, 'link.png');
+    symlinkSync(target, link);
+    expect(fileToDataUri(link, 'image/png', MAX_IMAGE_BYTES, root)).not.toBeNull();
+  });
+
+  it('ignores root when undefined (no containment)', () => {
+    const p = join(outside, 'secret.png');
+    writeFileSync(p, Buffer.from(PNG_1X1, 'base64'));
+    expect(fileToDataUri(p, 'image/png', MAX_IMAGE_BYTES)).not.toBeNull();
+  });
+});
+
+describe('readArtifactDataUri component match (Chain A)', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'quire-art-')); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it('matches the id as a full filename component, not a substring', () => {
+    // toolResultId "abc123" must NOT match "x-abc1234-media-1-zzz.png" (substring only).
+    writeFileSync(join(dir, 'x-abc1234-media-1-zzz.png'), `data:image/png;base64,${PNG_1X1}`);
+    expect(readArtifactDataUri(dir, 'abc123')).toBeNull();
+  });
+
+  it('matches a full component (the stem)', () => {
+    writeFileSync(join(dir, 'r-media-1-abc123.png'), `data:image/png;base64,${PNG_1X1}`);
+    expect(readArtifactDataUri(dir, 'abc123')).not.toBeNull();
   });
 });

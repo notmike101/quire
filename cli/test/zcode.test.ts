@@ -25,15 +25,23 @@ let screenshotFile: string;
 // in afterAll if we created it (i.e. it didn't pre-exist on the dev machine).
 let fixtureArtDir: string;
 let createdFixtureArtDir = false;
+// The fixture session's working dir (its `directory` column). Markdown image
+// links are contained under it, so the seeded file must live inside it.
+let fixtureWorkDir: string;
 
 beforeAll(() => {
   tempDir = mkdtempSync(join(tmpdir(), 'quire-zcode-fixture-'));
   fixtureDb = join(tempDir, 'sample-session.sqlite');
+  fixtureWorkDir = join(tempDir, 'workdir');
+  mkdirSync(fixtureWorkDir, { recursive: true });
   // Seed the on-disk file the markdown image link (m8) references, then inject
   // its file:// URL into the fixture so the adapter can read it.
-  mdImageFile = join(tempDir, 'md-image-fix.png');
+  mdImageFile = join(fixtureWorkDir, 'md-image-fix.png');
   writeFileSync(mdImageFile, Buffer.from(PNG_1X1, 'base64'));
   process.env.MD_IMAGE_PATH = `file://${mdImageFile.replace(/\\/g, '/')}`;
+  // The one-off DBs below (sess_big, sess_esc) use this directory too, so their
+  // containment root exists on every platform.
+  process.env.FIXTURE_WORK_DIR = fixtureWorkDir;
   // The screenshot tool call's input.filename. The fixture session's working
   // dir is /tmp (POSIX), which doesn't exist on Windows. We create a temp
   // working dir, put the screenshot file there, and pass it to the adapter via
@@ -235,7 +243,7 @@ describe('zcode adapter', () => {
         create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text, sequence integer);
         create table part (id text primary key, message_id text, session_id text, data text, sequence integer);
       `);
-      db.prepare('insert into session values (?,?,?,?,?,?,?)').run('sess_big', 'Big', '/tmp', 0, 0, 'interactive', null);
+      db.prepare('insert into session values (?,?,?,?,?,?,?)').run('sess_big', 'Big', fixtureWorkDir, 0, 0, 'interactive', null);
       db.prepare('insert into message (id, session_id, data, sequence) values (?,?,?,?)').run('mb', 'sess_big', JSON.stringify({ role: 'assistant' }), 1);
       db.prepare('insert into part values (?,?,?,?,?)').run('pb', 'mb', 'sess_big', JSON.stringify({
         type: 'tool', callID: 'cb', tool: 'Read',
@@ -252,6 +260,36 @@ describe('zcode adapter', () => {
       expect(img.bytes).toBe(MAX_IMAGE_BYTES + 1);
     } finally {
       rmSync(bigArtifact, { force: true });
+    }
+  });
+
+  it('does not embed a markdown image link that escapes the work dir (Chain A)', async () => {
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const { DatabaseSync } = await import('node:sqlite');
+    // A secret image OUTSIDE the session working dir.
+    const outside = mkdtempSync(join(tmpdir(), 'quire-wd-out-'));
+    const secret = join(outside, 'secret.png');
+    writeFileSync(secret, Buffer.from(PNG_1X1, 'base64'));
+    try {
+      const oneOffDb = join(tempDir, 'escape-image.sqlite');
+      const db = new DatabaseSync(oneOffDb);
+      db.exec(`
+        create table session (id text primary key, title text, directory text, time_created integer, time_updated integer, task_type text, share_url text);
+        create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text, sequence integer);
+        create table part (id text primary key, message_id text, session_id text, data text, sequence integer);
+      `);
+      db.prepare('insert into session values (?,?,?,?,?,?,?)').run('sess_esc', 'Esc', fixtureWorkDir, 0, 0, 'interactive', null);
+      db.prepare('insert into message (id, session_id, data, sequence) values (?,?,?,?)').run('me', 'sess_esc', JSON.stringify({ role: 'assistant' }), 1);
+      const url = `file://${secret.replace(/\\/g, '/')}`;
+      db.prepare('insert into part values (?,?,?,?,?)').run('pe', 'me', 'sess_esc', JSON.stringify({ type: 'text', text: `look ![x](${url})` }), 1);
+      db.close();
+      const s = await makeZcodeAdapter(oneOffDb).loadSession('sess_esc');
+      // No image part may carry the secret's data URI — the link is left in the
+      // text (and redacted server-side), not embedded.
+      const imgs = s.messages.flatMap((m) => m.parts).filter((p) => p.type === 'image');
+      expect(imgs).toHaveLength(0);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
     }
   });
 });

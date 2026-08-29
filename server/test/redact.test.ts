@@ -159,4 +159,35 @@ describe('prepareContent', () => {
       expect(summary).toEqual({});
     }
   });
+
+  it('redacts image alt/mime metadata (standalone and attached) — src untouched (Chain A)', () => {
+    const dataUri = 'data:image/png;base64,QUJD';
+    const alt = `screenshot of ${secrets.openai} and ${secrets.conn}`;
+    const withMeta: ShapedMessage[] = [
+      {
+        role: 'assistant',
+        parts: [
+          { type: 'image', src: dataUri, mime: 'image/png', alt, bytes: 3 },
+          {
+            type: 'tool', callID: 'c1', tool: 'Read', status: 'completed',
+            input: { file_path: '/tmp/x.png' }, output: 'ok',
+            images: [{ src: dataUri, mime: 'image/png', alt: `log ${secrets.aws}`, bytes: 3 }],
+          },
+        ],
+      },
+    ];
+    for (const preset of ['strict', 'normal'] as const) {
+      const { messages } = prepareContent(withMeta, preset);
+      const img = messages[0]!.parts[0]!;
+      expect(img.src).toBe(dataUri); // payload untouched
+      expect(img.alt).not.toContain(secrets.openai);
+      expect(img.alt).not.toContain(secrets.conn);
+      expect(img.mime).toBe('image/png');
+      const attached = (messages[0]!.parts[1]!.images ?? [])[0]!;
+      expect(attached.src).toBe(dataUri);
+      expect(attached.alt).not.toContain(secrets.aws);
+    }
+    // 'none' changes nothing (redaction is preset-gated).
+    expect(prepareContent(withMeta, 'none').messages[0]!.parts[0]!.alt).toBe(alt);
+  });
 });
