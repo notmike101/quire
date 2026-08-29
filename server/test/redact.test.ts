@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { prepareContent } from '../src/redact/prepare.js';
-import type { ShapedMessage } from '../src/redact/prepare.js';
+import type { ShapedMessage, ShapedSession } from '../src/redact/prepare.js';
 
 const secrets = {
   privateKey: '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA7fakekeymaterial000000\n-----END RSA PRIVATE KEY-----',
@@ -16,7 +16,7 @@ const secrets = {
   unixPath: '/home/me/project/file.ts',
 };
 
-const fixture: ShapedMessage[] = [
+const fixtureMessages: ShapedMessage[] = [
   { role: 'user', parts: [{ type: 'text', text: `deploy now ${secrets.aws} and ${secrets.anthropic}` }] },
   {
     role: 'assistant',
@@ -33,6 +33,10 @@ const fixture: ShapedMessage[] = [
     ],
   },
 ];
+
+// Round 3: prepareContent takes the full shaped session (so it can redact the
+// session-level title/model/provider, which the per-part pass never walks).
+const fixture: ShapedSession = { sessionId: 's1', title: 'test session', messages: fixtureMessages };
 
 describe('prepareContent', () => {
   it('strict: redacts every category and counts each', () => {
@@ -58,8 +62,9 @@ describe('prepareContent', () => {
     const { messages } = prepareContent(fixture, 'strict');
     const out = messages[1]!.parts[1]!.input as { command: string };
     expect(out.command).toContain('postgres://[REDACTED:connection-string]@db.internal:5432/app');
+    // Round 3: the value's own quotes are consumed with the value, so no stray
+    // quote survives the redaction.
     expect(out.command).toContain('api_key = [REDACTED:generic-secret]');
-    // M10: the quoted generic-secret value must not leave a stray closing quote.
     expect(out.command).not.toContain('[REDACTED:generic-secret]"');
   });
 
@@ -77,18 +82,22 @@ describe('prepareContent', () => {
 
   it('none: changes nothing and reports empty summary', () => {
     const { messages, summary, messageCount } = prepareContent(fixture, 'none');
-    expect(messages).toEqual(fixture);
+    expect(messages).toEqual(fixtureMessages);
     expect(summary).toEqual({});
     expect(messageCount).toBe(2);
   });
 
   it('ordering: a private-key block is not half-matched by generic-secret', () => {
-    const tricky: ShapedMessage[] = [
-      {
-        role: 'user',
-        parts: [{ type: 'text', text: `-----BEGIN OPENSSH PRIVATE KEY-----\napi_key: abcdefghijklmnop1234\n-----END OPENSSH PRIVATE KEY-----` }],
-      },
-    ];
+    const tricky: ShapedSession = {
+      sessionId: 's',
+      title: 't',
+      messages: [
+        {
+          role: 'user',
+          parts: [{ type: 'text', text: `-----BEGIN OPENSSH PRIVATE KEY-----\napi_key: abcdefghijklmnop1234\n-----END OPENSSH PRIVATE KEY-----` }],
+        },
+      ],
+    };
     const { summary } = prepareContent(tricky, 'strict');
     expect(summary['private-key']).toBe(1);
     expect(summary['generic-secret']).toBeUndefined();
@@ -102,15 +111,19 @@ describe('prepareContent', () => {
 
   it('strips NUL and C0 control chars (except \\n \\r \\t) from every string, all presets', () => {
     // Postgres rejects NUL in text/jsonb; real ZCode tool output can carry them.
-    const withNul: ShapedMessage[] = [
-      { role: 'user', parts: [{ type: 'text', text: 'a\u0000b\u0007c' }] },
-      {
-        role: 'assistant',
-        parts: [
-          { type: 'tool', callID: 'c1', tool: 'Bash', status: 'completed', input: { cmd: 'x\u0000y' }, output: 'out\u0000\u001Bine' },
-        ],
-      },
-    ];
+    const withNul: ShapedSession = {
+      sessionId: 's',
+      title: 't',
+      messages: [
+        { role: 'user', parts: [{ type: 'text', text: 'a\u0000b\u0007c' }] },
+        {
+          role: 'assistant',
+          parts: [
+            { type: 'tool', callID: 'c1', tool: 'Bash', status: 'completed', input: { cmd: 'x\u0000y' }, output: 'out\u0000\u001Bine' },
+          ],
+        },
+      ],
+    };
     for (const preset of ['strict', 'normal', 'none'] as const) {
       const { messages } = prepareContent(withNul, preset);
       const all = JSON.stringify(messages);
@@ -125,7 +138,7 @@ describe('prepareContent', () => {
       expect(tool.output).toBe('outine');
     }
     // \n \r \t are deliberately preserved (they are legitimate).
-    const withNewlines: ShapedMessage[] = [{ role: 'user', parts: [{ type: 'text', text: 'l1\nl2\rl3\tl4' }] }];
+    const withNewlines: ShapedSession = { sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text: 'l1\nl2\rl3\tl4' }] }] };
     expect(prepareContent(withNewlines, 'none').messages[0]!.parts[0]!.text).toBe('l1\nl2\rl3\tl4');
   });
 
@@ -135,15 +148,19 @@ describe('prepareContent', () => {
     // keyword/prefix rule fires. The data URI must survive verbatim.
     const payload = 'QUJD+REVG/R0hJ+SktM/TU5O+PUFQ/SR8';
     const dataUri = `data:image/png;base64,${payload}`;
-    const withImage: ShapedMessage[] = [
-      {
-        role: 'assistant',
-        parts: [
-          { type: 'image', src: dataUri, mime: 'image/png', alt: 'shot', bytes: 150 },
-          { type: 'image', mime: 'image/png', alt: 'big', bytes: 9_999_999, tooLarge: true },
-        ],
-      },
-    ];
+    const withImage: ShapedSession = {
+      sessionId: 's',
+      title: 't',
+      messages: [
+        {
+          role: 'assistant',
+          parts: [
+            { type: 'image', src: dataUri, mime: 'image/png', alt: 'shot', bytes: 150 },
+            { type: 'image', mime: 'image/png', alt: 'big', bytes: 9_999_999, tooLarge: true },
+          ],
+        },
+      ],
+    };
     for (const preset of ['strict', 'normal', 'none'] as const) {
       const { messages, summary } = prepareContent(withImage, preset);
       const img = messages[0]!.parts[0]!;
@@ -164,19 +181,23 @@ describe('prepareContent', () => {
   it('redacts image alt/mime metadata (standalone and attached) — src untouched (Chain A)', () => {
     const dataUri = 'data:image/png;base64,QUJD';
     const alt = `screenshot of ${secrets.openai} and ${secrets.conn}`;
-    const withMeta: ShapedMessage[] = [
-      {
-        role: 'assistant',
-        parts: [
-          { type: 'image', src: dataUri, mime: 'image/png', alt, bytes: 3 },
-          {
-            type: 'tool', callID: 'c1', tool: 'Read', status: 'completed',
-            input: { file_path: '/tmp/x.png' }, output: 'ok',
-            images: [{ src: dataUri, mime: 'image/png', alt: `log ${secrets.aws}`, bytes: 3 }],
-          },
-        ],
-      },
-    ];
+    const withMeta: ShapedSession = {
+      sessionId: 's',
+      title: 't',
+      messages: [
+        {
+          role: 'assistant',
+          parts: [
+            { type: 'image', src: dataUri, mime: 'image/png', alt, bytes: 3 },
+            {
+              type: 'tool', callID: 'c1', tool: 'Read', status: 'completed',
+              input: { file_path: '/tmp/x.png' }, output: 'ok',
+              images: [{ src: dataUri, mime: 'image/png', alt: `log ${secrets.aws}`, bytes: 3 }],
+            },
+          ],
+        },
+      ],
+    };
     for (const preset of ['strict', 'normal'] as const) {
       const { messages } = prepareContent(withMeta, preset);
       const img = messages[0]!.parts[0]!;
@@ -194,34 +215,37 @@ describe('prepareContent', () => {
 });
 
 describe('Chain F widened rules', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+
   it('redacts an 8-char generic secret (floor lowered to 8)', () => {
-    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'password=abcd1234' }] }], 'strict');
+    const out = one('password=abcd1234');
     expect(JSON.stringify(out.messages)).not.toContain('abcd1234');
     expect(out.summary['generic-secret']).toBe(1);
   });
   it('redacts a query-string DSN credential (?password=)', () => {
-    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'postgres://db.example.com/app?password=hunter22' }] }], 'strict');
+    const out = one('postgres://db.example.com/app?password=hunter22');
     expect(JSON.stringify(out.messages)).not.toContain('hunter22');
   });
   it('redacts a non-eyJ JWT', () => {
-    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'token abcdefgh1234.ijklmnop5678.rstuvwx9012' }] }], 'strict');
+    const out = one('token abcdefgh1234.ijklmnop5678.rstuvwx9012');
     expect(JSON.stringify(out.messages)).not.toContain('abcdefgh1234.ijklmnop5678');
   });
   it('redacts a bare high-entropy token (no bearer keyword)', () => {
     // Round 2: the bare-token rule is pure-hex; a hex-encoded secret is caught.
-    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'use c8f5e0a1b2c3d4e5f60718293a4b5c6d here' }] }], 'strict');
+    const out = one('use c8f5e0a1b2c3d4e5f60718293a4b5c6d here');
     expect(JSON.stringify(out.messages)).not.toContain('c8f5e0a1b2c3d4e5f60718293a4b5c6d');
     expect(out.summary['bare-token']).toBe(1);
   });
   it('does NOT redact ordinary 24-char prose identifiers (false-positive guard)', () => {
-    const out = prepareContent([{ role: 'user', parts: [{ type: 'text', text: 'the quick brown fox jumps over the lazy dog near' }] }], 'strict');
+    const out = one('the quick brown fox jumps over the lazy dog near');
     expect(JSON.stringify(out.messages)).toContain('the quick brown fox');
   });
 });
 
 describe('Round 2 widened rules', () => {
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
-    prepareContent([{ role: 'user', parts: [{ type: 'text', text }] }], preset);
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
 
   it('redacts an AWS secret access key (40-char base64)', () => {
     const secret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
@@ -297,38 +321,130 @@ describe('Round 2 widened rules', () => {
   });
   it('redacts a secret embedded in callID / tool / status', () => {
     const out = prepareContent(
-      [{ role: 'assistant', parts: [{ type: 'tool', callID: 'call_1', tool: 'Bash', status: 'ok', input: { c: 'x' }, output: 'y' }] }],
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'tool', callID: 'call_1', tool: 'Bash', status: 'ok', input: { c: 'x' }, output: 'y' }] }] },
       'strict',
     );
     // tool name that is itself a secret token
     const out2 = prepareContent(
-      [{ role: 'assistant', parts: [{ type: 'tool', tool: 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', status: 'ok', input: {}, output: 'y' }] }],
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'tool', tool: 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', status: 'ok', input: {}, output: 'y' }] }] },
       'strict',
     );
     expect(JSON.stringify(out2.messages)).not.toContain('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
   });
   it('redacts a secret hidden in an image src data-URI (plaintext), clean base64 passes', () => {
     // A plaintext data-URI whose payload literally contains an OpenAI key. The
-    // targeted src scan (prefix keys + private-key + connection-string) catches
-    // it. (A base64-encoded secret is undetectable by pattern matching — base64
-    // encodes `sk-` into `c2st…` — so the scan is only meaningful for the
-    // plaintext form.)
+    // src scan catches it. (A base64-encoded secret is undetectable by pattern
+    // matching — base64 encodes `sk-` into `c2st…` — so the scan is only
+    // meaningful for the plaintext form.)
     const secret = 'sk-abcdefghijklmnopqrstuvwxyz0123456789';
     const evil = `data:text/plain;charset=utf-8,use ${secret} now`;
     const out = prepareContent(
-      [{ role: 'assistant', parts: [{ type: 'image', src: evil, mime: 'text/plain', alt: 'shot', bytes: 3 }] }],
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: evil, mime: 'text/plain', alt: 'shot', bytes: 3 }] }] },
       'strict',
     );
     const src = out.messages[0]!.parts[0]!.src!;
     expect(src).not.toContain(secret);
     expect(src).toContain('REDACTED');
-    // a clean base64 payload (no targeted rule trips) passes through untouched —
+    // a clean base64 payload (no rule trips) passes through untouched —
     // the over-redaction guard: a real image's base64 must survive.
     const clean = 'data:image/png;base64,QUJD+REVG/R0hJ+SktM/TU5O+PUFQ/SR8';
     const out2 = prepareContent(
-      [{ role: 'assistant', parts: [{ type: 'image', src: clean, mime: 'image/png', alt: 'shot', bytes: 4 }] }],
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: clean, mime: 'image/png', alt: 'shot', bytes: 4 }] }] },
       'strict',
     );
     expect(out2.messages[0]!.parts[0]!.src).toBe(clean);
+  });
+});
+
+describe('Round 3 fixes', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+
+  it('redacts a JSON-quoted generic secret ({"api_key":"…"})', () => {
+    // H1: the dominant real-world secret format is JSON tool input/output, where
+    // the key's closing quote sat between the name and the ':' so the old
+    // separator never matched. Now the optional key-quote is consumed.
+    const out = one(`{"api_key":"supersecretvalue1234567890"}`);
+    expect(JSON.stringify(out.messages)).not.toContain('supersecretvalue1234567890');
+    expect(out.summary['generic-secret']).toBe(1);
+  });
+  it('redacts a JSON-quoted password ({"password":"…"})', () => {
+    const out = one(`{"password":"P@ssw0rd123456"}`);
+    expect(JSON.stringify(out.messages)).not.toContain('P@ssw0rd123456');
+    expect(out.summary['generic-secret']).toBe(1);
+  });
+  it('redacts a TRUNCATED private key (BEGIN present, END cut off)', () => {
+    // H3: the CLI caps tool output at 20 KB, so a long key's END line is
+    // routinely cut. The base64 body IS the secret and must be redacted.
+    const truncated = '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA7fakekeymaterial0000000000000000000000000000';
+    const out = one(`key: ${truncated}`);
+    expect(JSON.stringify(out.messages)).not.toContain('MIIEpAIBAAKCAQEA7fakekeymaterial0000000000000000000000000000');
+    expect(out.summary['private-key']).toBe(1);
+  });
+  it('does NOT claim a PUBLIC key via the private-key rule (only private keys)', () => {
+    // The optional-END branch must not over-match a public key header. The rule
+    // only matches *PRIVATE KEY headers, so a PUBLIC KEY block is never claimed
+    // by private-key. (Its base64 body may still trip the bare-token fallback —
+    // that is a separate, correct rule — so we assert on the private-key count.)
+    const pub = '-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7fake\n-----END PUBLIC KEY-----';
+    const out = one(`pub: ${pub}`);
+    expect(out.summary['private-key']).toBeUndefined();
+  });
+  it('redacts a base64-ENCODED secret in an image src (decoded before scan)', () => {
+    // C2: scanning the base64 TEXT is a no-op (base64 encodes `sk-` into
+    // `c2st…`). Decoding the payload first lets the rules see the secret in the
+    // clear. A secret embedded as a "screenshot" is ASCII text, which decodes to
+    // valid UTF-8, so it is scanned.
+    const secret = 'sk-abcdefghijklmnopqrstuvwxyz0123456789';
+    const b64 = Buffer.from(secret, 'utf8').toString('base64');
+    const evil = `data:image/png;base64,${b64}`;
+    const out = prepareContent(
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: evil, mime: 'image/png', alt: 'shot', bytes: 4 }] }] },
+      'strict',
+    );
+    const src = out.messages[0]!.parts[0]!.src!;
+    expect(src).not.toContain(b64);
+    expect(src).toContain('REDACTED');
+    expect(out.summary['openai-key']).toBe(1);
+  });
+  it('does NOT redact a real binary image (decodes to invalid UTF-8, skipped)', () => {
+    // Over-redaction guard: a real PNG decodes to dense binary that is NOT valid
+    // UTF-8, so it is skipped (the rules are plaintext regexes and would
+    // false-positive on random bytes). The data URI must survive verbatim.
+    const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    const dataUri = `data:image/png;base64,${pngBytes.toString('base64')}`;
+    const out = prepareContent(
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: dataUri, mime: 'image/png', alt: 'shot', bytes: 70 }] }] },
+      'strict',
+    );
+    expect(out.messages[0]!.parts[0]!.src).toBe(dataUri);
+    expect(out.summary).toEqual({});
+  });
+  it('redacts a secret in the session title (session-level field)', () => {
+    // C3: title/model/provider are served to every viewer via the public meta
+    // and are NOT walked by the per-part pass, so they are redacted explicitly.
+    const out = prepareContent(
+      { sessionId: 's', title: `Debugging AWS key ${secrets.aws} now`, messages: [{ role: 'user', parts: [{ type: 'text', text: 'hi' }] }] },
+      'strict',
+    );
+    expect(out.title).not.toContain(secrets.aws);
+    expect(out.title).toContain('[REDACTED:aws-access-key]');
+  });
+  it('redacts a secret in the model / provider fields', () => {
+    const out = prepareContent(
+      { sessionId: 's', title: 't', model: `custom-${secrets.openai}`, provider: 'openai', messages: [{ role: 'user', parts: [{ type: 'text', text: 'hi' }] }] },
+      'strict',
+    );
+    expect(out.model).not.toContain(secrets.openai);
+    expect(out.provider).toBe('openai'); // clean field passes through
+  });
+  it('keeps a clean session title/model/provider untouched', () => {
+    const out = prepareContent(
+      { sessionId: 's', title: 'Fix the login bug', model: 'claude-sonnet-4', provider: 'anthropic', messages: [{ role: 'user', parts: [{ type: 'text', text: 'hi' }] }] },
+      'strict',
+    );
+    expect(out.title).toBe('Fix the login bug');
+    expect(out.model).toBe('claude-sonnet-4');
+    expect(out.provider).toBe('anthropic');
   });
 });

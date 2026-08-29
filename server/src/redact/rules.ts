@@ -15,7 +15,12 @@ export const rules: RedactRule[] = [
     category: 'private-key',
     // Round 2: case-insensitive header (lowercase PEM) + optional trailing
     // "BLOCK" (PGP: "-----BEGIN PGP PRIVATE KEY BLOCK-----").
-    pattern: /-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY( BLOCK)?-----/gi,
+    // Round 3: the END line is OPTIONAL — a TRUNCATED key (the CLI caps tool
+    // output at 20 KB, so a long key's END line is routinely cut) still leaks
+    // the base64 body, which IS the secret. The optional-END branch claims the
+    // whole remainder of the part; the full-block branch (with END) runs first
+    // and wins when the key is complete.
+    pattern: /-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY( BLOCK)?-----|-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----[\s\S]*$/gi,
     presets: ['strict', 'normal'],
   },
   {
@@ -79,9 +84,15 @@ export const rules: RedactRule[] = [
     // Round 2: the value charset widened to any non-quote/non-whitespace run
     // (secret values routinely contain @ . ! # % , ; : etc.), still bounded by
     // the closing quote backreference so a quoted value stops at its quote.
-    pattern: /\b(api[_-]?key|secret|token|passwd|password|auth|credential|access|jwt|session|cookie|dsn|conn|private)(\s*[:=]\s*)(['"]?)([^'"\s]{8,})\3/gi,
+    // Round 3: an optional closing quote after the key name — JSON tool
+    // input/output is the dominant real-world secret format ({"api_key":"…"}),
+    // and the key's closing quote sat between the name and the ':' so the
+    // separator never matched. The quote is consumed (not backreferenced) so it
+    // is removed from the output; a value that is itself quoted still stops at
+    // its own quote via the backreference.
+    pattern: /\b(api[_-]?key|secret|token|passwd|password|auth|credential|access|jwt|session|cookie|dsn|conn|private)("|'?)(\s*[:=]\s*)(['"]?)([^'"\s]{8,})\4/gi,
     presets: ['strict', 'normal'],
-    replace: (_m, key, sep, _q, _v) => `${key}${sep}[REDACTED:generic-secret]`,
+    replace: (_m, key, _kq, sep, _q, _v) => `${key}${sep}[REDACTED:generic-secret]`,
   },
   {
     category: 'bare-token',

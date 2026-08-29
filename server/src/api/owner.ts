@@ -39,7 +39,13 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     if (!parsed.success) {
       return c.json({ error: { code: 'validation', message: parsed.error.issues[0]?.message ?? 'invalid body' } }, 400);
     }
-    const prepared = prepareContent(parsed.data.session.messages, parsed.data.preset);
+    // Round 3: 'none' is rejected at the API boundary — a direct API call could
+    // otherwise store and serve a fully unredacted share (the CLI's --confirm-raw
+    // gate is client-side only). The CLI never sends 'none' (it throws first).
+    if (parsed.data.preset === 'none') {
+      return c.json({ error: { code: 'validation', message: 'preset "none" (no redaction) is not accepted by the API' } }, 400);
+    }
+    const prepared = prepareContent(parsed.data.session, parsed.data.preset);
     return c.json({ messages: prepared.messages, summary: prepared.summary, bytes: prepared.bytes, messageCount: prepared.messageCount });
   });
 
@@ -49,8 +55,13 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     if (!parsed.success) {
       return c.json({ error: { code: 'validation', message: parsed.error.issues[0]?.message ?? 'invalid body' } }, 400);
     }
+    // Round 3: 'none' is rejected at the API boundary (see preview) — a direct
+    // API call could otherwise store and serve a fully unredacted share.
+    if (parsed.data.preset === 'none') {
+      return c.json({ error: { code: 'validation', message: 'preset "none" (no redaction) is not accepted by the API' } }, 400);
+    }
     const { session, preset, password, expiresAt, expectedChunks } = parsed.data;
-    const prepared = prepareContent(session.messages, preset);
+    const prepared = prepareContent(session, preset);
     // Chain B: enforce the cumulative per-share cap at create.
     if (wouldExceedCap(0, prepared.bytes)) {
       return c.json({ error: { code: 'too_large', message: 'Share exceeds the 1 GB per-share cap' } }, 413);
@@ -67,9 +78,11 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
           token,
           uploadId,
           sessionId: session.sessionId,
-          title: session.title,
-          model: session.model ?? null,
-          provider: session.provider ?? null,
+          // Round 3: store the REDACTED title/model/provider (prepareContent
+          // redacts them — a title like "Debugging AWS key AKIA…" is a leak).
+          title: prepared.title,
+          model: prepared.model ?? null,
+          provider: prepared.provider ?? null,
           expiresAt: expiresAt ? new Date(expiresAt) : null,
           passwordHash: password ? await hashPassword(password) : null,
           preset,
@@ -110,7 +123,9 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     if (share.uploadId !== uploadId) {
       return c.json({ error: { code: 'upload_id_mismatch', message: 'uploadId does not match this share' } }, 400);
     }
-    const prepared = prepareContent(messages, share.preset as 'strict' | 'normal' | 'none');
+    // Chunks carry only messages (the session meta was set at create), so wrap
+    // them in a minimal session for the shared prepareContent signature.
+    const prepared = prepareContent({ sessionId: '', title: '', messages }, share.preset as 'strict' | 'normal' | 'none');
     // Chain B: enforce the cumulative per-share cap on every chunk.
     if (wouldExceedCap(share.bytes, prepared.bytes)) {
       return c.json({ error: { code: 'too_large', message: 'Share would exceed the 1 GB per-share cap' } }, 413);

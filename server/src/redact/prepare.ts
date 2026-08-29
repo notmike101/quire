@@ -35,6 +35,17 @@ export interface ShapedMessage {
   parts: ShapedPart[];
 }
 
+// Session-level free text (title/model/provider) is served to every viewer via
+// the public meta and is NOT walked by the per-part redaction pass, so it is
+// redacted explicitly in prepareContent (Round 3).
+export interface ShapedSession {
+  sessionId: string;
+  title: string;
+  model?: string;
+  provider?: string;
+  messages: ShapedMessage[];
+}
+
 export interface PreparedContent {
   messages: ShapedMessage[];
   summary: Record<string, number>;
@@ -49,39 +60,56 @@ export interface PreparedContent {
 // preset (including 'none').
 const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
 
-// Round 2: the image `src` data-URI is base64, and a secret CAN be hidden in
-// the payload (e.g. a "screenshot" whose base64 encodes a credential). But
-// base64 is dense data, so the FULL rule set over-redacts it: the generic
-// keyword rules false-positive on base64's `key`/`token`/`secret` substrings,
-// and bare-token's g-z branch matches any 24+ char base64 run (i.e. almost every
-// real image). So we scan the payload with ONLY the base64-safe rules — the
-// prefix keys (sk-/AKIA/AIza/ghp), a PEM/PGP private-key block, and a
-// connection string. Those are specific enough that base64 essentially never
-// contains them; a hit means a real embedded secret and the whole payload is
-// replaced (we cannot partially redact base64 without corrupting the image).
-// Non-data-URI srcs (same-origin /assets/ paths) pass through untouched.
-const SRC_SCAN_CATEGORIES = new Set(['private-key', 'aws-access-key', 'aws-secret-key', 'google-api-key', 'openai-key', 'anthropic-key', 'connection-string']);
-const srcScanRules = rules.filter((r) => SRC_SCAN_CATEGORIES.has(r.category));
-function redactSrc(src: string, preset: Preset, add: (counts: Record<string, number>) => void): string {
-  // The payload is everything after the FIRST comma (the data: URI header ends
-  // at the first comma). Base64 payloads are [A-Za-z0-9+/=]; plaintext payloads
-  // (data:text/plain) can contain any char, so capture the rest verbatim.
-  const m = /^data:[^,]*,(.+)$/.exec(src);
-  if (!m || !m[1]) return src;
-  let payload = m[1];
-  const counts: Record<string, number> = {};
-  for (const rule of srcScanRules) {
-    if (!rule.presets.includes(preset)) continue;
-    let n = 0;
-    payload = payload.replace(rule.pattern, () => {
-      n += 1;
-      return rule.replace ? rule.replace('') : `[REDACTED:${rule.category}]`;
-    });
-    if (n > 0) counts[rule.category] = n;
+// Round 2: the image `src` data-URI can hide a secret in its payload (a
+// "screenshot" whose bytes encode a credential). Round 3: we DECODE the base64
+// payload and scan the DECODED bytes — scanning the base64 text is a no-op for
+// base64 payloads (base64 encodes `sk-` into `c2st`, so no plaintext rule can
+// match), which left every base64-embedded secret stored raw. Decoding means
+// the rules see the secret in the clear.
+//
+// Over-redaction guard: a real image decodes to dense binary that is NOT
+// valid UTF-8, so we only scan payloads that decode to valid UTF-8 (a secret
+// embedded in an image is ASCII/UTF-8 text, which decodes cleanly). Binary
+// image payloads are skipped — the rules are plaintext regexes and would
+// false-positive on random bytes. A plaintext data-URI (data:text/plain) or a
+// base64 payload that decodes to text is scanned with the FULL rule set.
+// A hit replaces the whole payload (we cannot partially redact a data-URI
+// without corrupting it). Non-data-URI srcs (same-origin /assets/ paths) pass
+// through untouched.
+function isValidUtf8(buf: Buffer): boolean {
+  try {
+    const s = buf.toString('utf8');
+    // A round-trip through utf8 is lossless iff the bytes were valid utf8.
+    return Buffer.byteLength(s, 'utf8') === buf.length;
+  } catch {
+    return false;
   }
-  if (Object.values(counts).some((v) => v > 0)) {
-    add(counts);
-    return src.slice(0, src.indexOf(',') + 1) + 'REDACTED';
+}
+function redactSrc(src: string, preset: Preset, add: (counts: Record<string, number>) => void): string {
+  const m = /^data:([^,]*),(.+)$/.exec(src);
+  if (!m || !m[1] || !m[2]) return src;
+  const header = m[1];
+  const payload = m[2];
+  let text: string | null = null;
+  if (/;base64/i.test(header)) {
+    // base64 payload: decode and scan the decoded bytes (only if they are
+    // valid UTF-8 — a real image is binary and is skipped).
+    let buf: Buffer;
+    try {
+      buf = Buffer.from(payload, 'base64');
+    } catch {
+      return src;
+    }
+    if (buf.length > 0 && isValidUtf8(buf)) text = buf.toString('utf8');
+  } else {
+    // plaintext payload (data:text/plain, etc.): scan verbatim.
+    text = payload;
+  }
+  if (text === null) return src;
+  const r = redactText(text, preset);
+  if (Object.values(r.counts).some((v) => v > 0)) {
+    add(r.counts);
+    return `data:${header},REDACTED`;
   }
   return src;
 }
@@ -119,17 +147,43 @@ function redactPart(part: ShapedPart, preset: Preset, add: (counts: Record<strin
   return out;
 }
 
-/** The single authoritative redaction pass. Only the result of this function is persisted. */
-export function prepareContent(messages: ShapedMessage[], preset: Preset): PreparedContent {
+/** Redact a session-level free-text field (title/model/provider) into `out`. */
+function redactMetaField(
+  field: string | undefined,
+  preset: Preset,
+  add: (counts: Record<string, number>) => void,
+  out: Record<string, unknown>,
+  key: string,
+): void {
+  if (field === undefined) return;
+  const r = redactText(field, preset);
+  if (Object.values(r.counts).some((v) => v > 0)) add(r.counts);
+  out[key] = r.text.replace(CONTROL_CHARS_RE, '');
+}
+
+/**
+ * The single authoritative redaction pass. Only the result of this function is
+ * persisted. Accepts the full shaped session so that session-level free text
+ * (title/model/provider) — which the per-part pass never walks — is redacted
+ * too (Round 3). Returns the redacted messages plus the redacted meta fields.
+ */
+export function prepareContent(session: ShapedSession, preset: Preset): PreparedContent & { title: string; model?: string; provider?: string } {
   const summary: Record<string, number> = {};
   const add = (counts: Record<string, number>): void => {
     for (const [k, v] of Object.entries(counts)) summary[k] = (summary[k] ?? 0) + v;
   };
-  const redacted = messages.map((m) => ({ ...m, parts: m.parts.map((p) => redactPart(p, preset, add)) }));
+  const redacted = session.messages.map((m) => ({ ...m, parts: m.parts.map((p) => redactPart(p, preset, add)) }));
+  const meta: Record<string, unknown> = { title: session.title };
+  redactMetaField(session.title, preset, add, meta, 'title');
+  redactMetaField(session.model, preset, add, meta, 'model');
+  redactMetaField(session.provider, preset, add, meta, 'provider');
   return {
     messages: redacted,
     summary,
     bytes: Buffer.byteLength(JSON.stringify(redacted)),
     messageCount: redacted.length,
+    title: meta.title as string,
+    ...(meta.model !== undefined ? { model: meta.model as string } : {}),
+    ...(meta.provider !== undefined ? { provider: meta.provider as string } : {}),
   };
 }

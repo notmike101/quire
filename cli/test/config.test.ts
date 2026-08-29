@@ -59,6 +59,25 @@ describe('loadCliConfig', () => {
     vi.stubEnv('QUIRE_SERVER_URL', 'ftp://example.com');
     vi.stubEnv('QUIRE_API_KEY', 'k'.repeat(64));
     const { loadCliConfig } = await import('../src/config.js');
-    expect(() => loadCliConfig()).toThrow(/must start with http/);
+    expect(() => loadCliConfig()).toThrow(/must be https/);
+  });
+
+  it('rejects a remote http:// URL (cleartext exfil of session + API key)', async () => {
+    // Round 3: the CLI sends the full unredacted session AND the Bearer key to
+    // this URL, so plain http:// to a remote host is refused (a poisoned
+    // QUIRE_SERVER_URL would otherwise exfiltrate both in cleartext).
+    vi.stubEnv('QUIRE_SERVER_URL', 'http://attacker.example.com');
+    vi.stubEnv('QUIRE_API_KEY', 'k'.repeat(64));
+    const { loadCliConfig } = await import('../src/config.js');
+    expect(() => loadCliConfig()).toThrow(/must be https/);
+  });
+
+  it('allows http:// on localhost (local-inspect workflow)', async () => {
+    // The standalone built server runs on 127.0.0.1 for local inspection; that
+    // cleartext path is intentional and allowed.
+    vi.stubEnv('QUIRE_SERVER_URL', 'http://127.0.0.1:8791');
+    vi.stubEnv('QUIRE_API_KEY', 'k'.repeat(64));
+    const { loadCliConfig } = await import('../src/config.js');
+    expect(loadCliConfig().serverUrl).toBe('http://127.0.0.1:8791');
   });
 });
