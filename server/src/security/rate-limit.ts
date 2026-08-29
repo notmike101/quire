@@ -1,17 +1,43 @@
-/** 5 failures -> 15-minute lockout, keyed per (token, IP). In-memory: fine for a single container. */
+import { eq, sql } from 'drizzle-orm';
+import { unlockLockouts } from '../db/schema.js';
+import type { Db } from '../db/client.js';
+
+/**
+ * Pluggable persistence for the unlock lockout. The in-memory map is the
+ * default fast path; a Postgres-backed store (see PostgresLockoutStore) makes
+ * a 15-minute lockout survive a process restart.
+ */
+export interface LockoutStore {
+  isLocked(key: string, now: number): Promise<boolean>;
+  recordFailure(key: string, now: number): Promise<void>;
+  reset(key: string): Promise<void>;
+}
+
+/**
+ * 5 failures -> 15-minute lockout, keyed per (token, IP). When no store is
+ * wired the state is in-memory (fine for a single container); when a store is
+ * provided it is the source of truth so a restart does not clear a lockout.
+ */
 export class RateLimiter {
   private hits = new Map<string, { count: number; lockedUntil: number }>();
   constructor(
     private readonly maxFails = 5,
     private readonly lockMs = 15 * 60 * 1000,
+    _unused?: unknown,
+    private readonly store?: LockoutStore,
   ) {}
 
-  isLocked(key: string, now: number = Date.now()): boolean {
+  async isLocked(key: string, now: number = Date.now()): Promise<boolean> {
+    if (this.store) return this.store.isLocked(key, now);
     const e = this.hits.get(key);
     return !!e && e.lockedUntil > now;
   }
 
-  recordFailure(key: string, now: number = Date.now()): void {
+  async recordFailure(key: string, now: number = Date.now()): Promise<void> {
+    if (this.store) {
+      await this.store.recordFailure(key, now);
+      return;
+    }
     this.prune(now);
     const e = this.hits.get(key) ?? { count: 0, lockedUntil: 0 };
     e.count += 1;
@@ -22,7 +48,11 @@ export class RateLimiter {
     this.hits.set(key, e);
   }
 
-  reset(key: string): void {
+  async reset(key: string): Promise<void> {
+    if (this.store) {
+      await this.store.reset(key);
+      return;
+    }
     this.hits.delete(key);
   }
 
@@ -31,6 +61,51 @@ export class RateLimiter {
     // Drop expired lockouts AND idle sub-threshold counters so an adversary
     // cycling distinct (token, IP) keys cannot exhaust memory (M12).
     for (const [k, e] of this.hits) if (e.lockedUntil < now && (e.count === 0 || e.lockedUntil === 0)) this.hits.delete(k);
+  }
+}
+
+/**
+ * Postgres-backed lockout store (Chain C). Reads/writes the unlock_lockouts
+ * table so a restart does not clear a 15-minute lockout. `maxFails` and
+ * `lockMs` mirror the RateLimiter defaults so the threshold/lockout match the
+ * in-memory behavior.
+ */
+export class PostgresLockoutStore implements LockoutStore {
+  constructor(
+    private readonly db: Db,
+    private readonly maxFails = 5,
+    private readonly lockMs = 15 * 60 * 1000,
+  ) {}
+
+  async isLocked(key: string, now: number): Promise<boolean> {
+    const rows = await this.db.select().from(unlockLockouts).where(eq(unlockLockouts.key, key)).limit(1);
+    const r = rows[0];
+    return !!r && r.lockedUntil !== null && r.lockedUntil.getTime() > now;
+  }
+
+  async recordFailure(key: string, now: number): Promise<void> {
+    // Prune expired lockouts opportunistically so the table does not grow
+    // without bound under a (token, IP) cycling attack.
+    // postgres.js serializes raw sql parameters as text; an ISO string is the
+    // canonical form Postgres accepts for a timestamptz comparison.
+    await this.db.execute(sql`delete from unlock_lockouts where locked_until is not null and locked_until < ${new Date(now).toISOString()}`);
+    const rows = await this.db.select().from(unlockLockouts).where(eq(unlockLockouts.key, key)).limit(1);
+    const existing = rows[0];
+    let count = (existing?.count ?? 0) + 1;
+    let lockedUntil: Date | null = null;
+    if (count >= this.maxFails) {
+      lockedUntil = new Date(now + this.lockMs);
+      count = 0;
+    }
+    if (existing) {
+      await this.db.update(unlockLockouts).set({ count, lockedUntil }).where(eq(unlockLockouts.key, key));
+    } else {
+      await this.db.insert(unlockLockouts).values({ key, count, lockedUntil });
+    }
+  }
+
+  async reset(key: string): Promise<void> {
+    await this.db.delete(unlockLockouts).where(eq(unlockLockouts.key, key));
   }
 }
 

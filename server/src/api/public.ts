@@ -16,20 +16,32 @@ export interface PublicDeps {
   ipWindow: IpWindow;
 }
 
+// Chain C: a well-formed IP is a 4-octet IPv4 (each <= 255) or a colon-grouped
+// IPv6. Anything else (a hostname, "not-an-ip", a port, garbage) is rejected so
+// a broken proxy assumption cannot let a client choose its own rate-limit key.
+const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+function isWellFormedIp(s: string): boolean {
+  if (IPV4_RE.test(s)) return s.split('.').every((o) => Number(o) <= 255);
+  if (s.includes(':')) return /^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}$/.test(s);
+  return false;
+}
+
 // Behind the documented reverse proxy the leftmost XFF hop is the real client
 // IP. The server is loopback-bound and fronted by a proxy that sets XFF, so a
-// direct client cannot inject a spoofed value — the proxy overwrites it. If the
-// server is ever exposed directly, set `trustProxy` to false to ignore XFF and
-// rate-limit on the socket address instead (which would then be the proxy).
-function clientIp(c: Context, trustProxy = true): string {
+// direct client cannot inject a spoofed value — the proxy overwrites it. We
+// still VALIDATE the hop is a well-formed IP and fall back to x-real-ip, then
+// the socket address, so a malformed/absent header cannot pick the key. If the
+// server is ever exposed directly, set TRUST_PROXY=false to ignore XFF entirely
+// and rate-limit on the socket address (which would then be the proxy).
+export function clientIp(c: Context, trustProxy = true): string {
   if (trustProxy) {
     const xff = c.req.header('x-forwarded-for');
     if (xff) {
       const first = xff.split(',')[0]?.trim();
-      if (first) return first;
+      if (first && isWellFormedIp(first)) return first;
     }
     const xri = c.req.header('x-real-ip');
-    if (xri) return xri;
+    if (xri && isWellFormedIp(xri)) return xri;
   }
   // Socket address as seen by the Node server (the proxy when fronted). The
   // Node server attaches the IncomingMessage to c.env; under the Hono test
@@ -95,7 +107,7 @@ export function publicRoutes(deps: PublicDeps): Hono {
   const app = new Hono();
 
   app.get('/api/public/chats/:token', async (c) => {
-    if (!deps.ipWindow.allow(clientIp(c))) {
+    if (!deps.ipWindow.allow(clientIp(c, config.trustProxy))) {
       return c.json({ error: { code: 'rate_limited', message: 'Too many requests' } }, 429);
     }
     const share = await activeShareByToken(c, db);
@@ -162,8 +174,8 @@ export function publicRoutes(deps: PublicDeps): Hono {
     if (!share.passwordHash) {
       return c.json({ error: { code: 'no_password', message: 'This share has no password' } }, 400);
     }
-    const key = `${share.token}:${clientIp(c)}`;
-    if (deps.unlockLimiter.isLocked(key)) {
+    const key = `${share.token}:${clientIp(c, config.trustProxy)}`;
+    if (await deps.unlockLimiter.isLocked(key)) {
       return c.json({ error: { code: 'rate_limited', message: 'Too many failed attempts. Try again in 15 minutes.' } }, 429);
     }
     const body = await c.req.json().catch(() => null);
@@ -173,10 +185,10 @@ export function publicRoutes(deps: PublicDeps): Hono {
     }
     const ok = await verifyPassword(share.passwordHash, parsed.data.password);
     if (!ok) {
-      deps.unlockLimiter.recordFailure(key);
+      await deps.unlockLimiter.recordFailure(key);
       return c.json({ error: { code: 'bad_password', message: 'Incorrect password' } }, 401);
     }
-    deps.unlockLimiter.reset(key);
+    await deps.unlockLimiter.reset(key);
     const value = signUnlockCookie(config.unlockSecret, share.token, Date.now() + UNLOCK_TTL_MS);
     c.header(
       'Set-Cookie',

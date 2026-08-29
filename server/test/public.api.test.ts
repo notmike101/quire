@@ -6,6 +6,7 @@ import { sql } from 'drizzle-orm';
 import { hashPassword } from '../src/security/password.js';
 import { generateUploadId } from '../src/security/token.js';
 import { RateLimiter, IpWindow } from '../src/security/rate-limit.js';
+import { clientIp } from '../src/api/public.js';
 
 const url = process.env.DATABASE_URL ?? 'postgres://quire:quire@localhost:54329/quire_test';
 const config = {
@@ -206,6 +207,33 @@ describe('unlock endpoint', () => {
     });
     expect(res.status).toBe(400);
     expect((await json(res)).error.code).toBe('no_password');
+  });
+});
+
+describe('clientIp (Chain C)', () => {
+  // getConnInfo reads c.env.incoming.socket.remoteAddress; stub that shape so
+  // the socket fallback is exercised without a real socket.
+  function fakeCtx(headers: Record<string, string>, socketAddr = '203.0.113.7') {
+    return {
+      req: { header: (n: string) => headers[n.toLowerCase()] },
+      env: { incoming: { socket: { remoteAddress: socketAddr, remotePort: 1234, remoteFamily: 'IPv4' } } },
+    } as any;
+  }
+  it('uses a well-formed leftmost XFF hop when trustProxy', () => {
+    const c = fakeCtx({ 'x-forwarded-for': '203.0.113.9, 10.0.0.1' }, '127.0.0.1');
+    expect(clientIp(c, true)).toBe('203.0.113.9');
+  });
+  it('falls back to the socket address for a malformed leftmost XFF', () => {
+    const c = fakeCtx({ 'x-forwarded-for': 'not-an-ip, 10.0.0.1' }, '198.51.100.4');
+    expect(clientIp(c, true)).toBe('198.51.100.4');
+  });
+  it('falls back to x-real-ip when XFF is absent but x-real-ip is well-formed', () => {
+    const c = fakeCtx({ 'x-real-ip': '198.51.100.9' }, '127.0.0.1');
+    expect(clientIp(c, true)).toBe('198.51.100.9');
+  });
+  it('ignores XFF and x-real-ip entirely when trustProxy is false', () => {
+    const c = fakeCtx({ 'x-forwarded-for': '203.0.113.9', 'x-real-ip': '203.0.113.8' }, '198.51.100.4');
+    expect(clientIp(c, false)).toBe('198.51.100.4');
   });
 });
 

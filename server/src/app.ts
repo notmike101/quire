@@ -6,7 +6,7 @@ import { ownerRoutes } from './api/owner.js';
 import { securityHeaders, bodyLimit } from './api/headers.js';
 import { errorHandler } from './api/errors.js';
 import { mountStatic } from './api/static.js';
-import { RateLimiter, IpWindow } from './security/rate-limit.js';
+import { RateLimiter, IpWindow, PostgresLockoutStore } from './security/rate-limit.js';
 
 export interface AppDeps {
   db: Db;
@@ -26,7 +26,9 @@ export function createApp(deps: AppDeps): Hono {
     publicRoutes({
       db: deps.db,
       config: deps.config,
-      unlockLimiter: deps.unlockLimiter ?? new RateLimiter(),
+      // Chain C: back the unlock limiter with Postgres so a restart does not
+      // clear a 15-minute lockout. Tests inject their own (in-memory) limiter.
+      unlockLimiter: deps.unlockLimiter ?? new RateLimiter(5, 15 * 60 * 1000, undefined, new PostgresLockoutStore(deps.db)),
       ipWindow: deps.ipWindow ?? new IpWindow(),
     }),
   );

@@ -15,6 +15,13 @@
       "when": 1787805260493,
       "tag": "0001_chemical_darkstar",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787967879053,
+      "tag": "0002_futuristic_wallow",
+      "breakpoints": true
     }
   ]
 }

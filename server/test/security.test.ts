@@ -1,8 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { sql } from 'drizzle-orm';
+import { makeDb, migrateDb, type Db } from '../src/db/client.js';
 import { generateShareToken, generateUploadId } from '../src/security/token.js';
 import { hashPassword, verifyPassword } from '../src/security/password.js';
 import { signUnlockCookie, verifyUnlockCookie, UNLOCK_TTL_MS, unlockCookieName } from '../src/security/unlock.js';
-import { RateLimiter, IpWindow } from '../src/security/rate-limit.js';
+import { RateLimiter, IpWindow, PostgresLockoutStore } from '../src/security/rate-limit.js';
+
+const url = process.env.DATABASE_URL ?? 'postgres://quire:quire@localhost:54329/quire_test';
 
 describe('generateShareToken', () => {
   it('is 22 base64url chars (128 bits)', () => {
@@ -73,19 +77,19 @@ describe('unlock cookie', () => {
 
 describe('RateLimiter (5 fails -> 15 min lockout)', () => {
   const t0 = 1_000_000;
-  it('locks on the 5th failure and unlocks after 15 minutes', () => {
+  it('locks on the 5th failure and unlocks after 15 minutes', async () => {
     const rl = new RateLimiter();
-    for (let i = 0; i < 4; i++) { rl.recordFailure('k', t0 + i); expect(rl.isLocked('k', t0 + i)).toBe(false); }
-    rl.recordFailure('k', t0 + 4);
-    expect(rl.isLocked('k', t0 + 5)).toBe(true);
-    expect(rl.isLocked('k', t0 + 4 + 15 * 60 * 1000 + 1)).toBe(false);
+    for (let i = 0; i < 4; i++) { await rl.recordFailure('k', t0 + i); expect(await rl.isLocked('k', t0 + i)).toBe(false); }
+    await rl.recordFailure('k', t0 + 4);
+    expect(await rl.isLocked('k', t0 + 5)).toBe(true);
+    expect(await rl.isLocked('k', t0 + 4 + 15 * 60 * 1000 + 1)).toBe(false);
   });
-  it('reset clears the counter', () => {
+  it('reset clears the counter', async () => {
     const rl = new RateLimiter();
-    for (let i = 0; i < 4; i++) rl.recordFailure('k', t0 + i);
-    rl.reset('k');
-    rl.recordFailure('k', t0 + 10);
-    expect(rl.isLocked('k', t0 + 11)).toBe(false);
+    for (let i = 0; i < 4; i++) await rl.recordFailure('k', t0 + i);
+    await rl.reset('k');
+    await rl.recordFailure('k', t0 + 10);
+    expect(await rl.isLocked('k', t0 + 11)).toBe(false);
   });
 });
 
@@ -107,5 +111,27 @@ describe('IpWindow (120 req/min)', () => {
     const w = new IpWindow(2, 60_000);
     w.allow('a', t0); w.allow('a', t0 + 1);
     expect(w.allow('a', t0 + 60_000 + 1)).toBe(true);
+  });
+});
+
+describe('PostgresLockoutStore (Chain C)', () => {
+  let db: Db;
+  beforeAll(async () => {
+    db = makeDb(url);
+    await migrateDb(db);
+  });
+  it('persists unlock lockouts across RateLimiter instances (simulated restart)', async () => {
+    const key = 'persist-test-key';
+    await db.execute(sql`delete from unlock_lockouts where key = ${key}`);
+    const store = new PostgresLockoutStore(db);
+    const a = new RateLimiter(5, 15 * 60 * 1000, undefined, store);
+    for (let i = 0; i < 5; i++) await a.recordFailure(key);
+    expect(await a.isLocked(key)).toBe(true);
+    // A NEW limiter (simulating a process restart) with the same store is still locked.
+    const b = new RateLimiter(5, 15 * 60 * 1000, undefined, store);
+    expect(await b.isLocked(key)).toBe(true);
+    await b.reset(key);
+    expect(await b.isLocked(key)).toBe(false);
+    await db.execute(sql`delete from unlock_lockouts where key = ${key}`);
   });
 });

@@ -30,3 +30,13 @@ export const shareMessages = pgTable(
   },
   (t) => [primaryKey({ columns: [t.shareId, t.chunkSeq, t.seq] })],
 );
+
+// Chain C: persisted unlock lockouts so a process restart does not clear a
+// 15-minute lockout. Keyed by the same (token, IP) key the in-memory limiter
+// uses. `count` is the running failure count since the last lock; `lockedUntil`
+// is null until the threshold is hit.
+export const unlockLockouts = pgTable('unlock_lockouts', {
+  key: text('key').primaryKey(),
+  count: integer('count').notNull().default(0),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
+});
