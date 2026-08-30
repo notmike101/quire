@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedImage, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
-import { truncateOutput } from '../shape.js';
+import { truncateOutput, MAX_SESSION_MESSAGES } from '../shape.js';
 import { extractSystemParts, extractReasoningParts } from '../system.js';
 import { readArtifactDataUri, fileToDataUri, mimeFromExtension, isImageMime, MAX_IMAGE_BYTES } from '../image.js';
 import { fileURLToPath } from 'node:url';
@@ -208,7 +208,11 @@ function partToShaped(raw: RawPart, artifactDir: string, workDir: string | undef
   }
 }
 
-export function makeZcodeAdapter(dbPath: string = zcodeDbPath(), workDirOverride?: string): HarnessAdapter {
+export function makeZcodeAdapter(
+  dbPath: string = zcodeDbPath(),
+  workDirOverride?: string,
+  maxMessages: number = MAX_SESSION_MESSAGES,
+): HarnessAdapter {
   const open = (): DatabaseSync => new DatabaseSync(dbPath, { readOnly: true });
 
   return {
@@ -250,13 +254,15 @@ export function makeZcodeAdapter(dbPath: string = zcodeDbPath(), workDirOverride
         if (!sess) throw new Error(`ZCode session not found: ${id}`);
         const artifactDir = zcodeArtifactsDir(id);
         const workDir = workDirOverride ?? sess.directory ?? undefined;
+        // Round 5: cap the row count BEFORE .all() — a pathological session
+        // must not be able to OOM the CLI by loading millions of rows.
         const rows = db
-          .prepare('select id, data from message where session_id = ? order by sequence')
-          .all(id) as { id: string; data: string }[];
+          .prepare('select id, data from message where session_id = ? order by sequence limit ?')
+          .all(id, maxMessages) as { id: string; data: string }[];
         const messages = rows.map((r) => ({ id: r.id, data: JSON.parse(r.data) as MessageData }));
         const parts = db
-          .prepare('select message_id, data from part where session_id = ? order by sequence')
-          .all(id) as PartRow[];
+          .prepare('select message_id, data from part where session_id = ? order by sequence limit ?')
+          .all(id, maxMessages * 4) as PartRow[];
         const byMessage = new Map<string, ShapedPart[]>();
         for (const p of parts) {
           const shaped = partToShaped(JSON.parse(p.data) as RawPart, artifactDir, workDir);

@@ -81,6 +81,31 @@ describe('zcode adapter', () => {
     expect(current.id).toBe('sess_fixture');
   });
 
+  it('caps a session at the injected maxMessages (Round 5)', async () => {
+    // A pathological session must not be able to OOM the CLI. Build a small
+    // DB with 5 messages and cap at 3 — the adapter must stop at the cap.
+    const { DatabaseSync } = await import('node:sqlite');
+    const capDb = join(tempDir, 'cap.sqlite');
+    const db = new DatabaseSync(capDb);
+    db.exec(`
+      create table session (id text primary key, title text, directory text, time_created integer, time_updated integer, task_type text, share_url text);
+      create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text, sequence integer);
+      create table part (id text primary key, message_id text, session_id text, data text, sequence integer);
+    `);
+    db.prepare('insert into session (id, title, directory, time_created, time_updated, task_type, share_url) values (?,?,?,?,?,?,?)')
+      .run('sess_cap', 'Cap', '/tmp', 0, 0, 'interactive', null);
+    for (let i = 0; i < 5; i++) {
+      db.prepare('insert into message (id, session_id, data, sequence) values (?,?,?,?)')
+        .run(`cm${i}`, 'sess_cap', JSON.stringify({ role: i % 2 === 0 ? 'user' : 'assistant' }), i);
+      db.prepare('insert into part (id, message_id, session_id, data, sequence) values (?,?,?,?,?)')
+        .run(`cp${i}`, `cm${i}`, 'sess_cap', JSON.stringify({ type: 'text', text: 'x' }), i);
+    }
+    db.close();
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const s = await makeZcodeAdapter(capDb, undefined, 3).loadSession('sess_cap');
+    expect(s.messages.length).toBe(3);
+  });
+
   it('loadSession shapes parts, drops noise, truncates tool output', async () => {
     const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
     const s = await makeZcodeAdapter(fixtureDb).loadSession('sess_fixture');

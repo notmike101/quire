@@ -98,6 +98,11 @@ export function readArtifactDataUri(
     return null;
   }
   if (st.isSymbolicLink()) return null;
+  // Round 5: cap the read BEFORE it happens. The old code read the whole file
+  // into a string and only checked the DECODED length downstream, so a multi-GB
+  // artifact file was fully materialized in memory before being rejected.
+  // `st` is the lstat from above (the file is a regular file, not a symlink).
+  if (st.size > MAX_IMAGE_BYTES) return null;
   // And the resolved target must stay inside the artifact dir.
   try {
     const canonical = realpathSync(filePath);

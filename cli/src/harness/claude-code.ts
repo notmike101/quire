@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
-import { truncateOutput } from '../shape.js';
+import { truncateOutput, MAX_SESSION_MESSAGES } from '../shape.js';
 import { extractSystemParts, extractReasoningParts } from '../system.js';
 import { MAX_IMAGE_BYTES } from '../image.js';
 
@@ -79,7 +79,10 @@ function imagePartsFromToolResult(block: CcBlock): ShapedPart[] {
   return out;
 }
 
-export function makeClaudeCodeAdapter(projectsDir: string = claudeProjectsDir()): HarnessAdapter {
+export function makeClaudeCodeAdapter(
+  projectsDir: string = claudeProjectsDir(),
+  maxMessages: number = MAX_SESSION_MESSAGES,
+): HarnessAdapter {
   const sessionFiles = (): string[] => {
     if (!existsSync(projectsDir)) return [];
     const files: string[] = [];
@@ -142,9 +145,14 @@ export function makeClaudeCodeAdapter(projectsDir: string = claudeProjectsDir())
       let title: string | undefined;
       let model: string | undefined;
 
+      // Round 5: cap the number of shaped messages (a single huge/corrupt
+      // .jsonl must not be able to OOM the CLI). Events are still scanned in
+      // full for the title/model; only the message list is bounded.
+      let shapedCount = 0;
       for (const ev of jsonlEvents(file)) {
         if (ev.isSidechain) continue;
         if (ev.type === 'summary' && typeof ev.summary === 'string' && !title) title = ev.summary;
+        const atCap = shapedCount >= maxMessages;
 
         if (ev.type === 'user') {
           const content = ev.message?.content;
@@ -168,13 +176,17 @@ export function makeClaudeCodeAdapter(projectsDir: string = claudeProjectsDir())
             const texts = content
               .filter((b) => b.type === 'text' && typeof b.text === 'string')
               .map((b) => b.text as string);
-            if (texts.length === 0) continue;
-            messages.push({ role: 'user', parts: extractReasoningParts(extractSystemParts(texts.map((t) => ({ type: 'text', text: t })))), time: ev.timestamp });
-            lastAssistant = undefined;
-          } else if (typeof content === 'string' && content.length > 0) {
-            messages.push({ role: 'user', parts: extractReasoningParts(extractSystemParts([{ type: 'text', text: content }])), time: ev.timestamp });
-            lastAssistant = undefined;
-          }
+          if (texts.length === 0) continue;
+          if (atCap) continue;
+          messages.push({ role: 'user', parts: extractReasoningParts(extractSystemParts(texts.map((t) => ({ type: 'text', text: t })))), time: ev.timestamp });
+          shapedCount++;
+          lastAssistant = undefined;
+        } else if (typeof content === 'string' && content.length > 0) {
+          if (atCap) continue;
+          messages.push({ role: 'user', parts: extractReasoningParts(extractSystemParts([{ type: 'text', text: content }])), time: ev.timestamp });
+          shapedCount++;
+          lastAssistant = undefined;
+        }
         } else if (ev.type === 'assistant') {
           const content = ev.message?.content;
           if (!Array.isArray(content)) continue;
@@ -185,8 +197,10 @@ export function makeClaudeCodeAdapter(projectsDir: string = claudeProjectsDir())
             else if (b.type === 'tool_use' && typeof b.id === 'string') parts.push({ type: 'tool', callID: b.id, tool: b.name, input: b.input });
           }
           if (parts.length === 0) continue;
+          if (atCap) continue;
           const msg: ShapedMessage = { role: 'assistant', parts: extractReasoningParts(extractSystemParts(parts)), time: ev.timestamp };
           messages.push(msg);
+          shapedCount++;
           lastAssistant = msg;
           if (typeof ev.message?.model === 'string') model = ev.message.model;
         }

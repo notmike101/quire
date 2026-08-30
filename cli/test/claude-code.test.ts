@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const projectsDir = join(dir, 'fixtures'); // contains sample-session.jsonl directly
@@ -52,5 +54,24 @@ describe('claude-code adapter', () => {
   it('loadSession throws for an unknown id', async () => {
     const { makeClaudeCodeAdapter } = await import('../src/harness/claude-code.js');
     await expect(makeClaudeCodeAdapter(projectsDir).loadSession('nope')).rejects.toThrow(/not found/);
+  });
+
+  it('caps a session at the injected maxMessages (Round 5)', async () => {
+    // A single huge .jsonl must not be able to OOM the CLI. Build a temp
+    // projects dir with 5 user events and cap at 3 — the adapter must stop at
+    // the cap (the scan still runs in full for title/model).
+    const tmp = mkdtempSync(join(tmpdir(), 'quire-cc-cap-'));
+    try {
+      const lines: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        lines.push(JSON.stringify({ type: 'user', timestamp: '2026-08-20T00:00:00Z', message: { role: 'user', content: 'x' } }));
+      }
+      writeFileSync(join(tmp, 'cap-session.jsonl'), lines.join('\n'));
+      const { makeClaudeCodeAdapter } = await import('../src/harness/claude-code.js');
+      const s = await makeClaudeCodeAdapter(tmp, 3).loadSession('cap-session');
+      expect(s.messages.length).toBe(3);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

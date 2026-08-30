@@ -188,4 +188,12 @@ describe('readArtifactDataUri component match (Chain A)', () => {
     writeFileSync(join(dir, 'r-media-1-abc123.png'), `data:image/png;base64,${PNG_1X1}`);
     expect(readArtifactDataUri(dir, 'abc123')).not.toBeNull();
   });
+
+  it('returns null when the artifact exceeds the cap (no full-file read)', () => {
+    // Round 5: a huge artifact must be rejected by its stat size BEFORE
+    // readFileSync — the data URI is base64, so a 2 MB file is a ~2.7 MB string.
+    const bigPath = join(dir, 'big-media-1-bigid.png');
+    writeFileSync(bigPath, Buffer.alloc(MAX_IMAGE_BYTES + 1, 0));
+    expect(readArtifactDataUri(dir, 'bigid')).toBeNull();
+  });
 });
