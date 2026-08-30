@@ -1097,3 +1097,82 @@ describe('Round 9 (D8): base64 data URIs are not secrets', () => {
     expect(out.counts['bare-token']).toBeUndefined();
   });
 });
+
+describe('Round 10 fixes', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'normal') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+
+  it('R10-1: redacts an AWS secret access key in the no-space .env form (KEY=<40char>)', () => {
+    // The aws-secret-key lookbehind (?<![A-Za-z0-9+/=]) rejected a preceding `=`,
+    // so the canonical `AWS_SECRET_ACCESS_KEY=<40char base64>` (no space) leaked
+    // in full — no rule fired. The spaced form was already caught.
+    const awsSecret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'; // 40-char base64
+    const out = redactText(`AWS_SECRET_ACCESS_KEY=${awsSecret}`, 'normal');
+    expect(out.text).not.toContain(awsSecret);
+    expect(out.text).toContain('[REDACTED:aws-secret-key]');
+    expect(out.counts['aws-secret-key']).toBe(1);
+  });
+
+  it('R10-2: redacts a base64-encoded secret in a BARE-prose data URI (not markdown-wrapped)', () => {
+    // A data URI written as bare prose (not ![…](…) / <img src=…>) is shielded
+    // from every rule by the D8 shield in redactText AND never decoded (prepare
+    // only decoded markdown-wrapped URIs), so a base64-encoded secret survived.
+    const secret = 'sk-abcdefghijklmnopqrstuvwxyz0123456789';
+    const b64 = Buffer.from(secret, 'utf8').toString('base64');
+    const out = one(`the image is data:image/png;base64,${b64} end`);
+    const text = out.messages[0]!.parts[0]!.text!;
+    expect(text).not.toContain(b64);
+    expect(text).toContain('REDACTED');
+    expect(out.summary['openai-key']).toBe(1);
+  });
+
+  it('R10-3: redacts key=<base64 value with / or +> in full (not partially)', () => {
+    // The `key` rule's value charset [A-Za-z0-9._-] excluded `/` and `+`, so
+    // `key=<base64>` stopped at the first slash and leaked the tail. 35 chars
+    // (not 40) so aws-secret-key cannot claim it — only the `key` rule applies.
+    const value = 'abcd1234/efgh5678/ijkl9012/mnop3456';
+    const out = redactText(`key=${value}`, 'normal');
+    expect(out.text).toBe('key=[REDACTED:key]');
+    expect(out.text).not.toContain(value);
+  });
+
+  it('R10-3: redacts the reported key=<40-char AWS secret> in full', () => {
+    // The exact reported repro: after the R10-1 fix, aws-secret-key (higher
+    // priority) claims the whole 40-char span, so no partial `key` leak survives.
+    const value = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+    const out = redactText(`key=${value}`, 'normal');
+    expect(out.text).toBe('key=[REDACTED:aws-secret-key]');
+    expect(out.text).not.toContain(value);
+  });
+
+  it('R10-4: redacts a secret split by U+180F (Mongolian Vowel Separator, a missing Mn char)', () => {
+    // The INVISIBLE_CP set missed U+180F (right after the included U+180B–180E)
+    // and most of the Cf/Mn inventory; each splits a secret run on the matching
+    // copy. U+180F is category Mn (nonspacing mark), NOT Cf — the fix catches
+    // both, so a Cf-only escape would have missed the reported char.
+    const out = redactText(`token sk-abcdefghijkl\u180Fmnopqrstuvwx ok`, 'normal');
+    expect(out.text).not.toContain('sk-abcdefghijkl');
+    expect(out.text).toContain('[REDACTED:openai-key]');
+    expect(out.counts['openai-key']).toBe(1);
+  });
+
+  it('R10-4: redacts a secret split by other missing invisible chars (Cf + Mn)', () => {
+    // The property-escape fallback catches EVERY Cf (format) and Mn (nonspacing
+    // mark) char, not just U+180F. (All of these are Cf or Mn and absent from
+    // the explicit set — U+0301 is a combining accent, the rest are format
+    // chars. Visible letters like U+1343/U+1AA3 are deliberately NOT stripped.)
+    for (const sep of ['\u06dd', '\ufff9', '\ufffa', '\u0890', '\u0891', '\u{110bd}', '\u0301']) {
+      const out = redactText(`tok sk-abcdefghijkl${sep}mnopqrstuvwx ok`, 'normal');
+      expect(out.text, `sep ${JSON.stringify(sep)}`).toContain('[REDACTED:openai-key]');
+    }
+  });
+
+  it('R10-4: a regular space (U+0020) still ends a token (the Cf fallback does not over-strip)', () => {
+    // The Cf fallback must NOT treat the regular space as invisible — a real
+    // space legitimately ends a token, so a 12-char prefix + space + 10-char
+    // suffix is two runs, not one secret.
+    const out = redactText(`token sk-abcdefghijkl mnopqrstuvwx ok`, 'normal');
+    expect(out.text).toBe(`token sk-abcdefghijkl mnopqrstuvwx ok`);
+    expect(out.counts).toEqual({});
+  });
+});

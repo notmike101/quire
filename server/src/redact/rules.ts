@@ -52,7 +52,15 @@ export const rules: RedactRule[] = [
     // Round 2: the 40-char base64 secret access key (the half of the credential
     // pair that grants access). Distinct from the AKIA… access key ID above.
     // Bounded by non-alphanumeric chars so it can't over-match a longer run.
-    pattern: /(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{40}={0,2}(?![A-Za-z0-9+/=])/g,
+    // Round 10 (R10-1): the lookbehind no longer rejects a preceding `=` — the
+    // canonical no-space `.env`/CI form `AWS_SECRET_ACCESS_KEY=<40char>` had its
+    // 40-char run preceded by `=`, so the old lookbehind declined it and the
+    // secret leaked in full (no other rule matched: `key` isn't in
+    // generic-secret's name list, and the `key` rule's value charset excludes
+    // `/`). A 40-char base64 run preceded by `=` and followed by a non-base64
+    // char is exactly the env-assignment case to catch; a LONGER base64 run is
+    // still declined (the trailing lookahead fails on the next base64 char).
+    pattern: /(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{40}={0,2}(?![A-Za-z0-9+/=])/g,
     presets: ['strict', 'normal'],
   },
   {
@@ -138,7 +146,13 @@ export const rules: RedactRule[] = [
     // claimed by the specific rule first. Known limitation: a QUOTED `key:"…"`
     // value is not matched here (and `key` is not in generic-secret's name
     // list), so it is left to the bare-token fallback if the value is 24+ chars.
-    pattern: /\b(key)(\s*[:=]\s*)([A-Za-z0-9][A-Za-z0-9._-]{7,})/gi,
+    // Round 10 (R10-3): the value charset now includes `/` and `+` (base64).
+    // The old charset [A-Za-z0-9._-] stopped at the first slash, so
+    // `key=<base64>` was only PARTIALLY redacted (the tail after the first `/`
+    // leaked). Base64 values are the dominant real-world `key=` secret shape.
+    // The alnum-START guard still rejects PEM headers (`key: -----BEGIN…`) and
+    // JSX/quoted values, so no new false-positive class is introduced.
+    pattern: /\b(key)(\s*[:=]\s*)([A-Za-z0-9][A-Za-z0-9._/+-]{7,})/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key, sep, _v) => `${key}${sep}[REDACTED:key]`,
   },

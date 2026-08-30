@@ -202,6 +202,14 @@ function redactSrc(src: string, preset: Preset, add: (counts: Record<string, num
 const MD_IMG_URI_RE =
   /!\[[^\]]*\]\(\s*(data:[^)\s]+)\s*\)|<img\s[^>]*\bsrc\s*=\s*["']?(data:[^"'\s>]+)["']?/gi;
 
+// Round 10 (R10-2): a base64 data URI written as BARE PROSE (not wrapped in
+// markdown ![…](…) or <img src=…>). Same shape as DATA_URI_RE in redact.ts (the
+// D8 shield), so the set of URIs decoded here is EXACTLY the set the shield
+// protects — no secret can hide in a shielded-but-undecoded URI. A hit replaces
+// the whole URI; a clean image returns unchanged (idempotent, so a
+// markdown-wrapped URI already handled by MD_IMG_URI_RE above is a no-op here).
+const BARE_B64_DATA_URI_RE = /data:[^,\s]*;base64,[a-z0-9+/]+={0,2}/gi;
+
 function redTextWithDataUris(
   s: string,
   preset: Preset,
@@ -216,7 +224,13 @@ function redTextWithDataUris(
     if (!uri) return whole;
     return whole.replace(uri, redactSrc(uri, preset, add));
   });
-  const r = redactText(withUris, preset);
+  // Round 10 (R10-2): decode + scan every base64 data URI in BARE PROSE too —
+  // the D8 shield in redactText protects these from every rule, so without this
+  // pass a base64-encoded secret in a non-markdown data URI would survive.
+  // redactSrc is idempotent (clean/already-redacted URIs return unchanged), so
+  // a markdown-wrapped URI handled above is a no-op and no count is double-added.
+  const withBareUris = withUris.replace(BARE_B64_DATA_URI_RE, (uri) => redactSrc(uri, preset, add));
+  const r = redactText(withBareUris, preset);
   add(r.counts);
   return r.text;
 }

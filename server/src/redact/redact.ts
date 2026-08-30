@@ -126,11 +126,28 @@ const INVISIBLE_CP = new Set<number>([
   0x1d16, 0x1d17, 0x1d18, 0x1d19, 0x1d1a, 0x1d1b, 0x1d1c, 0x1d1d, 0x1d1e,
   0x1d2c, 0x1d2d, 0x1d2e, 0x1d37,
 ]);
+// Round 10 (R10-4): the explicit INVISIBLE_CP set above is INCOMPLETE — it
+// misses many invisible chars, e.g. U+180F (Mongolian Vowel Separator, an Mn
+// combining mark sitting right after the set's U+180B–180E), U+0301 (combining
+// acute) and most of the Cf format inventory (U+FFF9–FFFB, U+06DD, U+0890, …).
+// An attacker embedding any of those in a secret split the run on the matching
+// copy so no rule matched. Catch EVERY format (Cf) AND nonspacing-mark (Mn)
+// char via property escapes — future-proof, so the set can't go stale as
+// Unicode grows. (U+180F is category Mn, not Cf, so a Cf-only escape misses the
+// reported char.) Stripping is on the matching copy only, so legitimate
+// combining marks (accents, ZWJ emoji, CJK joiners) survive verbatim in
+// non-redacted output. The regular space U+0020 is Zs (neither Cf nor Mn) and
+// is deliberately NOT stripped — it legitimately ends a token.
+const INVISIBLE_CF_MN_RE = /[\p{Cf}\p{Mn}]/u;
 function isInvisible(cp: number): boolean {
   if (INVISIBLE_CP.has(cp)) return true;
-  if (cp >= 0xfe00 && cp <= 0xfe0f) return true; // variation selectors
-  if (cp >= 0xe0001 && cp <= 0xe007f) return true; // tag block (SMP)
-  return false;
+  if (cp >= 0xfe00 && cp <= 0xfe0f) return true; // variation selectors (Mn)
+  if (cp >= 0xe0001 && cp <= 0xe007f) return true; // tag block (SMP, Cf)
+  // Fast negative: ASCII printable (0x20–0x7e) is never Cf/Mn, so skip the
+  // regex for the common case. (The regular space U+0020 is here on purpose —
+  // it legitimately ends a token, so it must NOT be stripped.)
+  if (cp >= 0x20 && cp <= 0x7e) return false;
+  return INVISIBLE_CF_MN_RE.test(String.fromCodePoint(cp));
 }
 
 // Round 9 (D8): a base64 data URI — `data:<mediatype>[;params]*;base64,<payload>`.
