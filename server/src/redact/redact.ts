@@ -111,12 +111,49 @@ const INVISIBLE_CP = new Set<number>([
   0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0x2065, 0x2066, 0x2067,
   0x2068, 0x2069, 0x206a, 0x206b, 0x206c, 0x206d, 0x206e, 0x206f,
   0xfeff,
+  // Round 9 (F3): the full non-ASCII Zs space inventory + Zl/Zp line/paragraph
+  // separators — each can split a secret run (U+00A0 nbsp, U+2028/2029,
+  // U+3000 ideographic space, …). Stripping is on the matching copy only, so
+  // these survive in non-redacted output.
+  0x00a0, 0x1680,
+  0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a,
+  0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+  // Round 9 (F3): additional Cf format chars (Samaritan/Arabic/Mongolian
+  // joiners and separators, Hangul filler, Sundanese signs, Greek/Canadian
+  // joining marks).
+  0x070f, 0x08e2, 0x08e3, 0x180b, 0x180c, 0x180d, 0x3164,
+  0x1bfb, 0x1bfc,
+  0x1d16, 0x1d17, 0x1d18, 0x1d19, 0x1d1a, 0x1d1b, 0x1d1c, 0x1d1d, 0x1d1e,
+  0x1d2c, 0x1d2d, 0x1d2e, 0x1d37,
 ]);
 function isInvisible(cp: number): boolean {
   if (INVISIBLE_CP.has(cp)) return true;
   if (cp >= 0xfe00 && cp <= 0xfe0f) return true; // variation selectors
   if (cp >= 0xe0001 && cp <= 0xe007f) return true; // tag block (SMP)
   return false;
+}
+
+// Round 9 (D8): a base64 data URI — `data:<mediatype>[;params]*;base64,<payload>`.
+// The payload is a long [A-Za-z0-9+/=] run that the bare-token fallback (and,
+// in principle, any rule) reads as a secret. `![x](data:image/jpg;base64,…)`,
+// a markdown image, keeps its payload in a TEXT part (the CLI only extracts
+// known attachment files into image parts), so without this shield the stored
+// image is corrupted into [REDACTED:…] fragments and never renders. A base64
+// payload is never a secret — the viewer's isSafeImageSrc/isSafeHref already
+// drop non-image data URIs at render time — so the whole URI is shielded from
+// every rule. The `;base64,` marker is the discriminator: a real secret is
+// never preceded by it, so no genuine redaction is lost.
+const DATA_URI_RE = /data:[^,\s]*;base64,[a-z0-9+/]+={0,2}/gi;
+
+function findDataUriSpans(s: string): Array<{ s: number; e: number }> {
+  const spans: Array<{ s: number; e: number }> = [];
+  DATA_URI_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = DATA_URI_RE.exec(s)) !== null) {
+    spans.push({ s: m.index, e: m.index + m[0].length });
+    if (m[0].length === 0) DATA_URI_RE.lastIndex++; // guard: zero-length
+  }
+  return spans;
 }
 
 export function redactText(
@@ -133,7 +170,14 @@ export function redactText(
   for (let i = 0; i < text.length; ) {
     const cp = text.codePointAt(i)!;
     if (!isInvisible(cp)) {
-      map.push(i);
+      // Round 9 (F1): push one entry per UTF-16 UNIT, not per code point. A
+      // surrogate pair (cp > 0xffff) occupies 2 units in `stripped`, so pushing
+      // one entry desynced map from stripped (map.length < stripped.length) and
+      // any match after a surrogate pair mapped to the wrong original offset,
+      // leaking the leading chars of the secret. map[k] indexes the k-th UTF-16
+      // unit of `stripped`, so map.length === stripped.length.
+      if (cp > 0xffff) map.push(i, i + 1);
+      else map.push(i);
       stripped += String.fromCodePoint(cp);
     }
     i += cp > 0xffff ? 2 : 1;
@@ -145,6 +189,11 @@ export function redactText(
   // avoided this because the placeholder shielded later rules).
   type Span = { s: number; e: number; replacement: string; rule: string; pri: number };
   const spans: Span[] = [];
+  // Round 9 (D8): base64 data URIs are shielded from every rule (see the
+  // DATA_URI_RE note). Computed on the stripped text so the spans share the
+  // same coordinate space as the rule spans below.
+  const dataUriSpans = findDataUriSpans(stripped);
+  const inDataUri = (s: number, e: number) => dataUriSpans.some((d) => s < d.e && e > d.s);
   for (let ri = 0; ri < rules.length; ri++) {
     const rule = rules[ri]!;
     if (!rule.presets.includes(preset)) continue;
@@ -160,6 +209,9 @@ export function redactText(
       if (rule.test && !rule.test(m[0], ...groups)) continue;
       const s = m.index;
       const e = s + m[0].length;
+      // Round 9 (D8): never redact inside a base64 data URI (a markdown image
+      // payload is not a secret). Skipping the span leaves the URI intact.
+      if (inDataUri(s, e)) continue;
       const replacement = rule.replace ? rule.replace(m[0], ...groups) : `[REDACTED:${rule.category}]`;
       spans.push({ s, e, replacement, rule: rule.category, pri: ri });
     }
@@ -208,6 +260,14 @@ export function redactText(
   }
   // The output walk below needs spans in positional order.
   const merged = kept.sort((a, b) => a.s - b.s || a.e - b.e);
+  // Round 9 (F4) boundary note: a DROPPED (lower-priority, overlapping) span
+  // is removed entirely, but only its overlap with a kept span is replaced —
+  // any part of the dropped span lying OUTSIDE the kept span is emitted
+  // verbatim by the output walk below (the walk only knows kept spans). That
+  // is intended: e.g. `password=-----BEGIN…` — generic-secret claims
+  // `password=-----BEGIN` (its value stops at the space), private-key claims
+  // the whole PEM block; the block wins and `password=` (a key NAME, not a
+  // secret) is emitted verbatim before the replacement.
   // Walk the original text, emitting non-span text verbatim (zero-width chars
   // inside it survive) and each span as its replacement (zero-width chars
   // inside the span are consumed).

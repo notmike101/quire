@@ -20,6 +20,10 @@ export interface AppDeps {
 export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
   app.onError(errorHandler);
+  // Round 9 (B-F5): unmatched routes — and c.notFound() from the static
+  // handler — return the same uniform JSON error body as the API's own 404s
+  // instead of Hono's plain-text default.
+  app.notFound((c) => c.json({ error: { code: 'not_found', message: 'Not found' } }, 404));
   app.use('*', securityHeaders());
   app.use('*', bodyLimit());
   app.get('/healthz', (c) => c.json({ ok: true }));

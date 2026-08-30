@@ -693,15 +693,16 @@ describe('Round 6 fixes (bare-token ReDoS)', () => {
     // input must complete well under the quadratic prediction (~106 s). The
     // threshold is ~50x above the expected linear cost so it is not flaky, yet
     // ~200x below the old quadratic cost so a regression is caught.
+    // Round 9 (F8): the adversarial run (hex 'a' + separator '.') is now a
+    // hex-with-separator run, so F8 redacts it. This test asserts the DoS
+    // protection (linear time); the run is redacted, not preserved.
     const input = adversarial(500_000);
     const t0 = performance.now();
     const r = redactText(input, 'strict');
     const elapsed = performance.now() - t0;
     expect(elapsed).toBeLessThan(500);
-    // Nothing in the adversarial run is a secret (no g-z, no 24+ hex run), so
-    // it is redacted nowhere and the text is unchanged.
-    expect(r.counts['bare-token']).toBeUndefined();
-    expect(r.text).toBe(input);
+    // F8 redacts the hex-with-separator run (24+ chars of hex + '.').
+    expect(r.counts['bare-token']).toBeGreaterThan(0);
   });
 
   it('still redacts a pure-hex token, preserving a trailing period (span unchanged)', () => {
@@ -915,5 +916,184 @@ describe('Round 8 fixes', () => {
     const out = img('data:text/plain,hello\u0000world');
     expect(out.messages[0]!.parts[0]!.src).toBe('data:text/plain,helloworld');
     expect(out.summary).toEqual({});
+  });
+});
+
+describe('Round 9 fixes', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+  const img = (src: string) =>
+    prepareContent(
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src, mime: 'image/png', alt: 'shot', bytes: 4 }] }] },
+      'strict',
+    );
+
+  it('F1: redacts a secret that follows a surrogate-pair char (map is UTF-16-aligned)', () => {
+    // 😀 (U+1F600) is a surrogate pair (2 UTF-16 units). The old map pushed one
+    // entry per CODE POINT, so after a surrogate pair map.length < stripped.length
+    // and a match after it mapped to the wrong original offset, leaking the
+    // leading chars of the secret. The map must push one entry per UTF-16 unit.
+    const out = one('\u{1f600}' + secrets.openai);
+    const text = out.messages[0]!.parts[0]!.text!;
+    expect(text).toBe('\u{1f600}[REDACTED:openai-key]');
+    expect(out.summary['openai-key']).toBe(1);
+  });
+
+  it('F2: redacts a secret split by a C0 control char (strip before redact)', () => {
+    // A BEL (\u0007) embedded in a bare token used to break the run (the rule
+    // matched on the raw text, which the control char split into two <24 runs),
+    // then the control char was stripped AFTER redaction, leaving a clean
+    // unredacted secret. Strip control chars BEFORE redaction so the rules see
+    // the secret in the clear.
+    const token = 'Zz9Yy8Xx7Ww6\u0007Vv5Uu4Tt3Ss2'; // 24 g-z chars split by BEL
+    const out = one('tok ' + token + ' end');
+    const text = out.messages[0]!.parts[0]!.text!;
+    expect(text).not.toContain('Zz9Yy8Xx7Ww6');
+    expect(text).not.toContain('Vv5Uu4Tt3Ss2');
+    expect(text).not.toContain('\u0007');
+    expect(text).toContain('[REDACTED:bare-token]');
+    expect(out.summary['bare-token']).toBe(1);
+  });
+
+  it('F2: strips DEL (\\u007F) and C1 controls (\\u0080-\\u009F)', () => {
+    const out = one('a\u007Fb\u0085c\u009Fd');
+    const text = out.messages[0]!.parts[0]!.text!;
+    expect(text).toBe('abcd');
+  });
+
+  it('F5: redacts a base64-encoded secret in a data URI embedded in a TEXT part', () => {
+    // The viewer renders data:image/* from text parts (markdown). A base64-
+    // encoded secret in such a data URI was stored unredacted (redactText on the
+    // base64 text is a no-op — base64 encodes sk- into c2st). Decode and scan.
+    const secret = 'sk-abcdefghijklmnopqrstuvwxyz0123456789';
+    const b64 = Buffer.from(secret, 'utf8').toString('base64');
+    const out = one(`see ![shot](data:image/png;base64,${b64}) ok`);
+    const text = out.messages[0]!.parts[0]!.text!;
+    expect(text).not.toContain(b64);
+    expect(text).toContain('REDACTED');
+    expect(out.summary['openai-key']).toBe(1);
+  });
+
+  it('F6: redacts a secret in the MIDDLE of a data-URI payload (after binary bytes)', () => {
+    // The old longestValidUtf8Prefix only scanned the LEADING prefix, so a secret
+    // after an invalid byte (binary noise before it) was missed. Scan the longest
+    // valid-UTF-8 run anywhere.
+    const secret = 'sk-abcdefghijklmnopqrstuvwxyz0123456789';
+    const buf = Buffer.concat([Buffer.from([0xff, 0xfe, 0x00]), Buffer.from(secret, 'utf8')]);
+    const b64 = buf.toString('base64');
+    const out = img(`data:image/png;base64,${b64}`);
+    const src = out.messages[0]!.parts[0]!.src!;
+    expect(src).not.toContain(b64);
+    expect(src).toContain('REDACTED');
+    expect(out.summary['openai-key']).toBe(1);
+  });
+
+  it('F6: still skips a real binary image (longest valid-UTF-8 run < 8 bytes)', () => {
+    // Over-redaction guard must survive the rewrite: dense binary has only short
+    // valid-UTF-8 runs, so the data URI passes through untouched.
+    const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    const dataUri = `data:image/png;base64,${pngBytes.toString('base64')}`;
+    const out = img(dataUri);
+    expect(out.messages[0]!.parts[0]!.src).toBe(dataUri);
+    expect(out.summary).toEqual({});
+  });
+
+  it('F3: redacts a secret split by U+2028 (line separator)', () => {
+    // The Round 8 inventory missed the Zs/Zl/Zp spaces and several Cf format
+    // chars; each splits a secret run on the matching copy and evades the rules.
+    const mid = Math.floor(secrets.openai.length / 2);
+    const split = secrets.openai.slice(0, mid) + '\u2028' + secrets.openai.slice(mid);
+    const out = one(split);
+    const text = out.messages[0]!.parts[0]!.text!;
+    expect(text).toBe('[REDACTED:openai-key]');
+    expect(out.summary['openai-key']).toBe(1);
+  });
+
+  it('F3: redacts a bare token split by the missing Zs/Cf inventory', () => {
+    // U+2029, U+200A, U+070F, U+08E2, U+1680, U+205F, U+3000 — each verified to
+    // split a secret run on the Round 8 inventory.
+    const seps = ['\u2029', '\u200a', '\u070f', '\u08e2', '\u1680', '\u205f', '\u3000'];
+    const body = 'Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2'; // 24 g-z chars
+    const split = body.split('').map((c, i) => (i % 2 === 1 ? c + seps[Math.floor(i / 2) % seps.length]! : c)).join('');
+    const out = one('tok ' + split + ' end');
+    const text = out.messages[0]!.parts[0]!.text!;
+    expect(text).toContain('[REDACTED:bare-token]');
+    expect(text).not.toContain('Zz9Yy8Xx7Ww6');
+    expect(out.summary['bare-token']).toBe(1);
+  });
+
+  it('F3: preserves Zs/Cf chars in non-redacted output (strip is match-copy only)', () => {
+    const out = one('hello\u00a0world\u3000\u2028foo');
+    expect(out.messages[0]!.parts[0]!.text).toBe('hello\u00a0world\u3000\u2028foo');
+  });
+
+  it('F8: redacts a body-only PEM fragment (dashed-hex body, header truncated away)', () => {
+    // A key split across parts leaves a body-only fragment: no -----BEGIN
+    // header, so the private-key rule cannot match. The dashed-hex body is one
+    // 24+ char run the old bare-token test declined (neither pure-hex nor
+    // g-z) — it is now accepted (it is not the exact UUID shape).
+    const body = '0123456789abcdef-0123456789abcdef-0123456789abcdef-0123456789abcdef';
+    const out = one('fragment ' + body);
+    const text = out.messages[0]!.parts[0]!.text!;
+    expect(text).not.toContain('0123456789abcdef-0123456789abcdef');
+    expect(text).toContain('[REDACTED:bare-token]');
+    expect(out.summary['bare-token']).toBe(1);
+  });
+
+  it('F8: still leaves an exact UUID (8-4-4-4-12) untouched', () => {
+    const out = one('id 123e4567-e89b-12d3-a456-426614174000 end');
+    expect(out.messages[0]!.parts[0]!.text).toBe('id 123e4567-e89b-12d3-a456-426614174000 end');
+    expect(out.summary['bare-token']).toBeUndefined();
+  });
+});
+
+describe('Round 9 (D8): base64 data URIs are not secrets', () => {
+  // A markdown image ![x](data:image/jpg;base64,…) keeps its payload in a TEXT
+  // part (the CLI only extracts known attachment files into image parts). The
+  // base64 payload is a long [A-Za-z0-9+/=] run that the bare-token fallback
+  // (and, in principle, any rule) reads as a secret and corrupts. A base64
+  // payload is never a secret — the viewer's isSafeImageSrc/isSafeHref already
+  // drop non-image data URIs at render time — so redaction must leave the URI
+  // intact.
+  const jpgB64 =
+    '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
+  const avifB64 = 'UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=';
+
+  it('leaves a base64 image data URI in text untouched (markdown image)', () => {
+    const text = `![cactus](data:image/jpg;base64,${jpgB64})`;
+    const out = redactText(text, 'normal');
+    expect(out.text).toBe(text);
+    expect(out.counts['bare-token']).toBeUndefined();
+  });
+
+  it('leaves avif and other image data URIs untouched', () => {
+    const text = `![a](data:image/avif;base64,${avifB64})`;
+    const out = redactText(text, 'normal');
+    expect(out.text).toBe(text);
+  });
+
+  it('still redacts a real secret that FOLLOWS a data URI', () => {
+    const text = `img data:image/jpg;base64,${jpgB64} then key ${secrets.aws}`;
+    const out = redactText(text, 'normal');
+    expect(out.text).toContain(jpgB64); // data URI intact
+    expect(out.text).not.toContain(secrets.aws); // secret redacted
+    expect(out.text).toContain('[REDACTED:');
+  });
+
+  it('still redacts a real secret that PRECEDES a data URI', () => {
+    const text = `key ${secrets.aws} img data:image/jpg;base64,${jpgB64}`;
+    const out = redactText(text, 'normal');
+    expect(out.text).toContain(jpgB64);
+    expect(out.text).not.toContain(secrets.aws);
+  });
+
+  it('does not shield a data:text/html URI (a vector, not a secret — viewer drops it)', () => {
+    // data:text/html is not a secret; redaction leaves it and the viewer's
+    // isSafeHref/isSafeImageSrc drop it at render time. Its base64 payload
+    // (36 chars, g-z letters) would otherwise trip bare-token.
+    const text = 'see data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==';
+    const out = redactText(text, 'normal');
+    expect(out.text).toBe(text);
+    expect(out.counts['bare-token']).toBeUndefined();
   });
 });

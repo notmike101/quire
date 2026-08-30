@@ -137,6 +137,19 @@ describe('public content endpoint', () => {
     expect(res.messages[0].seq).toBe(1);
   });
 
+  it('clamps an oversized cursor to int32 instead of 500 (Round 9 B-F3)', async () => {
+    // Number.parseInt('99999999999999999999') is 1e20 and Number.isInteger(1e20)
+    // is TRUE, so the old check passed it through to SQL, where the int4 cast
+    // overflowed and the request 500'd. Clamping to int32 makes it a valid
+    // (empty) page.
+    await seedShare('cur1', { messages: 10 });
+    const res = await app.request('/api/public/chats/cur1?cursor=99999999999999999999:99999999999999999999');
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.messages).toEqual([]);
+    expect(body.nextCursor).toBeNull();
+  });
+
   it('caps the first-page userIndex at MAX_RAIL_USER_ENTRIES (Round 6)', async () => {
     // A share with more user messages than the rail cap must return only the
     // first MAX_RAIL_USER_ENTRIES index entries (bounds the query + the DOM).
@@ -366,7 +379,7 @@ describe('rail preview (Chain B)', () => {
   });
 });
 
-describe('clientIp (Chain C)', () => {
+describe('clientIp (Chain C + Round 9 B-F2)', () => {
   // getConnInfo reads c.env.incoming.socket.remoteAddress; stub that shape so
   // the socket fallback is exercised without a real socket.
   function fakeCtx(headers: Record<string, string>, socketAddr = '203.0.113.7') {
@@ -375,12 +388,18 @@ describe('clientIp (Chain C)', () => {
       env: { incoming: { socket: { remoteAddress: socketAddr, remotePort: 1234, remoteFamily: 'IPv4' } } },
     } as any;
   }
-  it('uses a well-formed leftmost XFF hop when trustProxy', () => {
-    const c = fakeCtx({ 'x-forwarded-for': '203.0.113.9, 10.0.0.1' }, '127.0.0.1');
+  it('uses the RIGHTMOST XFF hop when trustProxy — the entry the immediate proxy wrote, which the client cannot control', () => {
+    // Append-style proxy (Cloudflare): the client may prepend spoofed entries,
+    // but the rightmost one is what the trusted proxy appended.
+    const c = fakeCtx({ 'x-forwarded-for': '6.6.6.6, 7.7.7.7' }, '127.0.0.1');
+    expect(clientIp(c, true)).toBe('7.7.7.7');
+  });
+  it('a single-entry XFF (overwrite-style proxy) is used as-is', () => {
+    const c = fakeCtx({ 'x-forwarded-for': '203.0.113.9' }, '127.0.0.1');
     expect(clientIp(c, true)).toBe('203.0.113.9');
   });
-  it('falls back to the socket address for a malformed leftmost XFF', () => {
-    const c = fakeCtx({ 'x-forwarded-for': 'not-an-ip, 10.0.0.1' }, '198.51.100.4');
+  it('falls back to the socket address when the rightmost XFF hop is malformed', () => {
+    const c = fakeCtx({ 'x-forwarded-for': '10.0.0.1, not-an-ip' }, '198.51.100.4');
     expect(clientIp(c, true)).toBe('198.51.100.4');
   });
   it('falls back to x-real-ip when XFF is absent but x-real-ip is well-formed', () => {

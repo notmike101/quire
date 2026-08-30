@@ -48,18 +48,23 @@ function isWellFormedIp(s: string): boolean {
 // The rate-limit / lockout key MUST be a value the client cannot control. By
 // default (trustProxy=false) we use the socket address, which is always safe:
 // a direct client cannot spoof it. When a deployment fronts the server with a
-// proxy that OVERWRITES (not appends) X-Forwarded-For, it sets TRUST_PROXY=true
-// so the leftmost XFF hop (the real client IP) is used instead; we still
-// validate the hop is a well-formed IP and fall back to x-real-ip, then the
-// socket address, so a malformed/absent header cannot pick the key. Trusting a
-// client-supplied header without that overwrite guarantee lets an attacker
-// cycle XFF values to evade the per-IP unlock lockout and content throttle.
+// proxy, it sets TRUST_PROXY=true and we use the RIGHTMOST XFF hop instead:
+// every proxy appends the peer it saw to the right end of the list, so the
+// rightmost entry is the one the IMMEDIATE (trusted) proxy wrote — a client
+// behind that proxy can prepend spoofed entries but cannot control the
+// rightmost one. This is correct for both append-style proxies (Cloudflare:
+// "spoofed, real-client") and overwrite-style single-entry proxies. The hop
+// is still validated as a well-formed IP, then we fall back to x-real-ip, then
+// the socket address, so a malformed/absent header cannot pick the key.
+// (Round 9 B-F2: the old LEFTMOST choice was attacker-controlled behind
+// Cloudflare — the client's own XFF value — letting it cycle keys to evade the
+// per-IP unlock lockout and content throttle.)
 export function clientIp(c: Context, trustProxy = false): string {
   if (trustProxy) {
     const xff = c.req.header('x-forwarded-for');
     if (xff) {
-      const first = xff.split(',')[0]?.trim();
-      if (first && isWellFormedIp(first)) return first;
+      const last = xff.split(',').pop()?.trim();
+      if (last && isWellFormedIp(last)) return last;
     }
     const xri = c.req.header('x-real-ip');
     if (xri && isWellFormedIp(xri)) return xri;
@@ -90,16 +95,20 @@ function clampLimit(raw: string | undefined): number {
 }
 
 interface Cursor { chunkSeq: number; seq: number }
+// Round 9 (B-F3): the seq columns are int4. Number.parseInt('99999999999999999999')
+// is 1e20 and Number.isInteger(1e20) is TRUE, so an oversized cursor sailed
+// through the old check into SQL, where the int4 cast overflowed and the
+// request 500'd. Clamp to the int32 max so a crafted cursor is just an empty
+// page, never an error.
+const INT32_MAX = 2_147_483_647;
 function parseCursor(raw: string | undefined): Cursor {
   if (raw === undefined) return { chunkSeq: 0, seq: 0 };
   const idx = raw.indexOf(':');
   if (idx < 0) return { chunkSeq: 0, seq: 0 };
   const chunkSeq = Number.parseInt(raw.slice(0, idx), 10);
   const seq = Number.parseInt(raw.slice(idx + 1), 10);
-  return {
-    chunkSeq: Number.isInteger(chunkSeq) && chunkSeq >= 0 ? chunkSeq : 0,
-    seq: Number.isInteger(seq) && seq >= 0 ? seq : 0,
-  };
+  const clamp = (n: number) => (Number.isInteger(n) && n >= 0 ? Math.min(n, INT32_MAX) : 0);
+  return { chunkSeq: clamp(chunkSeq), seq: clamp(seq) };
 }
 
 /** Unknown and revoked tokens both return null -> identical 404 bodies (no existence oracle). */

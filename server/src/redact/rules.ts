@@ -27,6 +27,11 @@ export const rules: RedactRule[] = [
     // the base64 body, which IS the secret. The optional-END branch claims the
     // whole remainder of the part; the full-block branch (with END) runs first
     // and wins when the key is complete.
+    // Round 9 (F8) boundary note: the full-block branch CONSUMES the footer —
+    // the lazy match runs through `-----END … PRIVATE KEY( BLOCK)?-----`
+    // inclusive, so no footer text survives in the output. Only the truncated
+    // branch (no END present) reaches the end of the part, where there is no
+    // footer to leave behind.
     pattern: /-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY( BLOCK)?-----|-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----[\s\S]*$/gi,
     presets: ['strict', 'normal'],
   },
@@ -163,7 +168,15 @@ export const rules: RedactRule[] = [
     // single-position backtrack. Interior positions still fail O(1) at \b.
     pattern: /\b[A-Za-z0-9._-]{24,10000}\b/g,
     presets: ['strict', 'normal'],
-    test: (run) => /^[0-9a-fA-F]{24,}$/.test(run) || /[g-zG-Z]/.test(run),
+    // Round 9 (F8): a 24+ char run of hex digits WITH separators (._-) is a
+    // secret too — a body-only PEM fragment (the header truncated away, e.g. a
+    // key split across parts) is exactly this shape. The old test declined it
+    // (neither pure-hex nor g-z), so the fragment leaked. Decline only the
+    // exact UUID shape (8-4-4-4-12), which is an identifier, not a secret.
+    test: (run) =>
+      /[g-zG-Z]/.test(run) ||
+      (/^[0-9a-fA-F._-]{24,}$/.test(run) &&
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(run)),
   },
   {
     category: 'private-ip',

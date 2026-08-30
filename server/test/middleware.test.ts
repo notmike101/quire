@@ -174,4 +174,39 @@ describe('error handler', () => {
     const result = errorHandler(new HTTPException(404, { message: 'gone' }), fakeCtx) as { status: number };
     expect(result.status).toBe(404);
   });
+  it('omits SQL text and bound parameters from the log for DB errors (Round 9 B-F4)', () => {
+    // postgres.js embeds the full query AND its bound parameters in
+    // err.message ("Failed query: ... params: ..."). A bound parameter can be
+    // a password, a token, or the transcript itself — logging it violates the
+    // "no secrets in logs" invariant. Only the SQLSTATE code may be logged.
+    const calls: unknown[][] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      calls.push(args);
+    });
+    const dbErr = new Error('Failed query: select * from secrets where k = $1 params: [AKIAABCDEFGHIJKLMNOP]');
+    (dbErr as { code?: string }).code = '42601';
+    errorHandler(dbErr, { json: () => ({}) } as never);
+    spy.mockRestore();
+    expect(calls).toHaveLength(1);
+    const logged = calls[0]!.map((a) => String(a)).join(' ');
+    expect(logged).not.toContain('select * from secrets');
+    expect(logged).not.toContain('AKIAABCDEFGHIJKLMNOP');
+    expect(logged).toContain('42601');
+  });
+});
+
+describe('not-found (Round 9 B-F5)', () => {
+  it('returns a uniform JSON 404 for unmatched API routes', async () => {
+    const res = await app.request('/api/nonexistent');
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    const body = await json(res);
+    expect(body.error.code).toBe('not_found');
+  });
+  it('returns the same JSON 404 for a missing static asset (c.notFound routes through it)', async () => {
+    const res = await app.request('/assets/missing.js');
+    expect(res.status).toBe(404);
+    const body = await json(res);
+    expect(body.error.code).toBe('not_found');
+  });
 });

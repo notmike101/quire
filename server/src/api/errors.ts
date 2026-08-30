@@ -30,6 +30,18 @@ export const errorHandler: ErrorHandler = (err, c) => {
   // Server-side log only. Never include request bodies, tokens, or secrets.
   const name = err instanceof Error ? err.name : 'Error';
   const message = err instanceof Error ? err.message : err;
-  console.error('unhandled error:', name, sanitizeForLog(message));
+  // Round 9 (B-F4): postgres.js errors embed the FULL SQL text AND the bound
+  // parameters in err.message ("Failed query: ... params: ..."). A bound
+  // parameter can be a password, a token, or the transcript itself — logging
+  // it violates the "no secrets in logs" invariant. For those errors log only
+  // the SQLSTATE code; the query text and parameters are omitted.
+  let logged: string;
+  if (err instanceof Error && /failed query/i.test(err.message)) {
+    const code = (err as { code?: string }).code ?? 'unknown';
+    logged = `Failed query (SQLSTATE ${code}; query text and parameters omitted)`;
+  } else {
+    logged = sanitizeForLog(message);
+  }
+  console.error('unhandled error:', name, logged);
   return c.json({ error: { code: 'internal', message: 'Internal server error' } }, 500);
 };

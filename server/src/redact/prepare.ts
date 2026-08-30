@@ -58,7 +58,15 @@ export interface PreparedContent {
 // tool output. Strip them in the authoritative pass so the persisted content is
 // always storable. This is storage-safety, not redaction, so it applies to every
 // preset (including 'none').
-const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
+//
+// Round 9 (F2): extended to also strip DEL (\u007F) and the C1 controls
+// (\u0080-\u009F). Two reasons: (a) Postgres rejects NUL and C1 controls are
+// storable-but-noise; (b) a control char EMBEDDED in a secret (e.g. a BEL
+// between two halves of a token) breaks the plaintext rule's match during
+// redaction, then gets stripped — leaving a clean, unredacted secret in the
+// output. Stripping BEFORE redaction (see the `red` helper) means the rules see
+// the secret contiguous. \t \n \r are deliberately preserved.
+const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u0080-\u009F]/g;
 
 // Round 2: the image `src` data-URI can hide a secret in its payload (a
 // "screenshot" whose bytes encode a credential). Round 3: we DECODE the base64
@@ -81,18 +89,29 @@ const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
 // a secret embedded at the START of the payload followed by a few non-UTF-8
 // bytes (the old exploit) has a long valid-UTF-8 prefix. We scan that prefix.
 // A prefix shorter than 8 bytes is treated as binary (noise, not a secret).
-function longestValidUtf8Prefix(buf: Buffer): string | null {
+//
+// Round 9 (F6): a secret is not guaranteed to sit at the START of the payload —
+// an attacker can prepend a few binary bytes (e.g. a PNG header fragment) and
+// place the credential in the MIDDLE of the buffer. A prefix-only scan then
+// stops at the first binary byte and never reaches the secret. So instead of the
+// longest valid-UTF-8 PREFIX, we scan the longest maximal valid-UTF-8 RUN
+// ANYWHERE in the buffer. A real image is dense binary with only short valid
+// runs (isolated ASCII-ish bytes, < 8), so it is still skipped; a secret is a
+// long run of clean UTF-8 text and is always found.
+function longestValidUtf8Run(buf: Buffer): string | null {
   // Round 8: the Round-5 binary search assumed "prefix of length m is valid
   // UTF-8" is monotonic, but it is NOT — a valid 2-byte char (e.g. 0xC3 0xA9 =
-  // é) has an INVALID length-1 prefix (a truncated lead byte 0xC3). The search
-  // therefore converged early on a crafted payload (a multi-byte char placed at
-  // the first probe position) and UNDER-scanned, leaving a secret after it
-  // unscanned. Walk forward instead: a single O(n) pass that includes every
-  // complete, well-formed code point up to the first invalid byte. A secret is
-  // ASCII/UTF-8 text, so it always sits inside the longest valid prefix and is
-  // always scanned.
+  // é) has an INVALID length-1 prefix (a truncated lead byte 0xC3). Walk forward
+  // instead: a single O(n) pass over every complete, well-formed code point,
+  // tracking the longest contiguous run of valid code points.
+  let bestStart = 0;
+  let bestLen = 0;
+  let runStart = 0;
   let i = 0;
-  let end = 0; // end (exclusive) of the last complete, well-formed code point
+  const endRun = (at: number): void => {
+    if (at - runStart > bestLen) { bestStart = runStart; bestLen = at - runStart; }
+    runStart = at + 1; // next run starts after the offending byte
+  };
   while (i < buf.length) {
     const b = buf[i]!;
     let len: number;
@@ -102,8 +121,8 @@ function longestValidUtf8Prefix(buf: Buffer): string | null {
     else if (b >= 0xc2 && b <= 0xdf) { len = 2; min = 0x80; max = 0x7ff; }
     else if (b >= 0xe0 && b <= 0xef) { len = 3; min = 0x800; max = 0xffff; }
     else if (b >= 0xf0 && b <= 0xf4) { len = 4; min = 0x10000; max = 0x10ffff; }
-    else break; // invalid lead byte (0x80–0xc1, 0xf5–0xff)
-    if (i + len > buf.length) break; // truncated sequence at the end
+    else { endRun(i); i += 1; continue; } // invalid lead byte (0x80–0xc1, 0xf5–0xff)
+    if (i + len > buf.length) { endRun(i); break; } // truncated sequence at the end
     let cp = b & (len === 1 ? 0xff : len === 2 ? 0x1f : len === 3 ? 0x0f : 0x07);
     let ok = true;
     for (let j = 1; j < len; j++) {
@@ -111,13 +130,13 @@ function longestValidUtf8Prefix(buf: Buffer): string | null {
       if ((cb & 0xc0) !== 0x80) { ok = false; break; } // not a continuation byte
       cp = (cp << 6) | (cb & 0x3f);
     }
-    if (!ok || cp < min || cp > max) break; // overlong / out of range
-    if (cp >= 0xd800 && cp <= 0xdfff) break; // surrogate half (invalid UTF-8)
-    i += len;
-    end = i;
+    if (!ok || cp < min || cp > max) { endRun(i); i += 1; continue; } // overlong / out of range
+    if (cp >= 0xd800 && cp <= 0xdfff) { endRun(i); i += 1; continue; } // surrogate half (invalid UTF-8)
+    i += len; // valid, extend the current run
   }
-  if (end < 8) return null; // too short to be a meaningful secret
-  return buf.subarray(0, end).toString('utf8');
+  if (buf.length - runStart > bestLen) { bestStart = runStart; bestLen = buf.length - runStart; }
+  if (bestLen < 8) return null; // too short to be a meaningful secret
+  return buf.subarray(bestStart, bestStart + bestLen).toString('utf8');
 }
 function redactSrc(src: string, preset: Preset, add: (counts: Record<string, number>) => void): string {
   const m = /^data:([^,]*),(.+)$/.exec(src);
@@ -128,30 +147,41 @@ function redactSrc(src: string, preset: Preset, add: (counts: Record<string, num
     // old code returned it untouched, a complete redaction bypass. Run the full
     // rule set over the whole URL so embedded credentials are redacted; a clean
     // same-origin /assets/ path or ordinary URL is unchanged.
-    const r = redactText(src, preset);
+    // Round 9 (F2): strip control chars BEFORE the rules run so a control char
+    // embedded in a secret cannot break the match (strip-after would leave the
+    // secret clean and unredacted).
+    const clean = src.replace(CONTROL_CHARS_RE, '');
+    const r = redactText(clean, preset);
     if (Object.values(r.counts).some((v) => v > 0)) {
       add(r.counts);
-      return r.text.replace(CONTROL_CHARS_RE, '');
+      return r.text;
     }
-    return src.replace(CONTROL_CHARS_RE, '');
+    return clean;
   }
   const header = m[1];
   const payload = m[2];
   let text: string | null = null;
   if (/;base64/i.test(header)) {
-    // base64 payload: decode and scan the longest valid-UTF-8 prefix (Round 5:
-    // the old code required the WHOLE payload to be valid UTF-8, so a secret
-    // followed by even one non-UTF-8 byte disabled the scan entirely).
+    // base64 payload: decode and scan the longest valid-UTF-8 RUN anywhere in
+    // the buffer (Round 9 F6: a secret can sit after a few binary bytes, so a
+    // prefix-only scan would stop before reaching it; the run is control-char
+    // stripped before the rules see it so an embedded control char cannot
+    // break a match — F2).
     let buf: Buffer;
     try {
       buf = Buffer.from(payload, 'base64');
     } catch {
       return src.replace(CONTROL_CHARS_RE, '');
     }
-    if (buf.length > 0) text = longestValidUtf8Prefix(buf);
+    if (buf.length > 0) {
+      const run = longestValidUtf8Run(buf);
+      if (run !== null) text = run.replace(CONTROL_CHARS_RE, '');
+    }
   } else {
-    // plaintext payload (data:text/plain, etc.): scan verbatim.
-    text = payload;
+    // plaintext payload (data:text/plain, etc.): scan verbatim, control chars
+    // stripped first (F2: an embedded control char would otherwise break a
+    // rule match, then get stripped — leaving the secret clean).
+    text = payload.replace(CONTROL_CHARS_RE, '');
   }
   if (text === null) return src.replace(CONTROL_CHARS_RE, '');
   const r = redactText(text, preset);
@@ -162,12 +192,40 @@ function redactSrc(src: string, preset: Preset, add: (counts: Record<string, num
   return src.replace(CONTROL_CHARS_RE, '');
 }
 
+// Round 9 (F5): markdown image syntax in free text — `![alt](data:image/...)`
+// or `<img src="data:...">` — carries the same data-URI payloads as image part
+// `src` fields, but the plain text pass (redactText) only runs plaintext rules
+// over the raw string, where a base64 payload is invisible to them (base64
+// encodes `sk-` into `c2st`). Decode + scan each data-URI found in the text
+// (reusing redactSrc, i.e. the same longestValidUtf8Run logic); a hit replaces
+// the whole URI, a clean image passes through untouched.
+const MD_IMG_URI_RE =
+  /!\[[^\]]*\]\(\s*(data:[^)\s]+)\s*\)|<img\s[^>]*\bsrc\s*=\s*["']?(data:[^"'\s>]+)["']?/gi;
+
+function redTextWithDataUris(
+  s: string,
+  preset: Preset,
+  add: (counts: Record<string, number>) => void,
+): string {
+  // Round 9 (F2): strip control chars BEFORE the rules run so a control char
+  // embedded in a secret cannot break a match (strip-after would leave the
+  // secret clean and unredacted).
+  const clean = s.replace(CONTROL_CHARS_RE, '');
+  const withUris = clean.replace(MD_IMG_URI_RE, (whole, p1: string | undefined, p2: string | undefined) => {
+    const uri = p1 ?? p2;
+    if (!uri) return whole;
+    return whole.replace(uri, redactSrc(uri, preset, add));
+  });
+  const r = redactText(withUris, preset);
+  add(r.counts);
+  return r.text;
+}
+
 function redactPart(part: ShapedPart, preset: Preset, add: (counts: Record<string, number>) => void): ShapedPart {
-  const red = (s: string): string => {
-    const r = redactText(s, preset);
-    add(r.counts);
-    return r.text.replace(CONTROL_CHARS_RE, '');
-  };
+  // Round 9 (F5): free-text fields also carry markdown image data-URIs, so
+  // they go through the data-URI-aware pass (which strips control chars
+  // before the rules run — F2).
+  const red = (s: string): string => redTextWithDataUris(s, preset, add);
   const out: ShapedPart = { ...part };
   if (part.text !== undefined) out.text = red(part.text);
   if (part.output !== undefined) out.output = red(part.output);
@@ -204,9 +262,9 @@ function redactMetaField(
   key: string,
 ): void {
   if (field === undefined) return;
-  const r = redactText(field, preset);
-  if (Object.values(r.counts).some((v) => v > 0)) add(r.counts);
-  out[key] = r.text.replace(CONTROL_CHARS_RE, '');
+  // Round 9 (F5): meta fields are free text too — a title can embed a
+  // markdown image data-URI, so use the data-URI-aware pass.
+  out[key] = redTextWithDataUris(field, preset, add);
 }
 
 /**

@@ -91,7 +91,11 @@ export const chunkBodySchema = z
   .object({
     uploadId: z.string().min(1).max(64),
     chunkSeq: z.number().int().nonnegative(),
-    messages: z.array(messageSchema),
+    // Round 9 (B-F7): an empty chunk is a no-op that used to be accepted, and
+    // a duplicate EMPTY chunk was not a 409 (the dup check counts rows, so 0
+    // rows looked like "not uploaded" and the same chunk could be re-sent
+    // forever). .min(1) makes both a 400.
+    messages: z.array(messageSchema).min(1),
   })
   .strict();
 

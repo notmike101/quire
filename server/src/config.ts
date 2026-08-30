@@ -9,8 +9,9 @@ export interface Config {
   webDist: string;
   // Optional: defaults to false (use the socket address, ignore XFF) when a
   // caller constructs a Config without it (e.g. tests). The zod schema always
-  // fills it. Trusting XFF is an explicit opt-in that requires a fronting proxy
-  // that OVERWRITES (not appends) the header — see clientIp().
+  // fills it. Trusting XFF is an explicit opt-in for deployments behind a
+  // fronting proxy — clientIp() takes the RIGHTMOST hop, which the immediate
+  // proxy writes and the client cannot control (see clientIp()).
   trustProxy?: boolean;
 }
 
@@ -20,9 +21,11 @@ const schema = z.object({
   UNLOCK_SECRET: z.string().min(32),
   PORT: z.coerce.number().int().positive().default(8787),
   WEB_DIST: z.string().default(fileURLToPath(new URL('../../web/dist', import.meta.url))),
-  // Chain C: when true, clientIp trusts the leftmost XFF/x-real-ip hop; when
-  // false it uses the socket address. Defaults to false (safe) because trusting
-  // a client-supplied header is only correct behind a proxy that OVERWRITES it.
+  // Chain C / Round 9 (B-F2): when true, clientIp trusts the RIGHTMOST XFF hop
+  // (the entry the immediate fronting proxy wrote — a client can only prepend
+  // spoofed entries, never control the rightmost one) or a single x-real-ip;
+  // when false it uses the socket address. Defaults to false (safe) because
+  // trusting a client-supplied header is only correct behind a fronting proxy.
   // A deployment that fronts the server with such a proxy must set TRUST_PROXY=true.
   TRUST_PROXY: z.enum(['true', 'false']).default('false'),
 });

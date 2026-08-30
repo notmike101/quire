@@ -2,8 +2,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { makeDb, migrateDb, type Db } from '../src/db/client.js';
 import { createApp } from '../src/app.js';
 import { shares, shareMessages } from '../src/db/schema.js';
-import { eq, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { MAX_SHARE_BYTES, wouldExceedCap } from '../src/api/headers.js';
+import { cleanupStaleUploads } from '../src/db/cleanup.js';
 
 const url = process.env.DATABASE_URL ?? 'postgres://quire:quire@localhost:54329/quire_test';
 const config = { databaseUrl: url, apiKey: 'a'.repeat(64), unlockSecret: 'b'.repeat(64), port: 8787, webDist: '' };
@@ -128,6 +129,29 @@ describe('create', () => {
     // Clean up this extra share so the list/delete tests below see only `token`.
     await db.execute(sql`delete from shares where token = ${nulToken}`);
   });
+
+  it('creates a share with 11000 messages without hitting the 65535 bind-param limit (Round 9 B-F1)', async () => {
+    // A single multi-row INSERT binds 6 params per row; 10924+ rows exceeds
+    // Postgres's 65535-parameter cap and 500'd a VALID payload (the schema
+    // allows up to 100_000 messages). The insert must be batched.
+    const n = 11_000;
+    const bigSession = {
+      sessionId: 'sess_big',
+      title: 'Big share',
+      messages: Array.from({ length: n }, (_, i) => ({
+        role: i % 2 === 0 ? ('user' as const) : ('assistant' as const),
+        parts: [{ type: 'text', text: `m${i}` }],
+      })),
+    };
+    const res = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session: bigSession, preset: 'strict' }) });
+    expect(res.status).toBe(201);
+    const body = await json(res);
+    expect(body.messageCount).toBe(n);
+    const share = (await db.select().from(shares).where(eq(shares.token, body.token)))[0]!;
+    const [cnt] = await db.select({ n: sql<number>`count(*)::int` }).from(shareMessages).where(eq(shareMessages.shareId, share.id));
+    expect(cnt?.n).toBe(n);
+    await db.execute(sql`delete from shares where token = ${body.token}`);
+  }, 60_000);
 });
 
 describe('list / get / patch / delete', () => {
@@ -221,6 +245,29 @@ describe('chunked upload', () => {
     await db.execute(sql`delete from shares where token = ${tok}`);
   });
 
+  it('returns the chunk redaction summary in the chunk response (Round 9 C-F9)', async () => {
+    // The CLI aggregates per-chunk summaries into the final Redactions line;
+    // the chunk endpoint must return its own summary for that to work.
+    const createRes = await app.request('/api/chats', {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ session, preset: 'strict', expectedChunks: 2 }),
+    });
+    const created = await json(createRes);
+    const tok = created.token as string;
+    const res = await app.request(`/api/chats/${tok}/chunks`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({
+        uploadId: created.uploadId,
+        chunkSeq: 1,
+        messages: [{ role: 'user', parts: [{ type: 'text', text: 'AKIAABCDEFGHIJKLMNOP and AKIAQRSTUVWXYZ012345' }] }],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.summary).toEqual({ 'aws-access-key': 2 });
+    await db.execute(sql`delete from shares where token = ${tok}`);
+  });
+
   it('rejects an append with a wrong uploadId (400)', async () => {
     const createRes = await app.request('/api/chats', {
       method: 'POST', headers: auth,
@@ -230,7 +277,7 @@ describe('chunked upload', () => {
     const tok = created.token as string;
     const res = await app.request(`/api/chats/${tok}/chunks`, {
       method: 'POST', headers: auth,
-      body: JSON.stringify({ uploadId: 'f'.repeat(32), chunkSeq: 1, messages: [] }),
+      body: JSON.stringify({ uploadId: 'f'.repeat(32), chunkSeq: 1, messages: [{ role: 'user', parts: [{ type: 'text', text: 'x' }] }] }),
     });
     expect(res.status).toBe(400);
     expect((await json(res)).error.code).toBe('upload_id_mismatch');
@@ -240,9 +287,25 @@ describe('chunked upload', () => {
   it('404 for an append to an unknown token', async () => {
     const res = await app.request(`/api/chats/neverexisted/chunks`, {
       method: 'POST', headers: auth,
-      body: JSON.stringify({ uploadId: 'a'.repeat(32), chunkSeq: 1, messages: [] }),
+      body: JSON.stringify({ uploadId: 'a'.repeat(32), chunkSeq: 1, messages: [{ role: 'user', parts: [{ type: 'text', text: 'x' }] }] }),
     });
     expect(res.status).toBe(404);
+  });
+
+  it('rejects an empty chunk with 400 (Round 9 B-F7)', async () => {
+    // An empty chunk is a no-op that used to be accepted, and a duplicate
+    // empty chunk was NOT a 409 (the dup check counts rows, and 0 rows look
+    // like "not uploaded"). .min(1) on the schema makes both a 400.
+    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session, expectedChunks: 2 }) });
+    const f = await json(first);
+    expect(first.status).toBe(201);
+    const res = await app.request(`/api/chats/${f.token}/chunks`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ uploadId: f.uploadId, chunkSeq: 1, messages: [] }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error.code).toBe('validation');
+    await db.execute(sql`delete from shares where token = ${f.token}`);
   });
 });
 
@@ -355,5 +418,38 @@ describe('per-share cap + contiguous chunks (Chain B)', () => {
     expect(chunk.status).toBe(413);
     expect((await json(chunk)).error.code).toBe('too_large');
     await db.execute(sql`delete from shares where token = ${f.token}`);
+  });
+});
+
+describe('stale incomplete-upload cleanup (Round 9 B-F6)', () => {
+  it('hard-deletes incomplete uploads older than 24h; keeps fresh, complete, and revoked shares', async () => {
+    // incomplete + old -> deleted (with its partial messages via FK cascade)
+    const staleRes = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session, preset: 'strict', expectedChunks: 2 }) });
+    const stale = await json(staleRes);
+    expect(staleRes.status).toBe(201);
+    const staleShare = (await db.select().from(shares).where(eq(shares.token, stale.token)))[0]!;
+    await db.execute(sql`update shares set created_at = now() - interval '25 hours' where token = ${stale.token}`);
+    // incomplete + fresh -> kept (the upload may still be in flight)
+    const freshRes = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session, preset: 'strict', expectedChunks: 2 }) });
+    const fresh = await json(freshRes);
+    // complete + old -> kept (a finished share is never reclaimed by this job)
+    const doneRes = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session, preset: 'strict' }) });
+    const done = await json(doneRes);
+    await db.execute(sql`update shares set created_at = now() - interval '25 hours' where token = ${done.token}`);
+    // revoked + old -> kept (owner-visible; revocation is the owner's delete)
+    const revRes = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session, preset: 'strict' }) });
+    const rev = await json(revRes);
+    await app.request(`/api/chats/${rev.token}`, { method: 'PATCH', headers: auth, body: JSON.stringify({ revoke: true }) });
+    await db.execute(sql`update shares set created_at = now() - interval '25 hours' where token = ${rev.token}`);
+
+    const n = await cleanupStaleUploads(db);
+    expect(n).toBe(1);
+    const rows = await db.select().from(shares).where(eq(shares.token, stale.token));
+    expect(rows).toHaveLength(0);
+    const leftover = await db.select().from(shareMessages).where(eq(shareMessages.shareId, staleShare.id));
+    expect(leftover).toHaveLength(0);
+    const kept = await db.select().from(shares).where(inArray(shares.token, [stale.token, fresh.token, done.token, rev.token]));
+    expect(kept.map((s) => s.token).sort()).toEqual([done.token, fresh.token, rev.token].sort());
+    await db.execute(sql`delete from shares where token in (${done.token}, ${fresh.token}, ${rev.token})`);
   });
 });

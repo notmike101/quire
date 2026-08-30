@@ -43,6 +43,23 @@ function isUniqueViolation(e: unknown): boolean {
   return err?.code === '23505' || err?.cause?.code === '23505';
 }
 
+// Round 9 (B-F1): Postgres caps a single statement at 65535 bind parameters.
+// Each share_messages row binds 6 (share_id, chunk_seq, seq, role, time, parts —
+// nulls count), so a single multi-row INSERT of 10924+ rows is a 500 on a VALID
+// payload (the schema allows up to 100_000 messages per session). Batch the
+// values into statements of at most 10_000 rows (60_000 params, under the cap).
+const INSERT_BATCH_ROWS = 10_000;
+type MessageInsert = {
+  insert: (table: typeof shareMessages) => {
+    values: (rows: typeof shareMessages.$inferInsert[]) => Promise<unknown>;
+  };
+};
+async function insertMessagesBatched(tx: MessageInsert, rows: typeof shareMessages.$inferInsert[]): Promise<void> {
+  for (let i = 0; i < rows.length; i += INSERT_BATCH_ROWS) {
+    await tx.insert(shareMessages).values(rows.slice(i, i + INSERT_BATCH_ROWS));
+  }
+}
+
 export function ownerRoutes({ db, config }: OwnerDeps): Hono {
   const app = new Hono();
 
@@ -60,8 +77,10 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
       return c.json({ error: { code: 'validation', message: parsed.error.issues[0]?.message ?? 'invalid body' } }, 400);
     }
     // Round 3: 'none' is rejected at the API boundary — a direct API call could
-    // otherwise store and serve a fully unredacted share (the CLI's --confirm-raw
-    // gate is client-side only). The CLI never sends 'none' (it throws first).
+    // otherwise store and serve a fully unredacted share (the core invariant:
+    // only redacted content is ever stored or served). Round 9 (F7): the CLI
+    // now rejects 'none' client-side (publish.ts) — the old --confirm-raw
+    // escape hatch was dead (it passed the client gate, then hit this 400).
     if (parsed.data.preset === 'none') {
       return c.json({ error: { code: 'validation', message: 'preset "none" (no redaction) is not accepted by the API' } }, 400);
     }
@@ -113,18 +132,17 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
         })
         .returning();
       if (!row) throw new Error('insert returned no row');
-      await tx
-        .insert(shareMessages)
-        .values(
-          prepared.messages.map((m, i) => ({
-            shareId: row.id,
-            chunkSeq: 0,
-            seq: i + 1,
-            role: m.role,
-            time: m.time ? new Date(m.time) : null,
-            parts: m.parts,
-          })),
-        );
+      await insertMessagesBatched(
+        tx,
+        prepared.messages.map((m, i) => ({
+          shareId: row.id,
+          chunkSeq: 0,
+          seq: i + 1,
+          role: m.role,
+          time: m.time ? new Date(m.time) : null,
+          parts: m.parts,
+        })),
+      );
       return row;
     });
     return c.json({ token, url: `/chats/${token}`, uploadId, chunkCount: 1, summary: prepared.summary, bytes: prepared.bytes, messageCount: prepared.messageCount }, 201);
@@ -195,18 +213,17 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     //       be overshot by up to one 20 MB request).
     try {
       const updated = await db.transaction(async (tx) => {
-        await tx
-          .insert(shareMessages)
-          .values(
-            prepared.messages.map((m, i) => ({
-              shareId: share.id,
-              chunkSeq,
-              seq: i + 1,
-              role: m.role,
-              time: m.time ? new Date(m.time) : null,
-              parts: m.parts,
-            })),
-          );
+        await insertMessagesBatched(
+          tx,
+          prepared.messages.map((m, i) => ({
+            shareId: share.id,
+            chunkSeq,
+            seq: i + 1,
+            role: m.role,
+            time: m.time ? new Date(m.time) : null,
+            parts: m.parts,
+          })),
+        );
         // Chain B: recompute messageCount from the rows (count(*)) rather than a
         // blind +N; bytes is the exact running total (each chunk's bytes are known
         // at ingest). bytes is bigint now, so the arithmetic stays in SQL.
@@ -228,7 +245,10 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
         if (!row) throw new ShareCapExceeded();
         return row;
       });
-      return c.json({ ok: true, messageCount: updated.messageCount, bytes: updated.bytes });
+      // Round 9 (C-F9): return this chunk's redaction summary so the CLI can
+      // aggregate redaction counts across the whole chunked session (the
+      // create response only carries chunk 0's summary).
+      return c.json({ ok: true, messageCount: updated.messageCount, bytes: updated.bytes, summary: prepared.summary });
     } catch (e) {
       if (e instanceof ShareCapExceeded) {
         return c.json({ error: { code: 'too_large', message: 'Share would exceed the 1 GB per-share cap' } }, 413);
