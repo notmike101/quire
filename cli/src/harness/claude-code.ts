@@ -1,4 +1,5 @@
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
+import { closeSync, createReadStream, existsSync, openSync, readdirSync, readSync, statSync, type Stats } from 'node:fs';
+import { createInterface } from 'node:readline';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
@@ -36,19 +37,36 @@ interface CcEvent {
   message?: { role?: string; model?: string; content?: string | CcBlock[] };
 }
 
-function jsonlEvents(file: string): CcEvent[] {
-  return readFileSync(file, 'utf8')
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((l) => {
+// Round 9 (C-F3): stream the .jsonl line by line instead of readFileSync-ing
+// the whole file. A multi-GB session file would otherwise be fully
+// materialized as one string (plus the split array of lines) before parsing.
+// Malformed lines are skipped, mirroring the old readFileSync path.
+async function* jsonlEventsStream(file: string): AsyncGenerator<CcEvent> {
+  const rl = createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
+  try {
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (trimmed === '') continue;
       try {
-        return JSON.parse(l) as CcEvent;
+        yield JSON.parse(trimmed) as CcEvent;
       } catch {
-        return null;
+        // malformed line: skip
       }
-    })
-    .filter((e): e is CcEvent => e !== null);
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+// Round 9 (C-F12): a broken symlink (or a file removed between readdir and
+// stat) makes statSync throw; session discovery must skip the entry, not
+// crash the whole list/load.
+function safeStat(p: string): Stats | null {
+  try {
+    return statSync(p);
+  } catch {
+    return null;
+  }
 }
 
 function toolResultText(block: CcBlock): string {
@@ -94,11 +112,13 @@ export function makeClaudeCodeAdapter(
     const files: string[] = [];
     for (const entry of readdirSync(projectsDir)) {
       const p = join(projectsDir, entry);
-      if (statSync(p).isDirectory()) {
+      const st = safeStat(p);
+      if (st === null) continue; // broken symlink / vanished between readdir and stat
+      if (st.isDirectory()) {
         for (const f of readdirSync(p)) {
           if (f.endsWith('.jsonl')) files.push(join(p, f));
         }
-      } else if (entry.endsWith('.jsonl')) {
+      } else if (st.isFile() && entry.endsWith('.jsonl')) {
         files.push(p);
       }
     }
@@ -167,12 +187,17 @@ function headEvents(file: string, maxLines: number, maxBytes = 256 * 1024): CcEv
     name: 'claude-code',
 
     async listSessions(): Promise<HarnessSessionInfo[]> {
-      const infos = sessionFiles().map((file) => ({
-        id: file.split(/[\\/]/).pop()!.replace(/\.jsonl$/, ''),
-        title: titleFor(file),
-        updatedAt: new Date(statSync(file).mtimeMs).toISOString(),
-        isSubagent: false,
-      }));
+      const infos: HarnessSessionInfo[] = [];
+      for (const file of sessionFiles()) {
+        const st = safeStat(file);
+        if (st === null) continue; // vanished between sessionFiles() and here
+        infos.push({
+          id: file.split(/[\\/]/).pop()!.replace(/\.jsonl$/, ''),
+          title: titleFor(file),
+          updatedAt: new Date(st.mtimeMs).toISOString(),
+          isSubagent: false,
+        });
+      }
       infos.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       return infos.slice(0, 50);
     },
@@ -205,7 +230,7 @@ function headEvents(file: string, maxLines: number, maxBytes = 256 * 1024): CcEv
       };
       // Round 8: one cumulative image budget for the whole session.
       const imageBudget: ImageBudget = { remaining: maxImageBytes };
-      for (const ev of jsonlEvents(file)) {
+      for await (const ev of jsonlEventsStream(file)) {
         if (ev.isSidechain) continue;
         if (ev.type === 'summary' && typeof ev.summary === 'string' && !title) title = ev.summary;
         const atCap = shapedCount >= maxMessages;

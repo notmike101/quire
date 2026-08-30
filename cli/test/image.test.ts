@@ -209,4 +209,23 @@ describe('readArtifactDataUri component match (Chain A)', () => {
     writeFileSync(bigPath, Buffer.alloc(MAX_IMAGE_BYTES + 1, 0));
     expect(readArtifactDataUri(dir, 'bigid')).toBeNull();
   });
+
+  it('still reads an artifact when the artifact DIR is a symlink (C-F5 regression)', () => {
+    // The containment check canonicalizes the dir; a symlinked dir whose
+    // target contains the file must still resolve — the read must use the
+    // SAME canonical path the check validated (no check-then-read TOCTOU).
+    const real = mkdtempSync(join(tmpdir(), 'quire-art-real-'));
+    const link = mkdtempSync(join(tmpdir(), 'quire-art-link-'));
+    try {
+      writeFileSync(join(real, 'r-media-1-symid.png'), `data:image/png;base64,${PNG_1X1}`);
+      const linkDir = join(link, 'artifacts');
+      symlinkSync(real, linkDir, 'dir');
+      const r = readArtifactDataUri(linkDir, 'symid');
+      expect(r).not.toBeNull();
+      expect(r!.mime).toBe('image/png');
+    } finally {
+      rmSync(real, { recursive: true, force: true });
+      rmSync(link, { recursive: true, force: true });
+    }
+  });
 });

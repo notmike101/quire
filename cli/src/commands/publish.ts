@@ -5,6 +5,7 @@ import { QuireApi, QuireApiError, type PreviewResponse } from '../api.js';
 import { chunkMessages, PREVIEW_MAX_BYTES } from '../chunk.js';
 import { confirm } from '../prompt.js';
 import { parseExpiry } from '../expires.js';
+import { stripControlChars } from '../shape.js';
 
 // --password values that mean "generate one for me" rather than a literal secret.
 const RANDOM_PASSWORD_WORDS = new Set(['random', 'generate', 'auto']);
@@ -26,7 +27,6 @@ export interface PublishValues {
   preset?: string;
   yes?: boolean;
   noChunk?: boolean;
-  confirmRaw?: boolean;
 }
 
 export interface PublishDeps {
@@ -36,18 +36,17 @@ export interface PublishDeps {
   chunker?: (messages: ShapedMessage[]) => ShapedMessage[][];
 }
 
-const PRESETS = ['strict', 'normal', 'none'];
+const PRESETS = ['strict', 'normal'];
 
 function clip(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n)}…`;
 }
 
-function printPreview(messages: ShapedMessage[], summary: Record<string, number>, preset: string, out: (l: string) => void): void {
-  if (preset === 'none') out('\n⚠  preset "none": NO redaction applied — the raw transcript will be published.');
+function printPreview(messages: ShapedMessage[], summary: Record<string, number>, out: (l: string) => void): void {
   out('\n--- redacted preview (exactly what will be stored) ---');
   for (const m of messages) {
     for (const p of m.parts) {
-      if (p.type === 'text') out(`[${m.role}] ${clip(p.text ?? '', 200)}`);
+      if (p.type === 'text') out(`[${m.role}] ${clip(stripControlChars(p.text ?? ''), 200)}`);
       else if (p.type === 'reasoning') out(`[${m.role}] (reasoning, ${p.text?.length ?? 0} chars)`);
       else if (p.type === 'system') out(`[${m.role}] (system notice, ${p.text?.length ?? 0} chars)`);
       else if (p.type === 'tool') out(`[${m.role}] tool ${p.tool ?? '?'} (${p.status ?? 'pending'})`);
@@ -91,17 +90,20 @@ export async function runPublish(values: PublishValues, positionals: string[], d
 
   const session = await resolveSession(adapter, values, positionals);
   const shaped = await adapter.loadSession(session.id);
-  out(`Sharing: ${shaped.title} (${shaped.sessionId}) — ${shaped.messages.length} messages`);
+  // Round 9 (C-F10): the title comes from the session file — strip control
+  // chars so an ANSI escape / NUL cannot forge terminal output.
+  out(`Sharing: ${stripControlChars(shaped.title)} (${shaped.sessionId}) — ${shaped.messages.length} messages`);
 
   const preset = values.preset ?? 'strict';
-  if (!PRESETS.includes(preset)) throw new Error(`unknown --preset "${preset}" (use ${PRESETS.join(', ')})`);
-  // Chain D: a fully unredacted publish is high-consequence and must be an
-  // explicit, deliberate act. --yes alone is not enough — the caller must
-  // pass --confirm-raw. This aborts BEFORE preview/create, so nothing is
-  // published.
-  if (preset === 'none' && values.confirmRaw !== true) {
-    throw new Error('refusing to publish unredacted without --confirm-raw (add --confirm-raw to publish a fully unredacted share)');
+  // Round 9 (F7): 'none' (no redaction) is rejected at the API boundary — the
+  // server never stores unredacted content ("only redacted content is ever
+  // stored or served" is the core invariant). The old --confirm-raw escape
+  // hatch was dead: it passed the client gate, then the server 400'd. Reject
+  // client-side with an actionable message instead.
+  if (preset === 'none') {
+    throw new Error('preset "none" (no redaction) is not supported — the server rejects unredacted shares. Use "normal" (loosest) or "strict".');
   }
+  if (!PRESETS.includes(preset)) throw new Error(`unknown --preset "${preset}" (use ${PRESETS.join(', ')})`);
   const expiresAt = values.expires ? parseExpiry(values.expires) : undefined;
 
   // Resolve --password: a "random"/"generate"/"auto" keyword becomes a fresh
@@ -120,7 +122,7 @@ export async function runPublish(values: PublishValues, positionals: string[], d
   const payloadBytes = Buffer.byteLength(JSON.stringify(shaped));
   if (payloadBytes <= PREVIEW_MAX_BYTES) {
     const preview: PreviewResponse = await api.preview(shaped, preset);
-    printPreview(preview.messages as ShapedMessage[], preview.summary, preset, out);
+    printPreview(preview.messages as ShapedMessage[], preview.summary, out);
   } else {
     out(`\nSession is ${(payloadBytes / 1024 / 1024).toFixed(1)} MB — over the 20 MB per-request cap, so the redacted preview is skipped${values.noChunk ? '' : '; it will be uploaded in chunks'}.`);
   }
@@ -147,7 +149,7 @@ export async function runPublish(values: PublishValues, positionals: string[], d
       throw err;
     }
     const counts = Object.entries(created.summary);
-    out(`\nPublished: ${api.baseUrl}${created.url}`);
+    out(`\nPublished: ${api.origin}${created.url}`);
     out(`Messages: ${created.messageCount} · Stored: ${created.bytes} bytes · Redactions: ${counts.length === 0 ? 'none' : counts.map(([k, v]) => `${v} ${k}`).join(', ')}`);
     return;
   }
@@ -161,7 +163,7 @@ export async function runPublish(values: PublishValues, positionals: string[], d
     // Common path: one request, unchanged behavior.
     const created = await api.create(shaped, opts);
     const counts = Object.entries(created.summary);
-    out(`\nPublished: ${api.baseUrl}${created.url}`);
+    out(`\nPublished: ${api.origin}${created.url}`);
     out(`Messages: ${created.messageCount} · Stored: ${created.bytes} bytes · Redactions: ${counts.length === 0 ? 'none' : counts.map(([k, v]) => `${v} ${k}`).join(', ')}`);
     return;
   }
@@ -174,12 +176,20 @@ export async function runPublish(values: PublishValues, positionals: string[], d
   // hidden (404) until the upload completes. Single-request paths leave this
   // unset (server default 1).
   const created = await api.create(head, { ...opts, expectedChunks: chunks.length });
+  // Round 9 (C-F9): the create response carries only chunk 0's redaction
+  // summary; each chunk response carries its own. Aggregate them so the final
+  // "Redactions:" line reflects the WHOLE session, not just the first chunk.
+  // `?? {}` tolerates a server build that predates the chunk summary.
+  const totalSummary: Record<string, number> = { ...created.summary };
   for (let i = 1; i < chunks.length; i++) {
     const chunkBytes = Buffer.byteLength(JSON.stringify(chunks[i]));
     out(`Uploading chunk ${i + 1}/${chunks.length} (${(chunkBytes / 1024 / 1024).toFixed(1)} MB)…`);
-    await api.createChunk(created.token, { uploadId: created.uploadId, chunkSeq: i, messages: chunks[i]! });
+    const chunk = await api.createChunk(created.token, { uploadId: created.uploadId, chunkSeq: i, messages: chunks[i]! });
+    for (const [rule, n] of Object.entries(chunk.summary ?? {})) {
+      totalSummary[rule] = (totalSummary[rule] ?? 0) + n;
+    }
   }
-  const counts = Object.entries(created.summary);
-  out(`\nPublished: ${api.baseUrl}${created.url}`);
+  const counts = Object.entries(totalSummary);
+  out(`\nPublished: ${api.origin}${created.url}`);
   out(`Messages: ${shaped.messages.length} · Redactions: ${counts.length === 0 ? 'none' : counts.map(([k, v]) => `${v} ${k}`).join(', ')}`);
 }

@@ -1,4 +1,5 @@
 import type { ShapedPart } from './harness/types.js';
+import { truncatePartText } from './shape.js';
 
 /**
  * Harness-injected context. The harness (ZCode, Claude Code) prepends
@@ -227,25 +228,40 @@ export function splitThinkText(text: string): ThinkSegment[] {
 }
 
 /**
- * Rewrite a message's text parts, splitting out literal `<think>` blocks into
+ * Rewrite a message's text parts, splitting out literal `think` blocks into
  * `reasoning` parts. Non-text parts pass through untouched. A text part that
  * yields no reasoning segment is left as-is.
+ *
+ * Round 9 (C-F4): this is the OUTERMOST part transform — both harness
+ * adapters run every message's parts through it — so it also caps every
+ * text/reasoning/system part's text at MAX_PART_TEXT_BYTES in one chokepoint.
+ * Text parts carrying a think tag are SPLIT first (on the uncapped text) and
+ * each resulting segment capped: capping first could truncate past the closing
+ * tag of an oversized block, leaving an unclosed tag that splitThinkText
+ * would fail to split.
  */
 export function extractReasoningParts(parts: ShapedPart[]): ShapedPart[] {
   const out: ShapedPart[] = [];
   for (const p of parts) {
+    if (p.type === 'reasoning' || p.type === 'system') {
+      const capped = truncatePartText(p.text ?? '');
+      out.push(capped === p.text ? p : { ...p, text: capped });
+      continue;
+    }
     if (p.type !== 'text' || typeof p.text !== 'string') {
       out.push(p);
       continue;
     }
-    // Fast path: no think tag at all → nothing to do, keep the original part.
+    // Fast path: no think tag at all → only the size cap can apply.
     if (!p.text.includes('think')) {
-      out.push(p);
+      const capped = truncatePartText(p.text);
+      out.push(capped === p.text ? p : { type: 'text', text: capped });
       continue;
     }
     const segments = splitThinkText(p.text);
     for (const seg of segments) {
-      out.push(seg.kind === 'reasoning' ? { type: 'reasoning', text: seg.text } : { type: 'text', text: seg.text });
+      const capped = truncatePartText(seg.text);
+      out.push(seg.kind === 'reasoning' ? { type: 'reasoning', text: capped } : { type: 'text', text: capped });
     }
   }
   return out;

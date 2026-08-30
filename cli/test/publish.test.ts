@@ -28,6 +28,7 @@ const fakeAdapter = {
 };
 const fakeApi = {
   baseUrl: 'https://srv.example.com',
+  origin: 'https://srv.example.com',
   preview: vi.fn(async () => ({ messages: [], summary: { 'aws-access-key': 1 }, bytes: 10, messageCount: 1 })),
   create: vi.fn(async (_session: unknown, _opts?: { preset?: string; password?: string; expiresAt?: string }) => ({ token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, summary: { 'aws-access-key': 1 }, bytes: 10, messageCount: 1 })),
 };
@@ -75,10 +76,9 @@ describe('runPublish (unit)', () => {
 
   it('passes the preset through to preview and create', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
-    // Chain D: a `none` preset now requires confirmRaw to proceed.
-    await runPublish({ yes: true, preset: 'none', confirmRaw: true }, ['sess_a'], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} });
-    expect(fakeApi.preview).toHaveBeenCalledWith(expect.anything(), 'none');
-    expect(fakeApi.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ preset: 'none' }));
+    await runPublish({ yes: true, preset: 'normal' }, ['sess_a'], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} });
+    expect(fakeApi.preview).toHaveBeenCalledWith(expect.anything(), 'normal');
+    expect(fakeApi.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ preset: 'normal' }));
   });
 
   it('--password random generates a secret, prints it once, and sends it to create', async () => {
@@ -132,6 +132,7 @@ describe('runPublish (unit)', () => {
     const calls: string[] = [];
     const chunkyApi = {
       baseUrl: 'https://srv.example.com',
+      origin: 'https://srv.example.com',
       preview: vi.fn(async () => ({ messages: [], summary: {}, bytes: 0, messageCount: 6 })),
       create: vi.fn(async () => {
         calls.push('create');
@@ -169,6 +170,7 @@ describe('runPublish (unit)', () => {
     const calls: string[] = [];
     const hugeApi = {
       baseUrl: 'https://srv.example.com',
+      origin: 'https://srv.example.com',
       preview: vi.fn(async () => {
         throw new Error('preview must not be called for a >20 MB session (it would 413)');
       }),
@@ -193,6 +195,7 @@ describe('runPublish (unit)', () => {
     const calls: string[] = [];
     const noChunkApi = {
       baseUrl: 'https://srv.example.com',
+      origin: 'https://srv.example.com',
       preview: vi.fn(async () => ({ messages: [], summary: {}, bytes: 0, messageCount: 6 })),
       create: vi.fn(async () => {
         calls.push('create');
@@ -207,7 +210,7 @@ describe('runPublish (unit)', () => {
     expect(calls).toEqual(['create']);
   });
 
-  it('refuses --preset none without --confirm-raw even under --yes (Chain D)', async () => {
+  it('refuses --preset none even under --yes (F7: no-redaction is server-rejected)', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
     const api = {
       preview: vi.fn(async () => ({ messages: [], summary: {}, bytes: 0, messageCount: 0 })),
@@ -215,19 +218,88 @@ describe('runPublish (unit)', () => {
     };
     await expect(
       runPublish({ current: true, yes: true, preset: 'none' }, [], { adapter: fakeAdapter as never, api: api as never, out: () => {} }),
-    ).rejects.toThrow(/confirm-raw/);
+    ).rejects.toThrow(/not supported/);
     expect(api.preview).not.toHaveBeenCalled();
     expect(api.create).not.toHaveBeenCalled();
   });
 
-  it('publishes --preset none with --confirm-raw (Chain D)', async () => {
+  it('refuses --preset none even with a legacy confirmRaw value (F7: the escape hatch is gone)', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
     const api = {
       preview: vi.fn(async () => ({ messages: [], summary: {}, bytes: 0, messageCount: 0 })),
-      create: vi.fn(async () => ({ token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, uploadId: 'u'.repeat(32), chunkCount: 1, summary: {}, bytes: 0, messageCount: 0 })),
+      create: vi.fn(),
     };
-    await runPublish({ current: true, yes: true, preset: 'none', confirmRaw: true }, [], { adapter: fakeAdapter as never, api: api as never, out: () => {} });
-    expect(api.create).toHaveBeenCalledTimes(1);
+    await expect(
+      runPublish({ current: true, yes: true, preset: 'none', ...( { confirmRaw: true } as object) }, [], { adapter: fakeAdapter as never, api: api as never, out: () => {} }),
+    ).rejects.toThrow(/not supported/);
+    expect(api.create).not.toHaveBeenCalled();
+  });
+
+  it('prints the published URL from api.origin, not baseUrl (C-F6: no userinfo leak)', async () => {
+    // A server URL configured with credentials must not leak them into the
+    // printed share URL — the origin (scheme + host + port) is what gets shown.
+    const { runPublish } = await import('../src/commands/publish.js');
+    const leakyApi = {
+      baseUrl: 'https://user:secret@srv.example.com',
+      origin: 'https://srv.example.com',
+      preview: vi.fn(async () => ({ messages: [], summary: {}, bytes: 0, messageCount: 1 })),
+      create: vi.fn(async () => ({ token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, summary: {}, bytes: 0, messageCount: 1 })),
+    };
+    const lines: string[] = [];
+    await runPublish({ current: true, yes: true }, [], { adapter: fakeAdapter as never, api: leakyApi as never, out: (l) => lines.push(l) });
+    expect(lines.join('\n')).toContain('https://srv.example.com/chats/');
+    expect(lines.join('\n')).not.toContain('user:secret@');
+  });
+
+  it('aggregates per-chunk redaction summaries across the chunked upload (C-F9)', async () => {
+    // The create response only covers chunk 0; each createChunk returns its
+    // own summary, which must be accumulated into the final Redactions line.
+    const { runPublish } = await import('../src/commands/publish.js');
+    const bigAdapter = {
+      name: 'zcode',
+      listSessions: vi.fn(async () => [{ id: 'sess_agg', title: 'Agg', updatedAt: '', isSubagent: false }]),
+      resolveCurrent: vi.fn(async () => ({ id: 'sess_agg', title: 'Agg', updatedAt: '', isSubagent: false })),
+      loadSession: vi.fn(async (id: string) => ({
+        sessionId: id, title: 'Agg',
+        messages: Array.from({ length: 6 }, (_, i) => ({ role: 'user' as const, parts: [{ type: 'text' as const, text: `x${i}` }] })),
+      })),
+    };
+    const aggApi = {
+      baseUrl: 'https://srv.example.com',
+      origin: 'https://srv.example.com',
+      preview: vi.fn(async () => ({ messages: [], summary: {}, bytes: 0, messageCount: 6 })),
+      create: vi.fn(async () => ({ token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, uploadId: 'a'.repeat(32), chunkCount: 1, summary: { 'aws-access-key': 1 }, bytes: 0, messageCount: 2 })),
+      createChunk: vi.fn(async (_tok: string, _body: { chunkSeq: number }) => ({ ok: true, messageCount: 4, bytes: 0, summary: { 'generic-secret': 2 } })),
+    };
+    const chunker = vi.fn((msgs: unknown[]) => {
+      const arr = msgs as unknown[];
+      return [arr.slice(0, 2), arr.slice(2, 4), arr.slice(4, 6)];
+    });
+    const lines: string[] = [];
+    await runPublish({ current: true, yes: true }, [], { adapter: bigAdapter as never, api: aggApi as never, chunker: chunker as never, out: (l) => lines.push(l) });
+    const redactions = lines.find((l) => l.startsWith('Messages:'))!;
+    expect(redactions).toContain('1 aws-access-key');
+    expect(redactions).toContain('4 generic-secret'); // 2 chunks × 2
+  });
+
+  it('strips control characters from the session title in the Sharing line (C-F10)', async () => {
+    // A session title with ANSI escapes / NUL bytes must not inject terminal
+    // sequences into the CLI's own output.
+    const { runPublish } = await import('../src/commands/publish.js');
+    const evilAdapter = {
+      ...fakeAdapter,
+      resolveCurrent: vi.fn(async () => ({ id: 'sess_a', title: 'A\x00B\x1b[31mC', updatedAt: '', isSubagent: false })),
+      loadSession: vi.fn(async (id: string) => ({
+        sessionId: id, title: 'A\x00B\x1b[31mC',
+        messages: [{ role: 'user', parts: [{ type: 'text', text: 'hi' }] }],
+      })),
+    };
+    const lines: string[] = [];
+    await runPublish({ current: true, yes: true }, [], { adapter: evilAdapter as never, api: fakeApi as never, out: (l) => lines.push(l) });
+    const sharing = lines.find((l) => l.startsWith('Sharing:'))!;
+    expect(sharing).toContain('AB[31mC');
+    expect(sharing).not.toContain('\x1b');
+    expect(sharing).not.toContain('\x00');
   });
 });
 
@@ -378,6 +450,37 @@ describe('runPublish (process)', () => {
     expect(createCalls).toHaveLength(3); // nothing new published
   });
 
+  it('a non-TTY prompt with no input aborts after the timeout (C-F2)', { timeout: 30000 }, async () => {
+    // C-F2: a piped (non-TTY) stdin that stays OPEN with no input must not
+    // hang forever — the prompt times out (env-configurable) and aborts.
+    const before = createCalls.length;
+    const child = spawn(process.execPath, ['--import', 'tsx', indexTs, 'publish', '--current', '--harness', 'zcode'], {
+      cwd: cliRoot,
+      env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome, QUIRE_SERVER_URL: baseUrl, QUIRE_API_KEY: 'k'.repeat(64), QUIRE_PROMPT_TIMEOUT_MS: '300' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let code: number | null = null;
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    // stdin is left OPEN (no write, no end): the prompt must time out, not hang.
+    const started = Date.now();
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(() => child.kill('SIGKILL'), 20000);
+      child.on('close', (c) => {
+        clearTimeout(t);
+        code = c;
+        resolve();
+      });
+    });
+    const elapsed = Date.now() - started;
+    expect(code, `stderr: ${stderr}`).not.toBe(0);
+    expect(`${stdout}${stderr}`).toContain('Aborted. Nothing was published.');
+    expect(elapsed).toBeLessThan(20000); // didn't hit the kill timeout
+    expect(createCalls.length).toBe(before); // nothing new published
+  });
+
   it('revoke --yes revokes with no prompt (agent path)', { timeout: 30000 }, async () => {
     // `quire revoke <token> --yes` must skip the confirm prompt and call DELETE
     // without reading stdin. The mock server answers DELETE /api/chats/:token.
@@ -386,24 +489,21 @@ describe('runPublish (process)', () => {
     expect(stdout).toContain('Revoked');
   });
 
-  it('refuses --preset none without --confirm-raw even under --yes (Chain D, real binary)', { timeout: 30000 }, async () => {
-    // Exercises the real parseArgs path: the kebab --confirm-raw must be a
-    // recognized option (Node does not map kebab→camel), and `none` must abort
-    // before any create call.
+  it('refuses --preset none even under --yes (F7, real binary)', { timeout: 30000 }, async () => {
+    // `none` is rejected client-side with an actionable message before any
+    // create call (the server would 400 it anyway).
     const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode', '--preset', 'none', '--yes'], '');
     expect(code, `stderr: ${stderr}`).not.toBe(0);
-    expect(`${stdout}${stderr}`).toContain('confirm-raw');
+    expect(`${stdout}${stderr}`).toContain('not supported');
     expect(createCalls).toHaveLength(3); // nothing new published
   });
 
-  it('publishes --preset none with --confirm-raw (Chain D, real binary)', { timeout: 30000 }, async () => {
-    // The kebab --confirm-raw flag must parse (not "Unknown option") and allow
-    // the unredacted publish to proceed.
+  it('rejects the removed --confirm-raw flag as an unknown option (F7, real binary)', { timeout: 30000 }, async () => {
+    // The --confirm-raw escape hatch was dead (the server 400'd it), so the
+    // flag is gone from parseArgs entirely: it must now be "Unknown option".
     const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode', '--preset', 'none', '--confirm-raw', '--yes'], '');
-    expect(code, `stderr: ${stderr}`).toBe(0);
-    expect(stdout).toContain('/chats/');
-    expect(createCalls).toHaveLength(4);
-    const body = createCalls[3] as { preset?: string };
-    expect(body.preset).toBe('none');
+    expect(code, `stderr: ${stderr}`).not.toBe(0);
+    expect(`${stdout}${stderr}`).toContain('Unknown option');
+    expect(createCalls).toHaveLength(3); // nothing new published
   });
 });

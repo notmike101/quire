@@ -47,15 +47,66 @@ export class QuireApi {
     this.apiKey = config.apiKey;
   }
 
+  /**
+   * Round 9 (C-F6): the origin (scheme + host + port) of the configured
+   * server — no userinfo, no path. User-facing URLs are built from this so a
+   * `https://user:pass@host/` base URL never leaks credentials into printed
+   * output.
+   */
+  get origin(): string {
+    try {
+      return new URL(this.baseUrl).origin;
+    } catch {
+      return this.baseUrl;
+    }
+  }
+
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${this.apiKey}`,
-        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      // Round 9 (C-F6b): Node's fetch() throws "Request cannot be constructed
+      // from a URL that includes credentials" for a baseUrl like
+      // http://user:pass@host — a pattern that is valid in curl/browsers.
+      // Quire authenticates with the Bearer API key, so userinfo is not an
+      // auth mechanism here: strip it so such a base URL degrades to a plain
+      // request instead of crashing with a raw TypeError.
+      const u = new URL(`${this.baseUrl}${path}`);
+      u.username = '';
+      u.password = '';
+      res = await fetch(u, {
+        method,
+        headers: {
+          authorization: `Bearer ${this.apiKey}`,
+          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        // Round 9 (C-F1): never follow a server redirect. With 'manual' a 3xx
+        // comes back unfollowed (res.ok false) and is refused below — a
+        // followed redirect could point the bearer key at an attacker host.
+        redirect: 'manual',
+        // Round 9 (C-F8): bound the request; an unresponsive server must not
+        // hang the CLI (an agent would block on it indefinitely).
+        signal: AbortSignal.timeout(300_000),
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'TimeoutError') {
+        throw new QuireApiError(0, 'timeout', 'request timed out after 5 minutes');
+      }
+      // Round 9 (C-F6b): a misconfigured server URL must produce an actionable
+      // error, not a raw TypeError from URL/fetch internals.
+      if (err instanceof TypeError && err.message.includes('Invalid URL')) {
+        throw new QuireApiError(0, 'invalid_url', `invalid server URL: ${this.baseUrl}`);
+      }
+      throw err;
+    }
+    // Round 9 (C-F1): a redirect response is a failure, not a navigation.
+    if (res.status >= 300 && res.status < 400) {
+      throw new QuireApiError(
+        res.status,
+        'redirect',
+        `server redirected to ${res.headers.get('location') ?? 'an unknown location'}; refusing to follow`,
+      );
+    }
     const text = await res.text();
     let json: unknown = null;
     try {
@@ -84,7 +135,7 @@ export class QuireApi {
   createChunk(
     token: string,
     body: { uploadId: string; chunkSeq: number; messages: unknown[] },
-  ): Promise<{ ok: boolean; messageCount: number; bytes: number }> {
+  ): Promise<{ ok: boolean; messageCount: number; bytes: number; summary: Record<string, number> }> {
     return this.request('POST', `/api/chats/${token}/chunks`, body);
   }
 

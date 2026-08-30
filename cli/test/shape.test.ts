@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { truncateOutput, truncateInput } from '../src/shape.js';
+import { truncateOutput, truncateInput, truncatePartText, stripControlChars } from '../src/shape.js';
 
 describe('truncateOutput', () => {
   it('passes through short output unchanged', () => {
@@ -44,5 +44,27 @@ describe('truncateInput', () => {
     const evil: unknown = { toJSON: () => { throw new Error('boom'); } };
     expect(() => JSON.stringify(evil)).toThrow();
     expect(truncateInput(evil)).toBe(evil);
+  });
+});
+
+describe('truncatePartText (Round 9 C-F4)', () => {
+  it('passes a short part through unchanged (same reference)', () => {
+    const s = 'short';
+    expect(truncatePartText(s)).toBe(s);
+  });
+  it('caps a >256 KB text part and says so', () => {
+    const out = truncatePartText('y'.repeat(300 * 1024));
+    expect(out).toContain('[truncated');
+    expect(Buffer.byteLength(out)).toBeLessThan(256 * 1024 + 128);
+    expect(out.startsWith('y'.repeat(256 * 1024))).toBe(true);
+  });
+});
+
+describe('stripControlChars (Round 9 C-F10)', () => {
+  it('removes control characters (ANSI escapes, NUL, newlines)', () => {
+    expect(stripControlChars('A\x00B\x1b[31mC\x07D\nE\tF')).toBe('AB[31mCDEF');
+  });
+  it('leaves plain text unchanged', () => {
+    expect(stripControlChars('plain')).toBe('plain');
   });
 });

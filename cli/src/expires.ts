@@ -22,30 +22,43 @@ export function parseExpiry(value: string): string {
   const inMatch = /^in\s+(.+)$/.exec(norm);
   const candidate = inMatch ? inMatch[1]! : norm;
 
+  let ms: number;
   if (candidate === 'tomorrow') {
     const d = new Date();
     d.setDate(d.getDate() + 1);
     d.setHours(0, 0, 0, 0);
-    return d.toISOString();
-  }
-  if (candidate === 'today') {
+    ms = d.getTime();
+  } else if (candidate === 'today') {
     const d = new Date();
     d.setHours(23, 59, 59, 999);
-    return d.toISOString();
+    ms = d.getTime();
+  } else if (candidate in KEYWORD_OFFSETS) {
+    ms = Date.now() + KEYWORD_OFFSETS[candidate]!;
+  } else {
+    const iso = Date.parse(raw);
+    if (!Number.isNaN(iso)) {
+      ms = iso;
+    } else {
+      const match = /^(\d+)(m|h|d)$/.exec(candidate);
+      if (!match) {
+        throw new Error(
+          `invalid --expires "${value}" (use an ISO datetime, a duration like 30m/24h/7d, or tomorrow/today/week/month/year)`,
+        );
+      }
+      const amount = Number(match[1]);
+      const unit = DURATIONS[match[2]!]!;
+      ms = Date.now() + amount * unit;
+    }
   }
-  if (candidate in KEYWORD_OFFSETS) {
-    return new Date(Date.now() + KEYWORD_OFFSETS[candidate]!).toISOString();
+  // Round 9 (C-F7): a duration like 99999999999999999999d overflows the Date
+  // range (|ms| > 8.64e15) and new Date() would throw a RangeError; a past
+  // expiry is a dead-on-arrival share. Reject both. Number.isFinite alone is
+  // not enough — the overflowed product (8.64e27) is still finite.
+  if (!Number.isFinite(ms) || Math.abs(ms) > 8.64e15) {
+    throw new Error(`invalid --expires "${value}" (duration overflows the date range)`);
   }
-
-  const iso = Date.parse(raw);
-  if (!Number.isNaN(iso)) return new Date(iso).toISOString();
-  const match = /^(\d+)(m|h|d)$/.exec(candidate);
-  if (!match) {
-    throw new Error(
-      `invalid --expires "${value}" (use an ISO datetime, a duration like 30m/24h/7d, or tomorrow/today/week/month/year)`,
-    );
+  if (ms <= Date.now()) {
+    throw new Error(`invalid --expires "${value}" (the expiry is in the past)`);
   }
-  const amount = Number(match[1]);
-  const unit = DURATIONS[match[2]!]!;
-  return new Date(Date.now() + amount * unit).toISOString();
+  return new Date(ms).toISOString();
 }

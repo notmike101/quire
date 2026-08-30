@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const dir = dirname(fileURLToPath(import.meta.url));
@@ -167,6 +167,43 @@ describe('claude-code adapter', () => {
       expect(sessions).toHaveLength(1);
       expect(sessions[0]!.id).toBe('big-head');
       expect(sessions[0]!.title).toBe('big-head'); // fell back to the id
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('streams a multi-MB .jsonl line by line with identical results (C-F3)', async () => {
+    // A ~3 MB session: the loader must read the file in a bounded stream and
+    // produce exactly the messages a whole-file read would (regression guard
+    // for the streaming rewrite).
+    const tmp = mkdtempSync(join(tmpdir(), 'quire-cc-stream-'));
+    try {
+      const lines: string[] = [];
+      for (let i = 0; i < 3000; i++) {
+        lines.push(JSON.stringify({ type: 'user', timestamp: '2026-08-20T00:00:00Z', message: { role: 'user', content: `msg ${i} ` + 'x'.repeat(900) } }));
+      }
+      writeFileSync(join(tmp, 'stream-session.jsonl'), lines.join('\n'));
+      const { makeClaudeCodeAdapter } = await import('../src/harness/claude-code.js');
+      const s = await makeClaudeCodeAdapter(tmp).loadSession('stream-session');
+      expect(s.messages).toHaveLength(3000);
+      expect(s.messages[0]!.parts[0]!.text).toBe('msg 0 ' + 'x'.repeat(900));
+      expect(s.messages[2999]!.parts[0]!.text).toBe('msg 2999 ' + 'x'.repeat(900));
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('skips a broken symlink in the projects dir instead of throwing (C-F12)', async () => {
+    // A dangling symlink (or any unstat-able entry) must not crash the
+    // session listing — statSync follows the link and throws ENOENT.
+    const tmp = mkdtempSync(join(tmpdir(), 'quire-cc-broken-'));
+    try {
+      const lines = [JSON.stringify({ type: 'user', timestamp: '2026-08-20T00:00:00Z', message: { role: 'user', content: 'hi' } })];
+      writeFileSync(join(tmp, 'ok-session.jsonl'), lines.join('\n'));
+      symlinkSync(join(tmp, 'does-not-exist.jsonl'), join(tmp, 'broken.jsonl'));
+      const { makeClaudeCodeAdapter } = await import('../src/harness/claude-code.js');
+      const sessions = await makeClaudeCodeAdapter(tmp).listSessions();
+      expect(sessions.map((s) => s.id)).toEqual(['ok-session']);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

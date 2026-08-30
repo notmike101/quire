@@ -312,4 +312,34 @@ describe('extractReasoningParts', () => {
     const part: ShapedPart = { type: 'text', text: "I'm still seeing " + T_OPEN + '…' + T_CLOSE + ' blocks' };
     expect(extractReasoningParts([part])).toEqual([part]);
   });
+
+  it('caps a >256 KB plain text part (C-F4)', () => {
+    const part: ShapedPart = { type: 'text', text: 'y'.repeat(300 * 1024) };
+    const out = extractReasoningParts([part]);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.type).toBe('text');
+    expect(out[0]!.text).toContain('[truncated');
+    expect(Buffer.byteLength(out[0]!.text!)).toBeLessThan(256 * 1024 + 128);
+  });
+
+  it('caps a >256 KB reasoning part (C-F4)', () => {
+    const part: ShapedPart = { type: 'reasoning', text: 'z'.repeat(300 * 1024) };
+    const out = extractReasoningParts([part]);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.type).toBe('reasoning');
+    expect(out[0]!.text).toContain('[truncated');
+    expect(Buffer.byteLength(out[0]!.text!)).toBeLessThan(256 * 1024 + 128);
+  });
+
+  it('splits a leading think block first, then caps each segment (C-F4)', () => {
+    // The block alone is >256 KB: capping before the split would truncate
+    // past the closing tag (an unclosed tag degrades to plain text — the
+    // wrong shape). Split first, cap the segments after.
+    const part: ShapedPart = { type: 'text', text: T_OPEN + 't'.repeat(300 * 1024) + T_CLOSE + '\nHello.' };
+    const out = extractReasoningParts([part]);
+    expect(out.map((p) => p.type)).toEqual(['reasoning', 'text']);
+    expect(out[0]!.text).toContain('[truncated');
+    expect(Buffer.byteLength(out[0]!.text!)).toBeLessThan(256 * 1024 + 128);
+    expect(out[1]!.text).toBe('\nHello.');
+  });
 });

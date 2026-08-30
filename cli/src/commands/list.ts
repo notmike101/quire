@@ -1,4 +1,5 @@
 import { QuireApi } from '../api.js';
+import { stripControlChars } from '../shape.js';
 
 export async function runList(api: QuireApi = new QuireApi(), out: (line: string) => void = console.log): Promise<void> {
   const { shares } = await api.list();
@@ -8,7 +9,7 @@ export async function runList(api: QuireApi = new QuireApi(), out: (line: string
   }
   const rows = shares.map((s) => [
     s.token.slice(0, 8),
-    s.title.slice(0, 40),
+    stripControlChars(s.title).slice(0, 40),
     new Date(s.createdAt).toISOString().slice(0, 10),
     s.expiresAt ? new Date(s.expiresAt).toISOString().slice(0, 10) : '—',
     s.hasPassword ? 'yes' : 'no',

@@ -126,9 +126,14 @@ export function readArtifactDataUri(
   // artifact file was fully materialized in memory before being rejected.
   // `st` is the lstat from above (the file is a regular file, not a symlink).
   if (st.size > MAX_IMAGE_BYTES) return null;
-  // And the resolved target must stay inside the artifact dir.
+  // And the resolved target must stay inside the artifact dir. Resolve the
+  // canonical path ONCE and read THAT (mirroring fileToDataUri): the
+  // containment check and the read must operate on the same path, so a link
+  // swapped in between the check and the read cannot redirect the read
+  // outside the artifact dir (Round 9 C-F5).
+  let canonical: string;
   try {
-    const canonical = realpathSync(filePath);
+    canonical = realpathSync(filePath);
     const dirCanonical = realpathSync(artifactDir);
     if (canonical !== dirCanonical && !canonical.startsWith(dirCanonical + sep)) return null;
   } catch {
@@ -136,7 +141,7 @@ export function readArtifactDataUri(
   }
   let content: string;
   try {
-    content = readFileSync(filePath, 'utf8');
+    content = readFileSync(canonical, 'utf8');
   } catch {
     return null;
   }

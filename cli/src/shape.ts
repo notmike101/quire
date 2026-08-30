@@ -49,3 +49,32 @@ export function truncateInput(input: unknown): unknown {
     preview: buf.subarray(0, MAX_TOOL_INPUT_BYTES).toString('utf8'),
   };
 }
+
+/**
+ * Round 9 (C-F4): cap on a single text/reasoning/system part's text. Tool
+ * outputs are capped at 20 KB, but a plain text part (a huge paste, a giant
+ * tool result that arrived as text, a long reasoning stream) was uncapped —
+ * one multi-MB part bloats the stored parts jsonb and every public-API
+ * response page. Cap at 256 KB; under the cap the SAME reference is returned
+ * so callers can cheaply detect "unchanged".
+ */
+const MAX_PART_TEXT_BYTES = 256 * 1024;
+
+export function truncatePartText(text: string): string {
+  const buf = Buffer.from(text);
+  if (buf.byteLength <= MAX_PART_TEXT_BYTES) return text;
+  const kept = buf.subarray(0, MAX_PART_TEXT_BYTES).toString('utf8');
+  return `${kept}\n… [truncated ${buf.byteLength - MAX_PART_TEXT_BYTES} bytes]`;
+}
+
+/**
+ * Round 9 (C-F10): strip control characters (C0 + DEL) from strings that are
+ * printed to the terminal (share titles, preview lines). A session title or
+ * message comes from a session file an attacker could have shaped, and ANSI
+ * escapes / NUL bytes there would forge terminal output (fake "Published:"
+ * lines, cursor tricks). \n and \t are in the class too — fine, these are
+ * single-line display values.
+ */
+export function stripControlChars(s: string): string {
+  return s.replace(/[\u0000-\u001f\u007f]/g, '');
+}

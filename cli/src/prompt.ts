@@ -10,6 +10,15 @@ export class PromptAbortedError extends Error {
   }
 }
 
+// Round 9 (C-F2): a non-TTY stdin that neither answers nor EOFs (a pipe left
+// open by a harness) must not hang the CLI forever — an agent would block on
+// the prompt indefinitely. Bound the wait; TTY prompts wait indefinitely.
+// Overridable for tests via QUIRE_PROMPT_TIMEOUT_MS.
+function nonTtyPromptTimeoutMs(): number {
+  const v = Number(process.env.QUIRE_PROMPT_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 10_000;
+}
+
 export async function ask(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   // Reject if stdin has already ended, or ends, while the question is pending.
@@ -27,10 +36,24 @@ export async function ask(question: string): Promise<string> {
   } else {
     const onStdinClose = () => rejectEof(new PromptAbortedError());
     process.stdin.once('close', onStdinClose);
+    let timer: NodeJS.Timeout | undefined;
     try {
       const q = rl.question(question);
-      return (await Promise.race([q, eof])).trim();
+      // Round 9 (C-F2): an open-but-silent non-TTY stdin (a pipe that is
+      // neither written to nor closed) would otherwise block forever. Time it
+      // out; a real terminal waits indefinitely.
+      const idle = process.stdin.isTTY
+        ? new Promise<never>(() => {})
+        : new Promise<never>((_, rej) => {
+            timer = setTimeout(() => rej(new PromptAbortedError()), nonTtyPromptTimeoutMs());
+          });
+      // rl.question() rejects if the interface is closed first (the timeout
+      // racing a late stdin close); swallow it so it cannot become an
+      // unhandled rejection — the race decides the outcome.
+      void q.catch(() => {});
+      return (await Promise.race([q, eof, idle])).trim();
     } finally {
+      if (timer !== undefined) clearTimeout(timer);
       process.stdin.off('close', onStdinClose);
       rl.close();
     }

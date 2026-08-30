@@ -67,4 +67,16 @@ describe('parseExpiry', () => {
     expect(() => parseExpiry('24x')).toThrow(/invalid --expires/);
     expect(() => parseExpiry('next week')).toThrow(/invalid --expires/);
   });
+
+  it('rejects a duration that overflows the date range (C-F7)', () => {
+    // 1e20 days × 86400000 ms = 8.64e27 — a FINITE number, but new Date()
+    // throws RangeError past ±8.64e15 ms. Must be rejected, not crash.
+    expect(() => parseExpiry('99999999999999999999d')).toThrow(/invalid --expires/);
+  });
+
+  it('rejects an ISO datetime in the past (C-F7)', () => {
+    // An expiry that is already past is meaningless — reject it instead of
+    // publishing a share that is dead on arrival.
+    expect(() => parseExpiry('2020-01-01T00:00:00Z')).toThrow(/in the past/);
+  });
 });
