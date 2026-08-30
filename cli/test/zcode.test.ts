@@ -317,4 +317,39 @@ describe('zcode adapter', () => {
       rmSync(outside, { recursive: true, force: true });
     }
   });
+
+  it('does not embed a markdown image link when the session has no working dir (Round 7)', async () => {
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const { DatabaseSync } = await import('node:sqlite');
+    // With no working dir there is no containment root for fileToDataUri, so an
+    // absolute model-emitted path would read an arbitrary local image and
+    // exfiltrate it. The guard refuses to embed; the link stays in the text.
+    const dir = mkdtempSync(join(tmpdir(), 'quire-nwd-'));
+    const img = join(dir, 'img.png');
+    writeFileSync(img, Buffer.from(PNG_1X1, 'base64'));
+    try {
+      const oneOffDb = join(tempDir, 'noworkdir-image.sqlite');
+      const db = new DatabaseSync(oneOffDb);
+      db.exec(`
+        create table session (id text primary key, title text, directory text, time_created integer, time_updated integer, task_type text, share_url text);
+        create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text, sequence integer);
+        create table part (id text primary key, message_id text, session_id text, data text, sequence integer);
+      `);
+      // directory = NULL → workDir undefined → markdownImagePart refuses.
+      db.prepare('insert into session values (?,?,?,?,?,?,?)').run('sess_nwd', 'NoWD', null, 0, 0, 'interactive', null);
+      db.prepare('insert into message (id, session_id, data, sequence) values (?,?,?,?)').run('mn', 'sess_nwd', JSON.stringify({ role: 'assistant' }), 1);
+      const url = `file://${img.replace(/\\/g, '/')}`;
+      db.prepare('insert into part values (?,?,?,?,?)').run('pn', 'mn', 'sess_nwd', JSON.stringify({ type: 'text', text: `look ![x](${url})` }), 1);
+      db.close();
+      const s = await makeZcodeAdapter(oneOffDb).loadSession('sess_nwd');
+      // No image part may be emitted — the uncontained read is refused.
+      const imgs = s.messages.flatMap((m) => m.parts).filter((p) => p.type === 'image');
+      expect(imgs).toHaveLength(0);
+      // The link is left in the text (redacted server-side), not stripped.
+      expect(s.messages[0]!.parts[0]!.type).toBe('text');
+      expect((s.messages[0]!.parts[0] as { text: string }).text).toContain(url);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

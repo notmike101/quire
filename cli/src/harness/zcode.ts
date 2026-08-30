@@ -119,6 +119,12 @@ const MD_IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
  * redacted on the server).
  */
 function markdownImagePart(alt: string, target: string, workDir: string | undefined): ShapedPart | null {
+  // No working dir → no containment root for fileToDataUri, so an absolute
+  // model-emitted path would read an arbitrary local image and exfiltrate it
+  // (the containment check only runs when a root is given). Refuse to embed;
+  // the link stays in the text and is redacted server-side. Mirrors
+  // imageFromScreenshotFile.
+  if (!workDir) return null;
   // Only local files are embeddable: file:// URLs, Windows drive paths
   // (C:\…), or bare relative/POSIX paths. Remote URLs (http/https) are left
   // alone — they render as ordinary markdown links.

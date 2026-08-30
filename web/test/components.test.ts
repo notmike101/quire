@@ -65,7 +65,34 @@ describe('renderMarkdown', () => {
   it('drops obfuscated javascript: links (entity-encoded colon) (Round 4)', async () => {
     const html = await renderMarkdown('[x](javascript&#58;alert(1))');
     expect(html).not.toContain('<a ');
-    expect(html).not.toMatch(/href="javascript/i);
+    expect(html.toLowerCase()).not.toContain('href="javascript');
+  });
+
+  it('emits no stray </a> when a link is dropped (Round 7)', async () => {
+    // ftp: is allowed by markdown-it's normalizeLink but rejected by isSafeHref,
+    // so the renderer drops the link. The matching </a> must be dropped too —
+    // a dangling end tag is malformed markup.
+    const html = await renderMarkdown('[x](ftp://example.com/f)');
+    expect(html).not.toContain('<a ');
+    expect(html).not.toContain('</a>');
+    expect(html).toContain('x');
+    // A kept link still renders its full <a>…</a> pair alongside a dropped one.
+    const mixed = await renderMarkdown('[a](https://ok.example) and [b](ftp://nope.example)');
+    expect(mixed.match(/<a /g) ?? []).toHaveLength(1);
+    expect(mixed.match(/<\/a>/g) ?? []).toHaveLength(1);
+  });
+
+  it('drops non-data/non-asset markdown image srcs in the viewer (Round 7)', async () => {
+    // An external image beacon must not become an <img> in the viewer — only
+    // the CSP header used to block it. The alt text is kept as plain text.
+    const html = await renderMarkdown('![x](https://evil.example/t.png)');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('https://evil.example/t.png');
+    expect(html).toContain('x');
+    // A data: image (the embedded session images) is kept.
+    const data = await renderMarkdown('![y](data:image/png;base64,iVBORw0KGgo=)');
+    expect(data).toContain('<img');
+    expect(data).toContain('src="data:image/png;base64,iVBORw0KGgo="');
   });
 });
 

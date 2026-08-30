@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it';
 import type { Token, RendererRule } from 'markdown-it';
 import { createHighlighter, type Highlighter } from 'shiki';
+import { isSafeImageSrc } from './lib/imgsrc';
 
 const LANGS = [
   'typescript', 'javascript', 'python', 'bash', 'json', 'yaml', 'sql',
@@ -71,6 +72,11 @@ export async function renderMarkdown(text: string): Promise<string> {
       return defaultFence(tokens, idx, options, env, md.renderer);
     }
   };
+  // Round 7: track dropped link_open indices so the matching link_close drops
+  // too. Without this, the default renderer still emits a stray </a> (no
+  // matching <a>) whenever a link is dropped. Links are flat in markdown-it
+  // (no nesting), so the matching open is the nearest preceding link_open.
+  const droppedLinks = new Set<number>();
   // link_open is NOT in the overridable `rules` record (it's a built-in handled
   // by renderToken), so there is no captured default to delegate to. When the
   // href is safe, delegate to slf.renderToken (the built-in renderer) which
@@ -86,9 +92,45 @@ export async function renderMarkdown(text: string): Promise<string> {
     const href = token.attrGet('href') ?? '';
     if (!isSafeHref(href)) {
       // Drop the link entirely: render the label as plain text (no <a>).
+      droppedLinks.add(idx);
       return '';
     }
     return slf.renderToken(tokens, idx, options);
+  };
+  // link_close mirrors link_open: when the matching open was dropped, the
+  // default renderer would emit a stray </a> with no opening tag — drop it too.
+  md.renderer.rules.link_close = (
+    tokens: Token[],
+    idx: number,
+    options: object,
+    _env: unknown,
+    slf: { renderToken: (tokens: Token[], idx: number, options: object) => string },
+  ): string => {
+    for (let i = idx - 1; i >= 0; i--) {
+      if (tokens[i]!.type === 'link_open') {
+        if (droppedLinks.has(i)) {
+          droppedLinks.delete(i);
+          return '';
+        }
+        break; // matched a kept link_open — emit the normal </a>
+      }
+    }
+    return slf.renderToken(tokens, idx, options);
+  };
+  // Round 7: markdown image destinations were not viewer-sanitized — only the
+  // CSP img-src header stopped an external ![x](https://evil/t.png) beacon.
+  // Mirror isSafeImageSrc in the renderer so the viewer is safe without relying
+  // on the header: only data: images (the embedded session images) and
+  // same-origin /assets/ are kept; anything else is dropped, with the alt text
+  // kept as plain text (mirroring the dropped-link behavior).
+  const defaultImage = md.renderer.rules.image!;
+  md.renderer.rules.image = (tokens, idx, options, env) => {
+    const token = tokens[idx]!;
+    const src = token.attrGet('src') ?? '';
+    if (!isSafeImageSrc(src)) {
+      return md.utils.escapeHtml(token.content);
+    }
+    return defaultImage(tokens, idx, options, env, md.renderer);
   };
   return md.render(text);
 }
