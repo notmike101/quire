@@ -8,6 +8,7 @@ import AssistantMessage from '../src/components/AssistantMessage.vue';
 import SystemNotice from '../src/components/SystemNotice.vue';
 import MessageRail from '../src/components/MessageRail.vue';
 import { renderMarkdown, isSafeHref } from '../src/markdown';
+import { isSafeImageSrc } from '../src/lib/imgsrc';
 import type { ShareMessage, SharePart, RailUserEntry } from '../src/api';
 
 // Capturing IntersectionObserver: records every constructed instance so a
@@ -82,6 +83,31 @@ describe('renderMarkdown', () => {
     expect(mixed.match(/<\/a>/g) ?? []).toHaveLength(1);
   });
 
+  it('drops protocol-relative links in the viewer (Round 8)', async () => {
+    // `//evil.example/x` resolves to https://evil.example/x — it leaves the
+    // origin, so the link must be dropped (label kept as plain text).
+    const html = await renderMarkdown('[x](//evil.example/x)');
+    expect(html).not.toContain('<a ');
+    expect(html).not.toContain('href="//');
+    expect(html).toContain('x');
+    // A same-origin path with `//` mid-path is still allowed.
+    const ok = await renderMarkdown('[a](/a//b)');
+    expect(ok).toContain('href="/a//b"');
+  });
+
+  it('drops /assets/ traversal image srcs in the viewer (Round 8)', async () => {
+    // `/assets/../...` would traverse out of the image tree to any same-origin
+    // path; only plain /assets/ paths (and data URIs) become <img>.
+    const html = await renderMarkdown('![t](/assets/../../api/chats)');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('t');
+    const pct = await renderMarkdown('![t](/assets/%2e%2e/secret)');
+    expect(pct).not.toContain('<img');
+    // A plain /assets/ path is still rendered.
+    const ok = await renderMarkdown('![t](/assets/logo.png)');
+    expect(ok).toContain('src="/assets/logo.png"');
+  });
+
   it('drops non-data/non-asset markdown image srcs in the viewer (Round 7)', async () => {
     // An external image beacon must not become an <img> in the viewer — only
     // the CSP header used to block it. The alt text is kept as plain text.
@@ -129,6 +155,52 @@ describe('isSafeHref (Round 5 guard hardening)', () => {
     expect(isSafeHref('vbscript:msgbox(1)')).toBe(false);
     expect(isSafeHref('file:///etc/passwd')).toBe(false);
     expect(isSafeHref('')).toBe(false);
+  });
+
+  it('rejects protocol-relative URLs (Round 8: they leave the origin)', () => {
+    // `//evil.example/x` resolves against the base to https://evil.example/x
+    // and would pass the https: allow — it must be rejected.
+    expect(isSafeHref('//evil.example/x')).toBe(false);
+    expect(isSafeHref('//evil.example')).toBe(false);
+    expect(isSafeHref('///evil.example/x')).toBe(false);
+  });
+
+  it('rejects backslash-authority URLs (Round 8: WHATWG treats leading \\\\ as an authority)', () => {
+    // markdown-it normalizes hrefs before the renderer sees them, so this
+    // bypass can only be exercised against the function itself (as with the
+    // Round 5 control-char case).
+    expect(isSafeHref('\\\\evil.example/x')).toBe(false);
+    expect(isSafeHref('\\\\evil.example')).toBe(false);
+  });
+
+  it('still allows a same-origin path that contains // mid-path (Round 8)', () => {
+    expect(isSafeHref('/a//b')).toBe(true);
+  });
+});
+
+describe('isSafeImageSrc (Round 8 /assets/ traversal)', () => {
+  it('rejects /assets/ srcs that traverse out of the image tree', () => {
+    expect(isSafeImageSrc('/assets/../api/chats')).toBe(false);
+    expect(isSafeImageSrc('/assets/../../etc/passwd')).toBe(false);
+    expect(isSafeImageSrc('/assets/%2e%2e/secret')).toBe(false);
+    expect(isSafeImageSrc('/assets/%2E%2E/secret')).toBe(false);
+    expect(isSafeImageSrc('/assets/..\\secret')).toBe(false);
+    expect(isSafeImageSrc('/assets/\\..\\secret')).toBe(false);
+    expect(isSafeImageSrc('/assets/' + String.fromCharCode(0) + 'x.png')).toBe(false);
+  });
+
+  it('still allows plain /assets/ paths and data URIs', () => {
+    expect(isSafeImageSrc('/assets/logo.png')).toBe(true);
+    expect(isSafeImageSrc('/assets/sub/dir/hash-abc123.png')).toBe(true);
+    expect(isSafeImageSrc('data:image/png;base64,AAA')).toBe(true);
+  });
+
+  it('still rejects non-asset same-origin, external, and executable srcs', () => {
+    expect(isSafeImageSrc('/api/chats')).toBe(false);
+    expect(isSafeImageSrc('/assets')).toBe(false); // no trailing slash: not in the tree
+    expect(isSafeImageSrc('https://evil.example/x.png')).toBe(false);
+    expect(isSafeImageSrc('javascript:alert(1)')).toBe(false);
+    expect(isSafeImageSrc(undefined)).toBe(false);
   });
 });
 

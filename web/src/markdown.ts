@@ -43,6 +43,12 @@ export function isSafeHref(href: string): boolean {
   // A real relative path or allowed scheme never contains a control char; its
   // presence is the signature of a hidden-scheme attempt.
   if (/[\u0000-\u001f\u007f-\u009f]/.test(h)) return false;
+  // Round 8 (D1): a protocol-relative URL (`//evil.example/x`) resolves against
+  // the base below to https://evil.example/x and would pass the https: allow —
+  // it leaves the origin. The WHATWG parser also treats a leading `\\` as an
+  // authority in special schemes, so both forms are rejected. A same-origin
+  // relative path never STARTS with either (a `//` mid-path is fine).
+  if (h.startsWith('//') || h.startsWith('\\\\')) return false;
   let u: URL;
   try {
     u = new URL(h, 'https://invalid.invalid');
