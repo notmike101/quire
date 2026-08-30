@@ -114,9 +114,14 @@ export function redactText(
     let m: RegExpExecArray | null;
     while ((m = rule.pattern.exec(stripped)) !== null) {
       if (m[0].length === 0) { rule.pattern.lastIndex++; continue; } // guard: zero-length
+      const groups = m.slice(1) as string[];
+      // Round 6: a rule may decline a match (bare-token's test rejects runs that
+      // are neither pure-hex nor g-z-containing, e.g. UUIDs). Declining pushes no
+      // span, so the run is neither counted nor shielded from later rules.
+      // lastIndex has already advanced past the match, so the scan stays linear.
+      if (rule.test && !rule.test(m[0], ...groups)) continue;
       const s = m.index;
       const e = s + m[0].length;
-      const groups = m.slice(1) as string[];
       const replacement = rule.replace ? rule.replace(m[0], ...groups) : `[REDACTED:${rule.category}]`;
       spans.push({ s, e, replacement, rule: rule.category });
     }

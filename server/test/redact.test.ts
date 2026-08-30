@@ -679,3 +679,56 @@ describe('Round 5 fixes', () => {
     expect(obj.a).toBe(1);
   });
 });
+
+describe('Round 6 fixes (bare-token ReDoS)', () => {
+  // A maximal [A-Za-z0-9._-] run with NO g-z letter and NO 24+ contiguous hex
+  // run: 'a' is hex but the dots break every hex run to length 1. This is the
+  // input that made the old lookahead quadratic (the lookahead failed at every
+  // position, forcing a full-run rescan each time).
+  const adversarial = (n: number) => 'a.'.repeat(Math.ceil(n / 2));
+
+  it('redacts a long no-g-z run in LINEAR time (was O(N²) — authenticated DoS)', () => {
+    // Old code: ~2.7 s at 80k chars, extrapolated ~7 min for 1 MB (the event
+    // loop is blocked for the whole redaction). New code is O(N): a 500k-char
+    // input must complete well under the quadratic prediction (~106 s). The
+    // threshold is ~50x above the expected linear cost so it is not flaky, yet
+    // ~200x below the old quadratic cost so a regression is caught.
+    const input = adversarial(500_000);
+    const t0 = performance.now();
+    const r = redactText(input, 'strict');
+    const elapsed = performance.now() - t0;
+    expect(elapsed).toBeLessThan(500);
+    // Nothing in the adversarial run is a secret (no g-z, no 24+ hex run), so
+    // it is redacted nowhere and the text is unchanged.
+    expect(r.counts['bare-token']).toBeUndefined();
+    expect(r.text).toBe(input);
+  });
+
+  it('still redacts a pure-hex token, preserving a trailing period (span unchanged)', () => {
+    // A 32-hex run (24+ but <40, so bare-token claims it, not aws-secret-key)
+    // followed by '.': the old branch-1 (\b[0-9a-fA-F]{24,}\b) matched exactly
+    // the 32 hex chars and preserved the dot. The new maximal-run pattern must
+    // reproduce that span (not swallow the dot).
+    const sha = 'c8f5e0a1b2c3d4e5f60718293a4b5c6d';
+    const r = redactText(`commit ${sha}. done`, 'strict');
+    expect(r.text).toBe('commit [REDACTED:bare-token]. done');
+    expect(r.counts['bare-token']).toBe(1);
+  });
+
+  it('still redacts a g-z token and still spares a UUID (behavior preserved)', () => {
+    const gz = 'Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2'; // 24 chars, contains g-z letters
+    const uuid = '123e4567-e89b-12d3-a456-426614174000'; // 36 chars, no g-z
+    const r = redactText(`tok ${gz} id ${uuid}`, 'strict');
+    expect(r.text).toBe(`tok [REDACTED:bare-token] id ${uuid}`);
+    expect(r.counts['bare-token']).toBe(1);
+  });
+
+  it('redacts a 32-hex token (pure-hex branch) and a 40-hex token (aws-secret-key claims it first)', () => {
+    const r1 = redactText(`a ${'c8f5e0a1b2c3d4e5f60718293a4b5c6d'} b`, 'strict');
+    expect(r1.counts['bare-token']).toBe(1);
+    expect(r1.text).toBe('a [REDACTED:bare-token] b');
+    const r2 = redactText(`a ${'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0'} b`, 'strict');
+    expect(r2.counts['aws-secret-key']).toBe(1);
+    expect(r2.text).toBe('a [REDACTED:aws-secret-key] b');
+  });
+});

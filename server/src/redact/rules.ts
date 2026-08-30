@@ -6,6 +6,13 @@ export interface RedactRule {
   presets: Preset[];
   /** Produce the replacement from the match (default: `[REDACTED:<category>]`). */
   replace?: (match: string, ...groups: string[]) => string;
+  /**
+   * Round 6: decline a match (no span is pushed, so the run is neither counted
+   * nor shielded from later rules). Lets a rule match a broad span in the
+   * pattern — where it stays linear — and apply a semantic accept/reject in JS
+   * instead of an unbounded regex lookahead (which was a quadratic ReDoS).
+   */
+  test?: (match: string, ...groups: string[]) => boolean;
 }
 
 // Order matters: earlier rules claim their span first, and their placeholder
@@ -96,18 +103,25 @@ export const rules: RedactRule[] = [
   },
   {
     category: 'bare-token',
-    // Round 2: a keyword-less fallback. Two branches:
-    //  (1) a pure-hex run of 24+ chars — a hex-encoded secret (the 40-char AWS
-    //      secret, a hex API key). Pure hex is the over-redaction guard: it
-    //      cannot match a UUID (dashes break the run) or ordinary prose.
-    //  (2) a 24+ char run containing a non-hex letter (g-z) — catches prefixed
-    //      tokens (ghp_…, sk-…) and dotted identifiers that the specific rules
-    //      above missed. The lookaround requires the non-hex letter so a pure
-    //      hex run is only matched by branch (1), and a UUID (no g-z letter,
-    //      hex runs <24) matches neither.
+    // Round 2: a keyword-less fallback. A 24+ char run is a secret when it is
+    //  (1) a contiguous pure-hex run (a hex-encoded secret: the 40-char AWS
+    //      secret, a hex API key), or
+    //  (2) it contains a non-hex letter (g-z) — catching prefixed tokens
+    //      (ghp_…, sk-…) and dotted identifiers the specific rules above missed.
+    // A run that is NEITHER — e.g. a UUID (hex runs <24, no g-z letter) — is not
+    // a secret and is left untouched.
+    // Round 6 (ReDoS fix): the g-z decision moved OUT of the pattern. The old
+    // lookahead (?=[A-Za-z0-9._-]*[g-zG-Z]) scanned the whole run and, when it
+    // failed (no g-z letter), forced the engine to retry at every position —
+    // O(N²) on a long no-g-z run. A 1 MB input hung the event loop ~7 min: an
+    // authenticated DoS via the owner API (redaction runs synchronously). The
+    // pattern now matches the maximal run plainly (O(N)); `test` applies the
+    // same pure-hex / g-z decision in JS after the match. A declined match still
+    // advances lastIndex past the run, so the engine never retries per position.
     // Runs LAST so the specific prefix rules claim their spans first.
-    pattern: /\b(?:[0-9a-fA-F]{24,}|(?=[A-Za-z0-9._-]*[g-zG-Z])[A-Za-z0-9._-]{24,})\b/g,
+    pattern: /\b[A-Za-z0-9._-]{24,}\b/g,
     presets: ['strict', 'normal'],
+    test: (run) => /^[0-9a-fA-F]{24,}$/.test(run) || /[g-zG-Z]/.test(run),
   },
   {
     category: 'private-ip',
