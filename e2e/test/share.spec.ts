@@ -29,13 +29,15 @@ test.describe('share viewer', () => {
     }
   });
 
-  test('XSS payloads in session content render no executable elements (Round 8)', async ({ page, request }) => {
+  test('XSS payloads in session content render no executable elements (Round 8 + Round 9 D1-D3)', async ({ page, request }) => {
     const { token } = await createXssShare(request);
     await page.goto(`/chats/${token}`);
     await expect(page.getByRole('heading', { name: 'XSS Session' })).toBeVisible();
     // The content itself renders (escaped) — the drop is of the executable
-    // elements, not the text.
+    // elements, not the text. The assistant payload goes through Shiki (slow in
+    // the E2E env), so wait for one of its labels to land before asserting.
     await expect(page.locator('.msg-target').getByText('render this')).toBeVisible();
+    await expect(page.getByText('xss js-case')).toBeVisible({ timeout: 15000 });
     // No executable-scheme, data:, or protocol-relative links.
     expect(await page.locator('a[href^="javascript:"]').count()).toBe(0);
     expect(await page.locator('a[href^="data:"]').count()).toBe(0);
@@ -46,10 +48,48 @@ test.describe('share viewer', () => {
     expect(await page.locator('img[onerror]').count()).toBe(0);
     expect(await page.locator('img[src^="javascript:"]').count()).toBe(0);
     expect(await page.locator('img[src*=".."]').count()).toBe(0);
-    // Dropped link labels survive as plain text.
+    // D1: the backslash-authority link is dropped — no anchor whose href carries
+    // a backslash (WHATWG treats a leading \\ as an authority, so a lowercase
+    // a[href^="javascript:"] check would never catch it).
+    const backslashAnchors = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.msg-target a')).filter(
+        (a) => (a.getAttribute('href') || '').includes('\\'),
+      ).length,
+    );
+    expect(backslashAnchors).toBe(0);
+    // D2: the percent-encoded traversal image is dropped — no img whose src
+    // carries a percent-encoded dot (img[src*=".."] cannot catch %2e%2e).
+    const pctImgs = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.msg-target img')).filter(
+        (i) => /%2e/i.test(i.getAttribute('src') || ''),
+      ).length,
+    );
+    expect(pctImgs).toBe(0);
+    // D3: no anchor carries an executable scheme in ANY casing (the mixed-case
+    // JaVaScRiPt: variant), and no image carries an executable or svg data src.
+    // The percent-encoded (javascript%3a) and control-prefixed variants may
+    // resolve as harmless relative URLs, but they must never carry a literal
+    // executable scheme.
+    const badAnchors = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.msg-target a')).filter((a) => {
+        const href = (a.getAttribute('href') || '').trim();
+        return /^(javascript|vbscript|data|file):/i.test(href) || href.startsWith('//') || href.startsWith('\\\\');
+      }).length,
+    );
+    expect(badAnchors).toBe(0);
+    const badImgs = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.msg-target img')).filter((i) => {
+        const src = i.getAttribute('src') || '';
+        return /^(javascript|vbscript):/i.test(src) || /^data:image\/svg/i.test(src) || /^data:text/i.test(src);
+      }).length,
+    );
+    expect(badImgs).toBe(0);
+    // Dropped link/image labels survive as plain text (the drop is of the
+    // executable element, not the text).
     const body = await page.locator('body').innerText();
-    expect(body).toContain('xss link');
-    expect(body).toContain('xss proto-rel');
+    for (const label of ['xss link', 'xss proto-rel', 'xss backslash', 'xss js-case', 'xss js-pct', 'xss ctrl', 'xss pct', 'xss svg']) {
+      expect(body, `label "${label}" should survive as text`).toContain(label);
+    }
   });
 
   test('lazy-loads subsequent pages when scrolling', async ({ page, request }) => {
@@ -87,6 +127,28 @@ test.describe('share viewer', () => {
     await page.locator('input[type="password"]').fill('correct-horse');
     await page.getByRole('button', { name: 'Unlock' }).click();
     await expect(page.getByRole('heading', { name: 'E2E Session' })).toBeVisible();
+  });
+
+  test('password unlock lockout: 5 wrong attempts lock the token, even the correct password 429s (Round 9 D4)', async ({ request }) => {
+    // A FRESH token so the per-(token, IP) lockout counter starts at zero and
+    // no other test's failures bleed in. The per-IP dimension has threshold 5,
+    // so the 5th wrong attempt trips the 15-minute lock; the 6th request — even
+    // with the CORRECT password — is gated by isLocked() before verifyPassword
+    // and returns 429.
+    const { token } = await createShare(request, { password: 'correct-horse' });
+    for (let i = 0; i < 5; i++) {
+      const res = await request.post(`/api/public/chats/${token}/unlock`, {
+        data: { password: 'wrong' },
+      });
+      expect(res.status(), `attempt ${i + 1} should be 401`).toBe(401);
+    }
+    const locked = await request.post(`/api/public/chats/${token}/unlock`, {
+      data: { password: 'correct-horse' },
+    });
+    expect(locked.status()).toBe(429);
+    expect(await locked.json()).toEqual({
+      error: { code: 'rate_limited', message: 'Too many failed attempts. Try again in 15 minutes.' },
+    });
   });
 
   test('expired share shows the expired page', async ({ page, request }) => {

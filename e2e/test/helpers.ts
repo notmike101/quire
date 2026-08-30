@@ -358,6 +358,13 @@ export async function createRuleShare(
  * survive markdown-it's destination un-escaping as two), a data: link,
  * /assets/ traversal image srcs, and raw HTML script/img tags. The viewer must
  * render none of them as live elements.
+ * Round 9 (D3): adds the scheme-hiding variants the fixture previously omitted —
+ * a mixed-case executable scheme (browser schemes are case-insensitive), a
+ * percent-encoded colon (the browser does NOT decode %3a to a scheme, so it can
+ * only ever resolve as a relative URL), a C0-control-prefixed scheme (markdown-it
+ * percent-encodes the control char before the renderer, so the raw form is only
+ * reachable via the isSafeHref unit tests), and an svg data image (svg+xml can
+ * carry SMIL and is never a screenshot).
  */
 export function xssSession(): object {
   const payload = [
@@ -365,9 +372,13 @@ export function xssSession(): object {
     '[xss proto-rel](//evil.example/x)',
     '[xss backslash](\\\\\\\\evil.example/x)',
     '[xss data](data:text/html,<script>alert(1)</script>)',
+    '[xss js-case](JaVaScRiPt:alert(1))',
+    '[xss js-pct](javascript%3aalert(1))',
+    '[xss ctrl](' + String.fromCharCode(1) + 'javascript:alert(1))',
     '![xss img](javascript:alert(1))',
     '![xss traverse](/assets/../../api/chats)',
     '![xss pct](/assets/%2e%2e/secret)',
+    '![xss svg](data:image/svg+xml;base64,PHN2Zz4=)',
     '<script>alert(1)</script>',
     '<img src=x onerror=alert(1)>',
   ].join('\n\n');
