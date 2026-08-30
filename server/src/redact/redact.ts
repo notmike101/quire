@@ -89,14 +89,35 @@ export function walkStrings(value: unknown, fn: (s: string) => string): unknown 
   return root.value;
 }
 
-// Round 5: zero-width / invisible characters (U+200B zero-width space, U+200C
-// ZWNJ, U+200D ZWJ, U+FEFF BOM/zero-width no-break space) let an attacker split
-// a contiguous secret run so the bare-token fallback (24+ char alnum run) and
-// the specific prefix rules both miss it. We match the rules on a zero-width-
+// Round 5: zero-width / invisible characters let an attacker split a
+// contiguous secret run so the bare-token fallback (24+ char alnum run) and the
+// specific prefix rules both miss it. We match the rules on an invisible-
 // STRIPPED copy of the text, then map every replacement back onto the original
-// so zero-width chars are preserved in non-redacted spans (they are intentional
+// so invisible chars are preserved in non-redacted spans (they are intentional
 // in CJK text and ZWJ emoji sequences) but removed inside a redacted span.
-const ZERO_WIDTH_RE = /[\u200b\u200c\u200d\ufeff]/g;
+// Round 8: widen the strip from the original 4 zero-width chars to the full
+// invisible/format inventory — bidirectional overrides (U+202A–202E), word
+// joiner (U+2060) and the other U+206x format chars, variation selectors
+// (U+FE00–FE0F), soft hyphen (U+00AD), and the SMP tag block (U+E0001–E007F) —
+// all of which can split a secret run. Stripping is on the matching copy only,
+// so legitimate invisible chars (ZWJ emoji, CJK joiners) survive in the output.
+const INVISIBLE_CP = new Set<number>([
+  0x00ad, 0x034f, 0x061c,
+  0x1100, 0x115f, 0x1160,
+  0x17b4, 0x17b5, 0x17d4, 0x17d5,
+  0x180e, 0x1843, 0x1844,
+  0x200b, 0x200c, 0x200d, 0x200e, 0x200f,
+  0x202a, 0x202b, 0x202c, 0x202d, 0x202e,
+  0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0x2065, 0x2066, 0x2067,
+  0x2068, 0x2069, 0x206a, 0x206b, 0x206c, 0x206d, 0x206e, 0x206f,
+  0xfeff,
+]);
+function isInvisible(cp: number): boolean {
+  if (INVISIBLE_CP.has(cp)) return true;
+  if (cp >= 0xfe00 && cp <= 0xfe0f) return true; // variation selectors
+  if (cp >= 0xe0001 && cp <= 0xe007f) return true; // tag block (SMP)
+  return false;
+}
 
 export function redactText(
   text: string,
@@ -105,14 +126,17 @@ export function redactText(
   if (preset === 'none') return { text, counts: {} };
   const counts: Record<string, number> = {};
   // Build the stripped text and a strippedIdx -> originalIdx map so a match
-  // found on the stripped text can be located in the original.
+  // found on the stripped text can be located in the original. Iterate by code
+  // point (not UTF-16 unit) so the SMP tag block is stripped as a unit.
   let stripped = '';
   const map: number[] = [];
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === '\u200b' || ch === '\u200c' || ch === '\u200d' || ch === '\ufeff') continue;
-    map.push(i);
-    stripped += ch;
+  for (let i = 0; i < text.length; ) {
+    const cp = text.codePointAt(i)!;
+    if (!isInvisible(cp)) {
+      map.push(i);
+      stripped += String.fromCodePoint(cp);
+    }
+    i += cp > 0xffff ? 2 : 1;
   }
   // Find all matches on the stripped text, mapped to original spans. `rule`
   // carries the category so we can count only the spans that are actually

@@ -17,6 +17,12 @@ export const partSchema = z
     callID: z.string().max(200).optional(),
     tool: z.string().max(200).optional(),
     status: z.string().max(100).optional(),
+    // Round 8: z.unknown() is unbounded BY DESIGN — depth is handled elsewhere.
+    // The 20 MB request cap bounds size; a body nested deep enough to overflow
+    // the JSON.parse stack throws a RangeError that c.req.json().catch() maps
+    // to a 400; and the redaction walk (walkStrings) is iterative with an
+    // explicit depth cap, collapsing over-deep subtrees to a redacted JSON
+    // string. No schema-level depth limit is needed.
     input: z.unknown().optional(),
     output: z.string().max(1_000_000).optional(),
     // tool parts: images the agent viewed, rendered inside the tool card's

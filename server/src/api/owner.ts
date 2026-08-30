@@ -162,15 +162,23 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     // Chain B: chunks must be contiguous. The create call seeds chunk 0, so the
     // next valid chunkSeq is (max existing chunkSeq) + 1. A duplicate is 409, a
     // gap or out-of-order seq is 400.
-    const existing = await db
-      .select({ chunkSeq: shareMessages.chunkSeq })
+    // Round 8: aggregate instead of SELECTing every row. The old query fetched
+    // one row per message in the share — O(share-size): a share at the 1 GB cap
+    // is hundreds of thousands of rows, re-fetched on EVERY chunk upload, and
+    // Math.max(...seqs) would also hit the argument-spread limit past ~100k
+    // elements. Two aggregates over the (share_id, chunk_seq) PK prefix are
+    // O(1) per chunk.
+    const [agg] = await db
+      .select({
+        maxSeq: sql<number | null>`max(${shareMessages.chunkSeq})`,
+        dupCount: sql<number>`count(*) filter (where ${shareMessages.chunkSeq} = ${chunkSeq})::int`,
+      })
       .from(shareMessages)
       .where(eq(shareMessages.shareId, share.id));
-    const seqs = new Set(existing.map((r) => r.chunkSeq));
-    if (seqs.has(chunkSeq)) {
+    if ((agg?.dupCount ?? 0) > 0) {
       return c.json({ error: { code: 'chunk_exists', message: 'chunkSeq already uploaded' } }, 409);
     }
-    const maxSeq = seqs.size === 0 ? -1 : Math.max(...seqs);
+    const maxSeq = agg?.maxSeq ?? -1;
     if (chunkSeq !== maxSeq + 1) {
       return c.json({ error: { code: 'chunk_out_of_order', message: `chunkSeq must be ${maxSeq + 1}` } }, 400);
     }

@@ -82,24 +82,42 @@ const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
 // bytes (the old exploit) has a long valid-UTF-8 prefix. We scan that prefix.
 // A prefix shorter than 8 bytes is treated as binary (noise, not a secret).
 function longestValidUtf8Prefix(buf: Buffer): string | null {
-  // Walk from the end, shrinking until the prefix round-trips losslessly.
-  // Binary image data will fail quickly (the first few bytes are invalid);
-  // a text secret will have a long valid prefix.
-  let hi = buf.length;
-  let lo = 0;
-  // Binary search for the largest valid prefix length.
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    const sub = buf.subarray(0, mid);
-    const s = sub.toString('utf8');
-    if (Buffer.byteLength(s, 'utf8') === sub.length) {
-      lo = mid; // mid is valid, try longer
-    } else {
-      hi = mid - 1; // mid is invalid, try shorter
+  // Round 8: the Round-5 binary search assumed "prefix of length m is valid
+  // UTF-8" is monotonic, but it is NOT — a valid 2-byte char (e.g. 0xC3 0xA9 =
+  // é) has an INVALID length-1 prefix (a truncated lead byte 0xC3). The search
+  // therefore converged early on a crafted payload (a multi-byte char placed at
+  // the first probe position) and UNDER-scanned, leaving a secret after it
+  // unscanned. Walk forward instead: a single O(n) pass that includes every
+  // complete, well-formed code point up to the first invalid byte. A secret is
+  // ASCII/UTF-8 text, so it always sits inside the longest valid prefix and is
+  // always scanned.
+  let i = 0;
+  let end = 0; // end (exclusive) of the last complete, well-formed code point
+  while (i < buf.length) {
+    const b = buf[i]!;
+    let len: number;
+    let min: number;
+    let max: number;
+    if (b < 0x80) { len = 1; min = 0x0; max = 0x7f; }
+    else if (b >= 0xc2 && b <= 0xdf) { len = 2; min = 0x80; max = 0x7ff; }
+    else if (b >= 0xe0 && b <= 0xef) { len = 3; min = 0x800; max = 0xffff; }
+    else if (b >= 0xf0 && b <= 0xf4) { len = 4; min = 0x10000; max = 0x10ffff; }
+    else break; // invalid lead byte (0x80–0xc1, 0xf5–0xff)
+    if (i + len > buf.length) break; // truncated sequence at the end
+    let cp = b & (len === 1 ? 0xff : len === 2 ? 0x1f : len === 3 ? 0x0f : 0x07);
+    let ok = true;
+    for (let j = 1; j < len; j++) {
+      const cb = buf[i + j]!;
+      if ((cb & 0xc0) !== 0x80) { ok = false; break; } // not a continuation byte
+      cp = (cp << 6) | (cb & 0x3f);
     }
+    if (!ok || cp < min || cp > max) break; // overlong / out of range
+    if (cp >= 0xd800 && cp <= 0xdfff) break; // surrogate half (invalid UTF-8)
+    i += len;
+    end = i;
   }
-  if (lo < 8) return null; // too short to be a meaningful secret
-  return buf.subarray(0, lo).toString('utf8');
+  if (end < 8) return null; // too short to be a meaningful secret
+  return buf.subarray(0, end).toString('utf8');
 }
 function redactSrc(src: string, preset: Preset, add: (counts: Record<string, number>) => void): string {
   const m = /^data:([^,]*),(.+)$/.exec(src);
@@ -115,7 +133,7 @@ function redactSrc(src: string, preset: Preset, add: (counts: Record<string, num
       add(r.counts);
       return r.text.replace(CONTROL_CHARS_RE, '');
     }
-    return src;
+    return src.replace(CONTROL_CHARS_RE, '');
   }
   const header = m[1];
   const payload = m[2];
@@ -128,20 +146,20 @@ function redactSrc(src: string, preset: Preset, add: (counts: Record<string, num
     try {
       buf = Buffer.from(payload, 'base64');
     } catch {
-      return src;
+      return src.replace(CONTROL_CHARS_RE, '');
     }
     if (buf.length > 0) text = longestValidUtf8Prefix(buf);
   } else {
     // plaintext payload (data:text/plain, etc.): scan verbatim.
     text = payload;
   }
-  if (text === null) return src;
+  if (text === null) return src.replace(CONTROL_CHARS_RE, '');
   const r = redactText(text, preset);
   if (Object.values(r.counts).some((v) => v > 0)) {
     add(r.counts);
-    return `data:${header},REDACTED`;
+    return `data:${header},REDACTED`.replace(CONTROL_CHARS_RE, '');
   }
-  return src;
+  return src.replace(CONTROL_CHARS_RE, '');
 }
 
 function redactPart(part: ShapedPart, preset: Preset, add: (counts: Record<string, number>) => void): ShapedPart {

@@ -26,7 +26,13 @@ export function securityHeaders(): MiddlewareHandler {
     // relative resource loads; form-action 'self' pins any form submission to
     // this origin. Both are no-ops for the current SPA (no <base>, no cross-
     // origin forms) but close the vectors if one is ever introduced.
-    c.header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'; form-action 'self'");
+    // Round 8 (D3): explicit connect-src/object-src/frame-src. connect-src
+    // 'self' pins fetch/XHR/WebSocket to this origin (the SPA only talks to
+    // its own API); object-src 'none' blocks <object>/<embed>; frame-src
+    // 'none' blocks <iframe> to any origin. default-src 'self' already covers
+    // all three as a fallback, but the explicit directives document intent and
+    // survive a future default-src relaxation.
+    c.header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'");
     c.header('X-Frame-Options', 'DENY');
     c.header('Referrer-Policy', 'no-referrer');
     c.header('X-Content-Type-Options', 'nosniff');

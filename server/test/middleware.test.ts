@@ -51,6 +51,11 @@ describe('security headers', () => {
     // which script-src gates behind 'wasm-unsafe-eval'. Without it every code
     // block in a transcript renders unhighlighted (verified live 2026-08-27).
     expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'");
+    // Round 8 (D3): explicit connect/object/frame directives — fetch/XHR pinned
+    // to this origin, no <object>/<embed>, no <iframe> to any origin.
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("frame-src 'none'");
     expect(res.headers.get('x-frame-options')).toBe('DENY');
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');

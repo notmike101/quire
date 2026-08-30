@@ -121,6 +121,12 @@ export function publicRoutes(deps: PublicDeps): Hono {
     }
     const share = await activeShareByToken(c, db);
     if (!share) return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
+    // Round 8: 410 (GONE) for an expired share is DELIBERATE, not an oracle.
+    // The no-existence-oracle invariant covers unknown-vs-revoked tokens (both
+    // return byte-identical 404s above). An expired token was once valid, and
+    // 410 is the semantically correct status for a resource that existed and is
+    // gone; tokens are high-entropy random, so an attacker cannot enumerate
+    // them to distinguish "expired" from "never existed".
     if (share.expiresAt && share.expiresAt.getTime() <= Date.now()) {
       return c.json({ error: { code: 'expired', message: 'This share has expired' } }, 410);
     }
@@ -199,6 +205,7 @@ export function publicRoutes(deps: PublicDeps): Hono {
   app.post('/api/public/chats/:token/unlock', async (c) => {
     const share = await activeShareByToken(c, db);
     if (!share) return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
+    // Round 8: same deliberate 410 for the expired case (see the GET handler).
     if (share.expiresAt && share.expiresAt.getTime() <= Date.now()) {
       return c.json({ error: { code: 'expired', message: 'This share has expired' } }, 410);
     }

@@ -834,3 +834,86 @@ describe('Round 7 fixes', () => {
     expect(out.summary['key']).toBeUndefined();
   });
 });
+
+describe('Round 8 fixes', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+  const img = (src: string) =>
+    prepareContent(
+      { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src, mime: 'image/png', alt: 'shot', bytes: 4 }] }] },
+      'strict',
+    );
+
+  it('A1: redacts a secret split by a bidirectional override (U+202A)', () => {
+    // U+202A was NOT in the original 4-char strip set, so it split the run and
+    // the openai rule missed it. The widened set strips it for matching.
+    const out = one('token sk-abcdefghijkl\u202Amnopqrstuvwx');
+    expect(JSON.stringify(out.messages)).not.toContain('sk-abcdefghijkl');
+    expect(out.summary['openai-key']).toBe(1);
+  });
+  it('A1: redacts a secret split by a word joiner (U+2060)', () => {
+    const out = one('token sk-abcdefghijkl\u2060mnopqrstuvwx');
+    expect(out.summary['openai-key']).toBe(1);
+  });
+  it('A1: redacts a secret split by an SMP tag character (U+E0001)', () => {
+    // The tag block is in the SMP (a surrogate pair in UTF-16), so the strip
+    // must iterate by code point, not UTF-16 unit.
+    const out = one('token sk-abcdefghijkl\u{e0001}mnopqrstuvwx');
+    expect(out.summary['openai-key']).toBe(1);
+  });
+  it('A1: preserves a bidirectional mark in clean (non-secret) text', () => {
+    // Stripping is on the matching copy only — a clean string with a now-stripped
+    // invisible char is emitted verbatim (the char survives in the output).
+    const out = one('hello \u202a world');
+    expect(out.messages[0]!.parts[0]!.text).toBe('hello \u202a world');
+    expect(out.summary).toEqual({});
+  });
+  it('A1: preserves a ZWJ emoji sequence in clean text', () => {
+    const fam = '\u{1f468}\u200d\u{1f469}\u200d\u{1f467}\u200d\u{1f466}'; // 👨‍👩‍👧‍👦
+    const out = one('me and ' + fam);
+    expect(out.messages[0]!.parts[0]!.text).toBe('me and ' + fam);
+    expect(out.summary).toEqual({});
+  });
+
+  it('A2: scans a secret that follows a multi-byte char at the old probe position', () => {
+    // The Round-5 binary search assumed "prefix of length m is valid UTF-8" is
+    // monotonic; it is not (a valid 2-byte char has an invalid 1-byte prefix).
+    // Geometry: 28 ASCII + é (0xC3 0xA9) + 27-byte secret = 57 bytes, all valid
+    // UTF-8. The old search's first probe (mid=29) cut the é in half and
+    // converged to 28, never scanning the secret. The forward walk scans all 57.
+    const secret = secrets.openai; // 27 bytes
+    const buf = Buffer.concat([
+      Buffer.from('A'.repeat(28), 'utf8'),
+      Buffer.from([0xc3, 0xa9]), // é
+      Buffer.from(secret, 'utf8'),
+    ]);
+    const b64 = buf.toString('base64');
+    const out = img(`data:image/png;base64,${b64}`);
+    const src = out.messages[0]!.parts[0]!.src!;
+    expect(src).not.toContain(b64);
+    expect(src).toContain('REDACTED');
+    expect(out.summary['openai-key']).toBe(1);
+  });
+  it('A2: still skips a real binary image (no valid-UTF-8 prefix)', () => {
+    // Over-redaction guard must survive the rewrite: dense binary has no valid
+    // prefix, so the data URI passes through untouched.
+    const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    const dataUri = `data:image/png;base64,${pngBytes.toString('base64')}`;
+    const out = img(dataUri);
+    expect(out.messages[0]!.parts[0]!.src).toBe(dataUri);
+    expect(out.summary).toEqual({});
+  });
+
+  it('A3: strips a NUL from a non-data-URI src on the no-match path', () => {
+    // Postgres rejects NUL in jsonb; a clean URL with a NUL (no rule trips) must
+    // be stripped so it is storable.
+    const out = img('https://example.com/page\u0000');
+    expect(out.messages[0]!.parts[0]!.src).toBe('https://example.com/page');
+    expect(out.summary).toEqual({});
+  });
+  it('A3: strips a NUL from a plaintext data-URI payload on the no-match path', () => {
+    const out = img('data:text/plain,hello\u0000world');
+    expect(out.messages[0]!.parts[0]!.src).toBe('data:text/plain,helloworld');
+    expect(out.summary).toEqual({});
+  });
+});
