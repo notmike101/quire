@@ -62,6 +62,16 @@ export function isSafeHref(href: string): boolean {
 
 export async function renderMarkdown(text: string): Promise<string> {
   const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
+  // Round 9 (D5): markdown-it's built-in data: allowlist (GOOD_DATA_RE =
+  // gif|png|jpeg|webp) lacks the `jpg` and `avif` aliases isSafeImageSrc
+  // accepts, so ![x](data:image/jpg;base64,…) was parsed with an emptied src
+  // and dropped to literal alt text. Accept exactly the data URIs the viewer
+  // renders and delegate everything else to the default. The final gates stay
+  // in the renderers — isSafeImageSrc for image tokens, isSafeHref for link
+  // tokens (a data: LINK is still dropped, so this opens no link vector).
+  const defaultValidate = md.validateLink;
+  md.validateLink = (url: string) =>
+    /^data:image\/(png|jpeg|jpg|webp|gif|avif);base64,/i.test(url.trim()) || defaultValidate(url);
   const defaultFence = md.renderer.rules.fence!;
   const hl = await getHighlighter();
   const loaded = hl.getLoadedLanguages();

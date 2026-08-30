@@ -120,6 +120,42 @@ describe('renderMarkdown', () => {
     expect(data).toContain('<img');
     expect(data).toContain('src="data:image/png;base64,iVBORw0KGgo="');
   });
+
+  it('renders data:image/jpg and data:image/avif markdown images (Round 9 D5)', async () => {
+    // markdown-it's built-in data: allowlist (gif|png|jpeg|webp) lacks the
+    // `jpg` and `avif` aliases isSafeImageSrc accepts, so these were parsed
+    // with an emptied src and dropped to literal alt text.
+    const jpg = await renderMarkdown('![cactus](data:image/jpg;base64,QUJD)');
+    expect(jpg).toContain('<img');
+    expect(jpg).toContain('src="data:image/jpg;base64,QUJD"');
+    const avif = await renderMarkdown('![a](data:image/avif;base64,QUJD)');
+    expect(avif).toContain('<img');
+    expect(avif).toContain('src="data:image/avif;base64,QUJD"');
+  });
+
+  it('does not widen the data: allowlist beyond isSafeImageSrc (Round 9 D5)', async () => {
+    // svg+xml can carry SMIL and is never a screenshot; data:text/html is
+    // executable. The validateLink override must accept exactly the raster
+    // types the viewer renders — everything else stays dropped.
+    const svg = await renderMarkdown('![s](data:image/svg+xml;base64,PHN2Zz4=)');
+    expect(svg).not.toContain('<img');
+    expect(svg).toContain('s');
+    const html = await renderMarkdown('![h](data:text/html;base64,PHNjcmlwdD4=)');
+    expect(html).not.toContain('<img');
+  });
+
+  it('drops data:image LINKS (not images) — no link vector from the override (Round 9 D5)', async () => {
+    // [x](data:image/jpg;base64,…) is a LINK: isSafeHref rejects the data:
+    // protocol, so it must render as plain text, never an <a href="data:…">.
+    // (Before the fix this only held for png/jpeg/webp/gif — the types
+    // markdown-it's own validateLink already accepted.)
+    for (const type of ['png', 'jpg', 'avif']) {
+      const html = await renderMarkdown(`[x](data:image/${type};base64,QUJD)`);
+      expect(html).not.toContain('<a ');
+      expect(html).not.toContain(`data:image/${type}`);
+      expect(html).toContain('x');
+    }
+  });
 });
 
 describe('isSafeHref (Round 5 guard hardening)', () => {
