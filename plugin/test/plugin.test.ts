@@ -28,12 +28,15 @@ describe('plugin manifest', () => {
     expect(md).not.toContain('relay that prompt');
     // It must NOT pass the free-text instruction as a positional argument.
     expect(md).not.toContain('quire publish --current $ARGUMENTS');
-    // Chain D: `none` is gated — only on an explicit raw phrase, and it must
-    // stop-and-confirm (no --yes) rather than auto-publishing unredacted.
-    expect(md).toContain('--confirm-raw');
+    // Chain D: `none` (no redaction) is NOT a supported preset — the CLI
+    // rejects it and the server rejects unredacted shares (a hard security
+    // boundary). The removed `--confirm-raw` escape must not be referenced;
+    // if the user asks for raw/unredacted, the plugin explains the boundary
+    // and offers `normal` as the loosest preset rather than passing `--preset none`.
+    expect(md).not.toContain('--confirm-raw');
     expect(md).toMatch(/no redaction|raw|unredacted/);
-    expect(md).toMatch(/stop and ask|ask the user to confirm/);
-    expect(md).toContain('do NOT pass `--yes`');
+    expect(md).toMatch(/always redacts|hard security boundary/i);
+    expect(md).toMatch(/do not pass `--preset none`/);
   });
 
   it('ships a README', () => {
