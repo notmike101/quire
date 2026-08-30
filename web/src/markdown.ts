@@ -25,13 +25,32 @@ function getHighlighter(): Promise<Highlighter> {
 // session owner could craft a transcript with such a link and the reader would
 // execute it on click. Only http/https/mailto/relative URLs are allowed; any
 // other scheme (javascript:, data:, vbscript:, file:) is stripped.
-function isSafeHref(href: string): boolean {
-  const h = href.trim().toLowerCase();
+// Round 5: harden the guard so it no longer depends on markdown-it's normalizeLink
+// to neutralize scheme-hiding. The old regex treated any href WITHOUT a matching
+// `scheme:` prefix as "relative" — so a C0-control-prefixed `javascript:`
+// (e.g. "\u0001javascript:…", which trim() does not strip) fell through to the
+// relative branch and was allowed; only markdown-it percent-encoding the control
+// char downstream stopped it, and that is third-party behavior this app neither
+// controls nor tests. Now: reject any control character outright, then resolve
+// with the browser's own URL parser and allow only http/https/mailto or a
+// same-origin relative result. Exported for direct unit testing of the guard
+// (markdown-it normalizes hrefs before the renderer sees them, so the raw
+// control-char bypass can only be exercised against the function itself).
+export function isSafeHref(href: string): boolean {
+  const h = href.trim();
   if (h === '') return false;
-  if (/^(https?:|mailto:)/.test(h)) return true;
-  // Relative URLs (no scheme): /path, ./path, ../path, ?query, #fragment.
-  if (!/^[a-z][a-z0-9+.-]*:/.test(h)) return true;
-  return false;
+  // A real relative path or allowed scheme never contains a control char; its
+  // presence is the signature of a hidden-scheme attempt.
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(h)) return false;
+  let u: URL;
+  try {
+    u = new URL(h, 'https://invalid.invalid');
+  } catch {
+    return false;
+  }
+  if (u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:') return true;
+  // Same-origin relative URL (resolved against the opaque base above).
+  return u.origin === 'https://invalid.invalid';
 }
 
 export async function renderMarkdown(text: string): Promise<string> {

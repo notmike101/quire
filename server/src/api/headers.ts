@@ -22,7 +22,11 @@ export function securityHeaders(): MiddlewareHandler {
     // unhighlighted and the console fills with CompileError. 'wasm-unsafe-eval'
     // only permits WASM compilation from already-same-origin ('self') sources;
     // it does NOT allow arbitrary JS eval, so the CSP stays strict.
-    c.header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'");
+    // Round 5: base-uri 'none' blocks an injected <base href> from rewriting
+    // relative resource loads; form-action 'self' pins any form submission to
+    // this origin. Both are no-ops for the current SPA (no <base>, no cross-
+    // origin forms) but close the vectors if one is ever introduced.
+    c.header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'; form-action 'self'");
     c.header('X-Frame-Options', 'DENY');
     c.header('Referrer-Policy', 'no-referrer');
     c.header('X-Content-Type-Options', 'nosniff');

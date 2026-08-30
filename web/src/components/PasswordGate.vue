@@ -20,7 +20,7 @@ function submit(): void {
         type="password"
         class="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
         placeholder="Password"
-        autocomplete="current-password"
+        autocomplete="off"
       />
       <p v-if="error" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ error }}</p>
       <button

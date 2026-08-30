@@ -7,7 +7,7 @@ import ImagePart from '../src/components/ImagePart.vue';
 import AssistantMessage from '../src/components/AssistantMessage.vue';
 import SystemNotice from '../src/components/SystemNotice.vue';
 import MessageRail from '../src/components/MessageRail.vue';
-import { renderMarkdown } from '../src/markdown';
+import { renderMarkdown, isSafeHref } from '../src/markdown';
 import type { ShareMessage, SharePart, RailUserEntry } from '../src/api';
 
 // Capturing IntersectionObserver: records every constructed instance so a
@@ -66,6 +66,42 @@ describe('renderMarkdown', () => {
     const html = await renderMarkdown('[x](javascript&#58;alert(1))');
     expect(html).not.toContain('<a ');
     expect(html).not.toMatch(/href="javascript/i);
+  });
+});
+
+describe('isSafeHref (Round 5 guard hardening)', () => {
+  it('rejects C0-control-prefixed javascript: (the trim() bypass)', () => {
+    // trim() does not strip C0 controls, so the old regex saw no `scheme:`
+    // prefix and classified these as "relative" (allowed). The browser strips a
+    // leading C0 control before parsing, so a raw one WOULD execute as
+    // javascript: — the guard must reject it on its own.
+    for (const code of [1, 2, 7, 0x0e, 0x1f]) {
+      expect(isSafeHref(String.fromCharCode(code) + 'javascript:alert(1)')).toBe(false);
+    }
+  });
+
+  it('rejects C1/DEL control-prefixed schemes too', () => {
+    expect(isSafeHref(String.fromCharCode(0x7f) + 'javascript:alert(1)')).toBe(false);
+    expect(isSafeHref(String.fromCharCode(0x80) + 'javascript:alert(1)')).toBe(false);
+    expect(isSafeHref(String.fromCharCode(0x9f) + 'javascript:alert(1)')).toBe(false);
+  });
+
+  it('still allows http/https/mailto and same-origin relative URLs', () => {
+    expect(isSafeHref('https://example.com')).toBe(true);
+    expect(isSafeHref('http://example.com')).toBe(true);
+    expect(isSafeHref('mailto:x@example.com')).toBe(true);
+    expect(isSafeHref('/relative/path')).toBe(true);
+    expect(isSafeHref('./rel/path')).toBe(true);
+    expect(isSafeHref('#fragment')).toBe(true);
+    expect(isSafeHref('?q=1')).toBe(true);
+  });
+
+  it('still rejects other executable schemes and empty', () => {
+    expect(isSafeHref('javascript:alert(1)')).toBe(false);
+    expect(isSafeHref('data:text/html,<script>')).toBe(false);
+    expect(isSafeHref('vbscript:msgbox(1)')).toBe(false);
+    expect(isSafeHref('file:///etc/passwd')).toBe(false);
+    expect(isSafeHref('')).toBe(false);
   });
 });
 
