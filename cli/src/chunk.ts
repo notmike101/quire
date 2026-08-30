@@ -4,6 +4,13 @@ import type { ShapedMessage } from './harness/types.js';
  *  JSON envelope (session header + create/chunk wrapper) still fits under the cap. */
 export const CHUNK_TARGET_BYTES = 19 * 1024 * 1024;
 
+/** The preview endpoint takes the WHOLE session in one request, so a session over
+ *  the server's 20 MB per-request cap would 413 there and the chunked upload path
+ *  would be unreachable (E1). The CLI skips the preview above this size instead;
+ *  the small margin covers the JSON envelope around `session`. Redaction still
+ *  runs server-side on the real upload, so nothing security-relevant is lost. */
+export const PREVIEW_MAX_BYTES = 20 * 1024 * 1024 - 4096;
+
 /**
  * Greedily pack messages into chunks whose serialized size is <= maxBytes.
  * Order is preserved. A single message larger than maxBytes gets its own chunk

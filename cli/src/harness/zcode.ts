@@ -2,9 +2,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedImage, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
-import { truncateOutput, MAX_SESSION_MESSAGES } from '../shape.js';
+import { truncateOutput, truncateInput, MAX_SESSION_MESSAGES } from '../shape.js';
 import { extractSystemParts, extractReasoningParts } from '../system.js';
-import { readArtifactDataUri, fileToDataUri, mimeFromExtension, isImageMime, MAX_IMAGE_BYTES } from '../image.js';
+import { readArtifactDataUri, fileToDataUri, mimeFromExtension, isImageMime, MAX_IMAGE_BYTES, MAX_SESSION_IMAGE_BYTES, type ImageBudget } from '../image.js';
 import { fileURLToPath } from 'node:url';
 
 export function zcodeDbPath(): string {
@@ -53,7 +53,7 @@ interface RawPart {
  * to be attached to the tool part (rendered inside its collapsible body), or
  * [] if none.
  */
-function imagesFromAttachments(raw: RawPart, artifactDir: string): ShapedImage[] {
+function imagesFromAttachments(raw: RawPart, artifactDir: string, budget: ImageBudget): ShapedImage[] {
   const attachments = raw.state?.attachments;
   if (!attachments || attachments.length === 0) return [];
   const out: ShapedImage[] = [];
@@ -68,9 +68,11 @@ function imagesFromAttachments(raw: RawPart, artifactDir: string): ShapedImage[]
       out.push({ mime: att.mime, alt, bytes: att.metadata?.sizeBytes, tooLarge: true });
       continue;
     }
-    if (uri.bytes > MAX_IMAGE_BYTES) {
+    // Round 8: per-image cap AND the session-wide cumulative budget.
+    if (uri.bytes > MAX_IMAGE_BYTES || budget.remaining < uri.bytes) {
       out.push({ mime: uri.mime, alt, bytes: uri.bytes, tooLarge: true });
     } else {
+      budget.remaining -= uri.bytes;
       out.push({ src: uri.dataUri, mime: uri.mime, alt, bytes: uri.bytes });
     }
   }
@@ -82,7 +84,7 @@ function imagesFromAttachments(raw: RawPart, artifactDir: string): ShapedImage[]
  * relative to the session working dir) to an image. Returns [] if the file
  * is gone or not an image — the markdown link in the tool output still renders.
  */
-function imageFromScreenshotFile(raw: RawPart, workDir: string | undefined): ShapedImage[] {
+function imageFromScreenshotFile(raw: RawPart, workDir: string | undefined, budget: ImageBudget): ShapedImage[] {
   if (!workDir) return [];
   const input = raw.state?.input as { filename?: string } | undefined;
   const filename = input?.filename;
@@ -92,9 +94,11 @@ function imageFromScreenshotFile(raw: RawPart, workDir: string | undefined): Sha
   const filePath = join(workDir, filename);
   const uri = fileToDataUri(filePath, mime, MAX_IMAGE_BYTES, workDir);
   if (!uri) return [];
-  if (uri.bytes > MAX_IMAGE_BYTES) {
+  // Round 8: per-image cap AND the session-wide cumulative budget.
+  if (uri.bytes > MAX_IMAGE_BYTES || budget.remaining < uri.bytes) {
     return [{ mime: uri.mime, alt: filename, bytes: uri.bytes, tooLarge: true }];
   }
+  budget.remaining -= uri.bytes;
   return [{ src: uri.dataUri, mime: uri.mime, alt: filename, bytes: uri.bytes }];
 }
 
@@ -118,7 +122,7 @@ const MD_IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
  * missing, or it exceeds the embed cap (the link is then left in the text and
  * redacted on the server).
  */
-function markdownImagePart(alt: string, target: string, workDir: string | undefined): ShapedPart | null {
+function markdownImagePart(alt: string, target: string, workDir: string | undefined, budget: ImageBudget): ShapedPart | null {
   // No working dir → no containment root for fileToDataUri, so an absolute
   // model-emitted path would read an arbitrary local image and exfiltrate it
   // (the containment check only runs when a root is given). Refuse to embed;
@@ -147,9 +151,11 @@ function markdownImagePart(alt: string, target: string, workDir: string | undefi
   // not be able to point at an arbitrary local file and exfiltrate it.
   const uri = fileToDataUri(filePath, mime, MAX_IMAGE_BYTES, workDir);
   if (!uri) return null;
-  if (uri.bytes > MAX_IMAGE_BYTES) {
+  // Round 8: per-image cap AND the session-wide cumulative budget.
+  if (uri.bytes > MAX_IMAGE_BYTES || budget.remaining < uri.bytes) {
     return { type: 'image', mime: uri.mime, alt: alt || filePath, bytes: uri.bytes, tooLarge: true };
   }
+  budget.remaining -= uri.bytes;
   return { type: 'image', src: uri.dataUri, mime: uri.mime, alt: alt || filePath, bytes: uri.bytes };
 }
 
@@ -160,14 +166,14 @@ function markdownImagePart(alt: string, target: string, workDir: string | undefi
  * instead of a redacted `file:///…` path. Links whose file is gone or too large
  * are left untouched (they get redacted server-side as before).
  */
-function embedMarkdownImages(text: string, workDir: string | undefined): { text: string; images: ShapedPart[] } {
+function embedMarkdownImages(text: string, workDir: string | undefined, budget: ImageBudget): { text: string; images: ShapedPart[] } {
   const images: ShapedPart[] = [];
   let out = '';
   let last = 0;
   let m: RegExpExecArray | null;
   MD_IMAGE_RE.lastIndex = 0;
   while ((m = MD_IMAGE_RE.exec(text)) !== null) {
-    const part = markdownImagePart(m[1] ?? '', m[2] ?? '', workDir);
+    const part = markdownImagePart(m[1] ?? '', m[2] ?? '', workDir, budget);
     if (!part) continue; // not a local image file — leave the link in place
     out += text.slice(last, m.index) + `![${m[1] ?? ''}]`;
     images.push(part);
@@ -178,13 +184,13 @@ function embedMarkdownImages(text: string, workDir: string | undefined): { text:
 }
 
 
-function partToShaped(raw: RawPart, artifactDir: string, workDir: string | undefined): ShapedPart[] {
+function partToShaped(raw: RawPart, artifactDir: string, workDir: string | undefined, budget: ImageBudget): ShapedPart[] {
   switch (raw.type) {
     case 'text': {
       if (typeof raw.text !== 'string') return [];
       // Embed local markdown image links as image parts (the agent's "here's the
       // screenshot" messages reference on-disk files via ![alt](file:///…)).
-      const { text, images } = embedMarkdownImages(raw.text, workDir);
+      const { text, images } = embedMarkdownImages(raw.text, workDir, budget);
       return [{ type: 'text', text }, ...images];
     }
     case 'reasoning':
@@ -194,16 +200,18 @@ function partToShaped(raw: RawPart, artifactDir: string, workDir: string | undef
       // Images the agent viewed: from Read attachments (data-URI artifacts) and,
       // best-effort, from screenshot tool calls' on-disk files. Attached to the
       // tool part so the viewer renders them inside its collapsible body.
-      const images: ShapedImage[] = [...imagesFromAttachments(raw, artifactDir)];
+      const images: ShapedImage[] = [...imagesFromAttachments(raw, artifactDir, budget)];
       if (isScreenshotTool(raw.tool)) {
-        images.push(...imageFromScreenshotFile(raw, workDir));
+        images.push(...imageFromScreenshotFile(raw, workDir, budget));
       }
       const toolPart: ShapedPart = {
         type: 'tool',
         callID: raw.callID,
         tool: raw.tool,
         status: raw.state?.status,
-        input: raw.state?.input,
+        // Round 8: cap the input the same way the output is capped (a Write
+        // call carries the whole file body).
+        input: truncateInput(raw.state?.input),
         output,
       };
       if (images.length > 0) toolPart.images = images;
@@ -218,6 +226,7 @@ export function makeZcodeAdapter(
   dbPath: string = zcodeDbPath(),
   workDirOverride?: string,
   maxMessages: number = MAX_SESSION_MESSAGES,
+  maxImageBytes: number = MAX_SESSION_IMAGE_BYTES,
 ): HarnessAdapter {
   const open = (): DatabaseSync => new DatabaseSync(dbPath, { readOnly: true });
 
@@ -265,13 +274,24 @@ export function makeZcodeAdapter(
         const rows = db
           .prepare('select id, data from message where session_id = ? order by sequence limit ?')
           .all(id, maxMessages) as { id: string; data: string }[];
+        // Round 8: hitting the cap means the tail of the session was silently
+        // dropped — say so instead of publishing a truncated transcript with no
+        // trace of it.
+        if (rows.length >= maxMessages) {
+          process.stderr.write(`[quire] warning: session ${id} has at least ${maxMessages} messages; only the first ${maxMessages} are published\n`);
+        }
         const messages = rows.map((r) => ({ id: r.id, data: JSON.parse(r.data) as MessageData }));
         const parts = db
           .prepare('select message_id, data from part where session_id = ? order by sequence limit ?')
           .all(id, maxMessages * 4) as PartRow[];
+        if (parts.length >= maxMessages * 4) {
+          process.stderr.write(`[quire] warning: session ${id} has at least ${maxMessages * 4} parts; only the first ${maxMessages * 4} are published\n`);
+        }
+        // Round 8: one cumulative image budget for the whole session.
+        const imageBudget: ImageBudget = { remaining: maxImageBytes };
         const byMessage = new Map<string, ShapedPart[]>();
         for (const p of parts) {
-          const shaped = partToShaped(JSON.parse(p.data) as RawPart, artifactDir, workDir);
+          const shaped = partToShaped(JSON.parse(p.data) as RawPart, artifactDir, workDir, imageBudget);
           if (shaped.length === 0) continue;
           const list = byMessage.get(p.message_id) ?? [];
           for (const s of shaped) list.push(s);

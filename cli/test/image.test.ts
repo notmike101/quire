@@ -53,6 +53,19 @@ describe('parseDataUri', () => {
     expect(parseDataUri('hello world')).toBeNull();
     expect(parseDataUri('')).toBeNull();
   });
+  it('returns null for a non-image mime (Round 8)', () => {
+    // A data URI of any other mime (e.g. text/html) must not flow into an
+    // image part — only image/* payloads are images.
+    expect(parseDataUri(`data:text/html;base64,${PNG_1X1}`)).toBeNull();
+    expect(parseDataUri(`data:application/json;base64,${PNG_1X1}`)).toBeNull();
+  });
+  it('still parses a non-base64 image data URI (Round 8)', () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
+    const r = parseDataUri(`data:image/svg+xml,${svg}`);
+    expect(r).not.toBeNull();
+    expect(r!.mime).toBe('image/svg+xml');
+    expect(r!.bytes).toBe(Buffer.byteLength(svg, 'utf8'));
+  });
 });
 
 describe('readArtifactDataUri', () => {

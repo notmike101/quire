@@ -80,4 +80,31 @@ describe('loadCliConfig', () => {
     const { loadCliConfig } = await import('../src/config.js');
     expect(loadCliConfig().serverUrl).toBe('http://127.0.0.1:8791');
   });
+
+  it('allows http:// on IPv6 localhost (bracketed [::1]) (Round 8)', async () => {
+    // An IPv6 literal hostname is bracketed in URL form ([::1]) — the old bare
+    // '::1' compare was dead, so http://[::1]:8080 was rejected as remote.
+    vi.stubEnv('QUIRE_SERVER_URL', 'http://[::1]:8791');
+    vi.stubEnv('QUIRE_API_KEY', 'k'.repeat(64));
+    const { loadCliConfig } = await import('../src/config.js');
+    expect(loadCliConfig().serverUrl).toBe('http://[::1]:8791');
+  });
+
+  it('does not leak embedded credentials in the rejection message (Round 8)', async () => {
+    // A URL with userinfo (user:pass@) is rejected for the remote-http reason,
+    // and the error must echo the ORIGIN — never the raw URL with its
+    // credentials.
+    vi.stubEnv('QUIRE_SERVER_URL', 'http://user:pass@attacker.example.com');
+    vi.stubEnv('QUIRE_API_KEY', 'k'.repeat(64));
+    const { loadCliConfig } = await import('../src/config.js');
+    let msg = '';
+    try {
+      loadCliConfig();
+    } catch (e) {
+      msg = e instanceof Error ? e.message : String(e);
+    }
+    expect(msg).toMatch(/must be https/);
+    expect(msg).toContain('attacker.example.com');
+    expect(msg).not.toContain('user:pass');
+  });
 });

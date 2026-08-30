@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedMessage } from '../harness/types.js';
 import { detectHarness, makeAdapter, type HarnessName } from '../harness/detect.js';
 import { QuireApi, QuireApiError, type PreviewResponse } from '../api.js';
-import { chunkMessages } from '../chunk.js';
+import { chunkMessages, PREVIEW_MAX_BYTES } from '../chunk.js';
 import { confirm } from '../prompt.js';
 import { parseExpiry } from '../expires.js';
 
@@ -111,8 +111,19 @@ export async function runPublish(values: PublishValues, positionals: string[], d
   const password = resolvePassword(values.password);
   if (isRandomPassword) out(`Password: ${password}`);
 
-  const preview: PreviewResponse = await api.preview(shaped, preset);
-  printPreview(preview.messages as ShapedMessage[], preview.summary, preset, out);
+  // E1: the preview endpoint takes the whole session in ONE request and is
+  // subject to the server's 20 MB per-request cap. A session over the cap would
+  // 413 at this step and the chunked upload path (1 GB per-share) would be
+  // unreachable. Skip the preview above the cap and say so — redaction still
+  // runs server-side on the real upload, and the final redaction counts come
+  // from the create response, not the preview.
+  const payloadBytes = Buffer.byteLength(JSON.stringify(shaped));
+  if (payloadBytes <= PREVIEW_MAX_BYTES) {
+    const preview: PreviewResponse = await api.preview(shaped, preset);
+    printPreview(preview.messages as ShapedMessage[], preview.summary, preset, out);
+  } else {
+    out(`\nSession is ${(payloadBytes / 1024 / 1024).toFixed(1)} MB — over the 20 MB per-request cap, so the redacted preview is skipped${values.noChunk ? '' : '; it will be uploaded in chunks'}.`);
+  }
 
   const ok = await confirm('Publish this session?', values.yes === true);
   if (!ok) {
@@ -120,7 +131,6 @@ export async function runPublish(values: PublishValues, positionals: string[], d
     return;
   }
 
-  const payloadBytes = Buffer.byteLength(JSON.stringify(shaped));
   const opts = { preset, password, expiresAt };
 
   if (values.noChunk === true) {

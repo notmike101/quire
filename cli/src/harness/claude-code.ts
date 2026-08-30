@@ -1,10 +1,10 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
-import { truncateOutput, MAX_SESSION_MESSAGES } from '../shape.js';
+import { truncateOutput, truncateInput, MAX_SESSION_MESSAGES } from '../shape.js';
 import { extractSystemParts, extractReasoningParts } from '../system.js';
-import { MAX_IMAGE_BYTES } from '../image.js';
+import { MAX_IMAGE_BYTES, MAX_SESSION_IMAGE_BYTES, isImageMime, type ImageBudget } from '../image.js';
 
 export function claudeProjectsDir(): string {
   return join(homedir(), '.claude', 'projects');
@@ -60,7 +60,7 @@ function toolResultText(block: CcBlock): string {
  * media_type, data}} blocks inside a tool_result's content array. Extract them
  * as image parts (data URIs). Non-image content is left to toolResultText.
  */
-function imagePartsFromToolResult(block: CcBlock): ShapedPart[] {
+function imagePartsFromToolResult(block: CcBlock, budget: ImageBudget): ShapedPart[] {
   const content = block.content;
   if (!Array.isArray(content)) return [];
   const out: ShapedPart[] = [];
@@ -68,11 +68,16 @@ function imagePartsFromToolResult(block: CcBlock): ShapedPart[] {
     if (!b || b.type !== 'image' || !b.source) continue;
     const src = b.source;
     if (src.type !== 'base64' || typeof src.data !== 'string' || !src.media_type) continue;
+    // Round 8: only image/* payloads are images — a non-image media_type
+    // (e.g. text/html) must not be embedded as an image part.
+    if (!isImageMime(src.media_type)) continue;
     const mime = src.media_type;
     const bytes = Buffer.byteLength(src.data, 'base64');
-    if (bytes > MAX_IMAGE_BYTES) {
+    // Round 8: per-image cap AND the session-wide cumulative budget.
+    if (bytes > MAX_IMAGE_BYTES || budget.remaining < bytes) {
       out.push({ type: 'image', mime, alt: 'image', bytes, tooLarge: true });
     } else {
+      budget.remaining -= bytes;
       out.push({ type: 'image', src: `data:${mime};base64,${src.data}`, mime, alt: 'image', bytes });
     }
   }
@@ -82,6 +87,7 @@ function imagePartsFromToolResult(block: CcBlock): ShapedPart[] {
 export function makeClaudeCodeAdapter(
   projectsDir: string = claudeProjectsDir(),
   maxMessages: number = MAX_SESSION_MESSAGES,
+  maxImageBytes: number = MAX_SESSION_IMAGE_BYTES,
 ): HarnessAdapter {
   const sessionFiles = (): string[] => {
     if (!existsSync(projectsDir)) return [];
@@ -99,10 +105,50 @@ export function makeClaudeCodeAdapter(
     return files;
   };
 
+// Round 8: listSessions must not read a multi-GB .jsonl just to extract a
+// title. Read only a bounded head (the first events carry the summary / first
+// user message) and parse lines from it. A line cut mid-JSON or mid-UTF-8 at
+// the byte boundary fails JSON.parse and is skipped — the title is best-effort.
+function headEvents(file: string, maxLines: number, maxBytes = 256 * 1024): CcEvent[] {
+  let head: Buffer;
+  try {
+    const n = Math.min(statSync(file).size, maxBytes);
+    const fd = openSync(file, 'r');
+    try {
+      head = Buffer.alloc(n);
+      let off = 0;
+      while (off < n) {
+        const r = readSync(fd, head, off, n - off, off);
+        if (r === 0) break;
+        off += r;
+      }
+      head = head.subarray(0, off);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return [];
+  }
+  return head
+    .toString('utf8')
+    .split('\n')
+    .slice(0, maxLines)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      try {
+        return JSON.parse(l) as CcEvent;
+      } catch {
+        return null;
+      }
+    })
+    .filter((e): e is CcEvent => e !== null);
+}
+
   const titleFor = (file: string): string => {
     const id = file.split(/[\\/]/).pop()!.replace(/\.jsonl$/, '');
     try {
-      for (const ev of jsonlEvents(file).slice(0, 50)) {
+      for (const ev of headEvents(file, 50)) {
         if (ev.isSidechain) continue;
         if (ev.type === 'summary' && typeof ev.summary === 'string') return ev.summary;
         if (ev.type === 'user') {
@@ -149,6 +195,16 @@ export function makeClaudeCodeAdapter(
       // .jsonl must not be able to OOM the CLI). Events are still scanned in
       // full for the title/model; only the message list is bounded.
       let shapedCount = 0;
+      let capWarned = false;
+      const noteCap = (): void => {
+        // Round 8: hitting the cap silently drops the tail — say so once.
+        if (!capWarned) {
+          capWarned = true;
+          process.stderr.write(`[quire] warning: session ${id} has more than ${maxMessages} messages; only the first ${maxMessages} are published\n`);
+        }
+      };
+      // Round 8: one cumulative image budget for the whole session.
+      const imageBudget: ImageBudget = { remaining: maxImageBytes };
       for (const ev of jsonlEvents(file)) {
         if (ev.isSidechain) continue;
         if (ev.type === 'summary' && typeof ev.summary === 'string' && !title) title = ev.summary;
@@ -164,7 +220,7 @@ export function makeClaudeCodeAdapter(
                 part.output = truncateOutput(toolResultText(r));
                 // Images the tool returned (e.g. a screenshot) — emit after the
                 // tool part so the viewer shows the card, then the image.
-                const imgs = imagePartsFromToolResult(r);
+                const imgs = imagePartsFromToolResult(r, imageBudget);
                 if (imgs.length > 0 && lastAssistant) {
                   const idx = lastAssistant.parts.indexOf(part);
                   lastAssistant.parts.splice(idx + 1, 0, ...imgs);
@@ -177,12 +233,12 @@ export function makeClaudeCodeAdapter(
               .filter((b) => b.type === 'text' && typeof b.text === 'string')
               .map((b) => b.text as string);
           if (texts.length === 0) continue;
-          if (atCap) continue;
+          if (atCap) { noteCap(); continue; }
           messages.push({ role: 'user', parts: extractReasoningParts(extractSystemParts(texts.map((t) => ({ type: 'text', text: t })))), time: ev.timestamp });
           shapedCount++;
           lastAssistant = undefined;
         } else if (typeof content === 'string' && content.length > 0) {
-          if (atCap) continue;
+          if (atCap) { noteCap(); continue; }
           messages.push({ role: 'user', parts: extractReasoningParts(extractSystemParts([{ type: 'text', text: content }])), time: ev.timestamp });
           shapedCount++;
           lastAssistant = undefined;
@@ -194,10 +250,10 @@ export function makeClaudeCodeAdapter(
           for (const b of content) {
             if (b.type === 'text' && typeof b.text === 'string') parts.push({ type: 'text', text: b.text });
             else if (b.type === 'thinking' && typeof b.thinking === 'string') parts.push({ type: 'reasoning', text: b.thinking });
-            else if (b.type === 'tool_use' && typeof b.id === 'string') parts.push({ type: 'tool', callID: b.id, tool: b.name, input: b.input });
+            else if (b.type === 'tool_use' && typeof b.id === 'string') parts.push({ type: 'tool', callID: b.id, tool: b.name, input: truncateInput(b.input) });
           }
           if (parts.length === 0) continue;
-          if (atCap) continue;
+          if (atCap) { noteCap(); continue; }
           const msg: ShapedMessage = { role: 'assistant', parts: extractReasoningParts(extractSystemParts(parts)), time: ev.timestamp };
           messages.push(msg);
           shapedCount++;

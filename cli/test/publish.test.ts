@@ -153,6 +153,41 @@ describe('runPublish (unit)', () => {
     expect(calls).toEqual(['create', 'chunk1', 'chunk2']);
   });
 
+  it('skips the preview for a session over the per-request cap (E1) and still uploads in chunks', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    // Two 11 MB messages: 22 MB total — over the 20 MB preview cap, but each
+    // message fits a chunk, so the chunked path must still run.
+    const hugeAdapter = {
+      name: 'zcode',
+      listSessions: vi.fn(async () => [{ id: 'sess_huge', title: 'Huge', updatedAt: '', isSubagent: false }]),
+      resolveCurrent: vi.fn(async () => ({ id: 'sess_huge', title: 'Huge', updatedAt: '', isSubagent: false })),
+      loadSession: vi.fn(async (id: string) => ({
+        sessionId: id, title: 'Huge',
+        messages: Array.from({ length: 2 }, () => ({ role: 'user' as const, parts: [{ type: 'text' as const, text: 'x'.repeat(11 * 1024 * 1024) }] })),
+      })),
+    };
+    const calls: string[] = [];
+    const hugeApi = {
+      baseUrl: 'https://srv.example.com',
+      preview: vi.fn(async () => {
+        throw new Error('preview must not be called for a >20 MB session (it would 413)');
+      }),
+      create: vi.fn(async () => {
+        calls.push('create');
+        return { token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, uploadId: 'a'.repeat(32), chunkCount: 1, summary: {}, bytes: 0, messageCount: 1 };
+      }),
+      createChunk: vi.fn(async (_tok: string, body: { chunkSeq: number }) => {
+        calls.push(`chunk${body.chunkSeq}`);
+        return { ok: true, messageCount: 1, bytes: 0 };
+      }),
+    };
+    const lines: string[] = [];
+    await runPublish({ current: true, yes: true }, [], { adapter: hugeAdapter as never, api: hugeApi as never, out: (l) => lines.push(l) });
+    expect(hugeApi.preview).not.toHaveBeenCalled();
+    expect(calls).toEqual(['create', 'chunk1']);
+    expect(lines.join('\n')).toContain('preview is skipped');
+  });
+
   it('--no-chunk sends a single create and no createChunk', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
     const calls: string[] = [];

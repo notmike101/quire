@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -70,6 +70,103 @@ describe('claude-code adapter', () => {
       const { makeClaudeCodeAdapter } = await import('../src/harness/claude-code.js');
       const s = await makeClaudeCodeAdapter(tmp, 3).loadSession('cap-session');
       expect(s.messages.length).toBe(3);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('warns on stderr when the message cap drops the tail (Round 8)', async () => {
+    // Hitting the cap silently drops the tail of the transcript — the adapter
+    // must say so (once) instead of publishing a truncated session with no trace.
+    const tmp = mkdtempSync(join(tmpdir(), 'quire-cc-warn-'));
+    try {
+      const lines: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        lines.push(JSON.stringify({ type: 'user', timestamp: '2026-08-20T00:00:00Z', message: { role: 'user', content: 'x' } }));
+      }
+      writeFileSync(join(tmp, 'warn-session.jsonl'), lines.join('\n'));
+      const { makeClaudeCodeAdapter } = await import('../src/harness/claude-code.js');
+      const spy = vi.spyOn(process.stderr, 'write');
+      try {
+        const s = await makeClaudeCodeAdapter(tmp, 3).loadSession('warn-session');
+        expect(s.messages.length).toBe(3);
+        expect(spy.mock.calls.some((c) => String(c[0]).includes('more than 3 messages'))).toBe(true);
+      } finally {
+        spy.mockRestore();
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('does not embed a tool_result image block with a non-image media_type (Round 8)', async () => {
+    // A tool_result can carry {type:'image', source:{media_type, data}} blocks.
+    // Only image/* payloads are images — a text/html (or any other) media_type
+    // must not flow into an image part.
+    const tmp = mkdtempSync(join(tmpdir(), 'quire-cc-mime-'));
+    try {
+      const events = [
+        { type: 'assistant', timestamp: '2026-08-20T00:00:00Z', message: { role: 'assistant', model: 'claude-test', content: [{ type: 'tool_use', id: 'toolu_mime', name: 'Fetch', input: { url: 'http://x' } }] } },
+        { type: 'user', timestamp: '2026-08-20T00:00:01Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_mime', content: [{ type: 'image', source: { type: 'base64', media_type: 'text/html', data: 'aGVsbG8=' } }] }] } },
+      ];
+      writeFileSync(join(tmp, 'mime-session.jsonl'), events.map((e) => JSON.stringify(e)).join('\n'));
+      const { makeClaudeCodeAdapter } = await import('../src/harness/claude-code.js');
+      const s = await makeClaudeCodeAdapter(tmp).loadSession('mime-session');
+      const allParts = s.messages.flatMap((m) => m.parts);
+      expect(allParts.some((p) => p.type === 'image')).toBe(false);
+      // The tool card still renders (its output is the stringified content).
+      const tool = allParts.find((p) => p.type === 'tool')!;
+      expect(tool.tool).toBe('Fetch');
+      expect(tool.output).toContain('text/html');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('honors the session-wide image budget (Round 8)', async () => {
+    // Two image blocks in one tool_result. With a budget of exactly one
+    // image's bytes, the first embeds and the second becomes a tooLarge
+    // placeholder — the cumulative cap, not just the per-image cap.
+    const tmp = mkdtempSync(join(tmpdir(), 'quire-cc-budget-'));
+    try {
+      const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==';
+      const bytes = Buffer.byteLength(png, 'base64');
+      const events = [
+        { type: 'assistant', timestamp: '2026-08-20T00:00:00Z', message: { role: 'assistant', model: 'claude-test', content: [{ type: 'tool_use', id: 'toolu_img', name: 'Screenshot', input: {} }] } },
+        { type: 'user', timestamp: '2026-08-20T00:00:01Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_img', content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } },
+        ] }] } },
+      ];
+      writeFileSync(join(tmp, 'budget-session.jsonl'), events.map((e) => JSON.stringify(e)).join('\n'));
+      const { makeClaudeCodeAdapter } = await import('../src/harness/claude-code.js');
+      const s = await makeClaudeCodeAdapter(tmp, 50_000, bytes).loadSession('budget-session');
+      const imgs = s.messages.flatMap((m) => m.parts).filter((p) => p.type === 'image') as { src?: string; tooLarge?: boolean; bytes?: number }[];
+      expect(imgs).toHaveLength(2);
+      expect(imgs[0]!.src).toBe(`data:image/png;base64,${png}`);
+      expect(imgs[0]!.tooLarge).toBeUndefined();
+      expect(imgs[1]!.tooLarge).toBe(true);
+      expect(imgs[1]!.src).toBeUndefined();
+      expect(imgs[1]!.bytes).toBe(bytes);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('reads only a bounded head for the title (Round 8)', async () => {
+    // A first line far larger than the 256 KB head: the summary event that
+    // follows it lies beyond the head, so the title must fall back to the id —
+    // proving listSessions does not read the whole (potentially multi-GB) file.
+    const tmp = mkdtempSync(join(tmpdir(), 'quire-cc-head-'));
+    try {
+      const big = JSON.stringify({ type: 'user', timestamp: '2026-08-20T00:00:00Z', message: { role: 'user', content: 'x'.repeat(300 * 1024) } });
+      const summary = JSON.stringify({ type: 'summary', summary: 'The real title' });
+      writeFileSync(join(tmp, 'big-head.jsonl'), `${big}\n${summary}\n`);
+      const { makeClaudeCodeAdapter } = await import('../src/harness/claude-code.js');
+      const sessions = await makeClaudeCodeAdapter(tmp).listSessions();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]!.id).toBe('big-head');
+      expect(sessions[0]!.title).toBe('big-head'); // fell back to the id
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
@@ -285,6 +285,80 @@ describe('zcode adapter', () => {
       expect(img.bytes).toBe(MAX_IMAGE_BYTES + 1);
     } finally {
       rmSync(bigArtifact, { force: true });
+    }
+  });
+
+  it('honors the session-wide image budget (Round 8)', async () => {
+    // Two Read-image attachments in one tool part. With a budget of exactly
+    // one image's bytes, the first embeds and the second becomes a tooLarge
+    // placeholder — the cumulative cap, not just the per-image cap.
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const { DatabaseSync } = await import('node:sqlite');
+    const bytes = Buffer.byteLength(PNG_1X1, 'base64');
+    const budgetArtDir = join(homedir(), '.zcode', 'cli', 'artifacts', 'sess_budget');
+    const createdBudgetArtDir = !existsSync(budgetArtDir);
+    mkdirSync(budgetArtDir, { recursive: true });
+    writeFileSync(join(budgetArtDir, 'aaa111-media-1-att1.png'), `data:image/png;base64,${PNG_1X1}`);
+    writeFileSync(join(budgetArtDir, 'bbb222-media-1-att2.png'), `data:image/png;base64,${PNG_1X1}`);
+    try {
+      const oneOffDb = join(tempDir, 'budget.sqlite');
+      const db = new DatabaseSync(oneOffDb);
+      db.exec(`
+        create table session (id text primary key, title text, directory text, time_created integer, time_updated integer, task_type text, share_url text);
+        create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text, sequence integer);
+        create table part (id text primary key, message_id text, session_id text, data text, sequence integer);
+      `);
+      db.prepare('insert into session values (?,?,?,?,?,?,?)').run('sess_budget', 'Budget', fixtureWorkDir, 0, 0, 'interactive', null);
+      db.prepare('insert into message (id, session_id, data, sequence) values (?,?,?,?)').run('mbud', 'sess_budget', JSON.stringify({ role: 'assistant' }), 1);
+      db.prepare('insert into part values (?,?,?,?,?)').run('pbud', 'mbud', 'sess_budget', JSON.stringify({
+        type: 'tool', callID: 'cbug', tool: 'Read',
+        state: { status: 'completed', input: { file_path: '/tmp/x.png' }, output: '[Attached image/png: Read image]',
+          attachments: [
+            { type: 'file', mime: 'image/png', filename: 'Read image', url: 'zcode-artifact://sess_budget/att1', metadata: { sizeBytes: bytes } },
+            { type: 'file', mime: 'image/png', filename: 'Read image', url: 'zcode-artifact://sess_budget/att2', metadata: { sizeBytes: bytes } },
+          ] },
+      }), 1);
+      db.close();
+      const s = await makeZcodeAdapter(oneOffDb, undefined, 50_000, bytes).loadSession('sess_budget');
+      const tool = s.messages[0]!.parts.find((p) => p.type === 'tool')!;
+      expect(tool.images).toHaveLength(2);
+      expect(tool.images![0]!.src).toBe(`data:image/png;base64,${PNG_1X1}`);
+      expect(tool.images![0]!.tooLarge).toBeUndefined();
+      expect(tool.images![1]!.tooLarge).toBe(true);
+      expect(tool.images![1]!.src).toBeUndefined();
+      expect(tool.images![1]!.bytes).toBe(bytes);
+    } finally {
+      if (createdBudgetArtDir) rmSync(budgetArtDir, { recursive: true, force: true });
+    }
+  });
+
+  it('warns on stderr when the message cap drops the tail (Round 8)', async () => {
+    // Hitting the cap silently drops the tail of the transcript — the adapter
+    // must say so instead of publishing a truncated session with no trace.
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const { DatabaseSync } = await import('node:sqlite');
+    const warnDb = join(tempDir, 'warn.sqlite');
+    const db = new DatabaseSync(warnDb);
+    db.exec(`
+      create table session (id text primary key, title text, directory text, time_created integer, time_updated integer, task_type text, share_url text);
+      create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text, sequence integer);
+      create table part (id text primary key, message_id text, session_id text, data text, sequence integer);
+    `);
+    db.prepare('insert into session values (?,?,?,?,?,?,?)').run('sess_warn', 'Warn', '/tmp', 0, 0, 'interactive', null);
+    for (let i = 0; i < 5; i++) {
+      db.prepare('insert into message (id, session_id, data, sequence) values (?,?,?,?)')
+        .run(`wm${i}`, 'sess_warn', JSON.stringify({ role: i % 2 === 0 ? 'user' : 'assistant' }), i);
+      db.prepare('insert into part (id, message_id, session_id, data, sequence) values (?,?,?,?,?)')
+        .run(`wp${i}`, `wm${i}`, 'sess_warn', JSON.stringify({ type: 'text', text: 'x' }), i);
+    }
+    db.close();
+    const spy = vi.spyOn(process.stderr, 'write');
+    try {
+      const s = await makeZcodeAdapter(warnDb, undefined, 3).loadSession('sess_warn');
+      expect(s.messages.length).toBe(3);
+      expect(spy.mock.calls.some((c) => String(c[0]).includes('at least 3 messages'))).toBe(true);
+    } finally {
+      spy.mockRestore();
     }
   });
 

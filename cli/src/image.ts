@@ -7,6 +7,26 @@ import { isAbsolute, join, sep } from 'node:path';
  */
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 
+/**
+ * Round 8: cumulative cap on the total raw image bytes embedded in ONE
+ * published session. Each image is individually capped at MAX_IMAGE_BYTES, but
+ * a session can carry many (Read attachments, screenshots, markdown links), so
+ * the total was unbounded — a session with hundreds of 2 MB images would
+ * balloon the upload past the per-request cap (or the 1 GB share cap) and bloat
+ * the stored parts jsonb. Once the budget is exhausted, further images are
+ * stored as tooLarge placeholders (metadata only, no src).
+ */
+export const MAX_SESSION_IMAGE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Round 8: the mutable cumulative image budget threaded through a session
+ * load (see MAX_SESSION_IMAGE_BYTES). Each embedded image decrements it; an
+ * image that would exceed the remainder is stored as a tooLarge placeholder.
+ */
+export interface ImageBudget {
+  remaining: number;
+}
+
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -45,6 +65,9 @@ export function parseDataUri(content: string): DataUri | null {
   const encoding = m[2];
   const payload = m[3];
   if (mime === undefined || payload === undefined) return null;
+  // Round 8: only image/* payloads are images — a data URI of any other mime
+  // (e.g. text/html) must not flow into an image part.
+  if (!isImageMime(mime)) return null;
   if (encoding === 'base64') {
     const buf = Buffer.from(payload, 'base64');
     return { dataUri: content, mime, bytes: buf.length };

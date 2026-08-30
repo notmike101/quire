@@ -28,10 +28,15 @@ export function loadCliConfig(env: NodeJS.ProcessEnv = process.env): CliConfig {
   // a poisoned QUIRE_SERVER_URL env var). Localhost http:// is allowed because
   // the local-inspect workflow runs a standalone server on 127.0.0.1.
   const u = new URL(serverUrl);
-  const isLocalhost = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1';
+  // Round 8: an IPv6 literal hostname is bracketed in URL form ([::1]), so the
+  // old bare '::1' compare was dead — http://[::1]:8080 was rejected as remote.
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
   if (u.protocol !== 'https:' && !(u.protocol === 'http:' && isLocalhost)) {
     throw new Error(
-      `QUIRE_SERVER_URL must be https:// (or http:// on localhost for local dev) — the session and API key are sent to it (got "${serverUrl}")`,
+      // Round 8: echo the origin, not the raw URL — a URL with embedded
+      // credentials (https://user:pass@host) must not print the userinfo.
+      `QUIRE_SERVER_URL must be https:// (or http:// on localhost for local dev) — the session and API key are sent to it (got "${u.origin}")`,
     );
   }
   if (!apiKey) {
