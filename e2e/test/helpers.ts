@@ -369,7 +369,10 @@ export async function createChunkedShare(
   };
   const first = await request.post('/api/chats', {
     headers: { authorization: `Bearer ${API_KEY}` },
-    data: { session: { sessionId: 'sess_chunked', title: 'Chunked E2E', model: 'test-model', messages: mkChunk(0) }, preset: 'strict' },
+    // Round 7: the server bounds chunkSeq to the share's declared budget
+    // (owner.ts: `chunkSeq >= share.expectedChunks` → 400). A two-chunk share
+    // must declare expectedChunks: 2, or the chunkSeq: 1 POST below is rejected.
+    data: { session: { sessionId: 'sess_chunked', title: 'Chunked E2E', model: 'test-model', messages: mkChunk(0) }, preset: 'strict', expectedChunks: 2 },
   });
   expect(first.status()).toBe(201);
   const firstBody = await first.json();
