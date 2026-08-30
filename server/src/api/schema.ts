@@ -52,7 +52,10 @@ export const shapedSessionSchema = z
     title: z.string().min(1).max(500),
     model: z.string().max(200).optional(),
     provider: z.string().max(200).optional(),
-    messages: z.array(messageSchema).max(100_000),
+    // Round 10 (I1): .min(1) — a zero-message session would create a share whose
+    // chunk 0 has 0 rows, so the public endpoint's count(distinct chunk_seq) <
+    // expectedChunks check 404s it FOREVER. Matches chunkBodySchema's .min(1).
+    messages: z.array(messageSchema).min(1).max(100_000),
   })
   .strict();
 

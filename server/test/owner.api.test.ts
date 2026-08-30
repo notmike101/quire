@@ -104,6 +104,22 @@ describe('create', () => {
     expect((await json(res)).error.code).toBe('validation');
   });
 
+  it('rejects a zero-message session with 400 (Round 10 I1)', async () => {
+    // A share with no messages is useless: chunk 0 has 0 rows, so the public
+    // endpoint's count(distinct chunk_seq) < expectedChunks check 404s it FOREVER.
+    // .min(1) on shapedSessionSchema.messages (matching chunkBodySchema) makes
+    // this a 400 at the API boundary instead of a 404-forever share.
+    const res = await app.request('/api/chats', {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ session: { sessionId: 'sess_empty', title: 'Empty', messages: [] }, preset: 'strict' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error.code).toBe('validation');
+    // And nothing was persisted.
+    const rows = await db.select().from(shares).where(eq(shares.sessionId, 'sess_empty'));
+    expect(rows).toHaveLength(0);
+  });
+
   it('stores a session whose tool output contains NUL/control chars (no 500, messages persisted)', async () => {
     // Regression: Postgres rejects NUL in jsonb; real ZCode tool output carries them.
     const nulSession = {
@@ -224,8 +240,10 @@ describe('chunked upload', () => {
     const chunk2 = {
       uploadId,
       chunkSeq: 1,
+      // Two distinct AWS keys in chunk 1, so the cross-chunk total is unambiguous:
+      // chunk 0 (the `session` fixture) has 1 aws-access-key, chunk 1 has 2.
       messages: [
-        { role: 'user', parts: [{ type: 'text', text: 'second chunk AKIAABCDEFGHIJKLMNOP' }] },
+        { role: 'user', parts: [{ type: 'text', text: 'second chunk AKIAABCDEFGHIJKLMNOP and AKIAQRSTUVWXYZ012345' }] },
       ],
     };
     const res = await app.request(`/api/chats/${tok}/chunks`, {
@@ -241,7 +259,11 @@ describe('chunked upload', () => {
     expect(inChunk1).toHaveLength(1);
     expect(JSON.stringify(msgs)).toContain('[REDACTED:aws-access-key]');
     expect(JSON.stringify(msgs)).not.toContain('AKIAABCDEFGHIJKLMNOP');
-    expect((share.redactions as Record<string, number>)['aws-access-key']).toBeGreaterThanOrEqual(1);
+    // Round 10 (I2): the stored redactions must be the SUM across chunks
+    // (1 from chunk 0 + 2 from chunk 1 = 3), NOT the last chunk's count (2).
+    // The old `jsonb ||` shallow-merge kept the right operand on key conflict,
+    // so this read 2 — an undercount the owner saw in their list/get.
+    expect((share.redactions as Record<string, number>)['aws-access-key']).toBe(3);
     await db.execute(sql`delete from shares where token = ${tok}`);
   });
 

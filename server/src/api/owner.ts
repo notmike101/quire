@@ -43,6 +43,23 @@ function isUniqueViolation(e: unknown): boolean {
   return err?.code === '23505' || err?.cause?.code === '23505';
 }
 
+// Round 10 (I2): sum per-rule redaction counts across chunks. The old chunk
+// UPDATE used `jsonb ||`, a SHALLOW merge where the right operand wins on a key
+// conflict — so a multi-chunk share's `redactions` showed the LAST chunk's count
+// per rule, not the sum (e.g. aws:1 in chunk 0 + aws:2 in chunk 1 → 2, not 3).
+// `share.redactions` (read before the transaction) is the stable accumulated
+// state to add this chunk to: chunks are contiguous (chunkSeq = maxSeq+1), so at
+// most one chunk is in flight at a time and no other request can commit a
+// redactions update in the window between the read and this write.
+function mergeRedactionSummary(
+  prev: Record<string, number> | null | undefined,
+  next: Record<string, number>,
+): Record<string, number> {
+  const out: Record<string, number> = { ...(prev ?? {}) };
+  for (const [k, v] of Object.entries(next)) out[k] = (out[k] ?? 0) + v;
+  return out;
+}
+
 // Round 9 (B-F1): Postgres caps a single statement at 65535 bind parameters.
 // Each share_messages row binds 6 (share_id, chunk_seq, seq, role, time, parts —
 // nulls count), so a single multi-row INSERT of 10924+ rows is a 500 on a VALID
@@ -236,7 +253,9 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
           .set({
             messageCount: agg!.n,
             bytes: sql`"shares"."bytes" + ${prepared.bytes}`,
-            redactions: sql`(${shares.redactions}) || ${JSON.stringify(prepared.summary)}::jsonb`,
+            // Round 10 (I2): SUM the per-rule counts across chunks (was a shallow
+            // `jsonb ||` merge that kept the last chunk's count on key conflict).
+            redactions: mergeRedactionSummary(share.redactions as Record<string, number>, prepared.summary),
           })
           // Round 7: enforce the cap in the same statement as the increment so a
           // concurrent chunk cannot overshoot it. 0 rows = cap crossed.
