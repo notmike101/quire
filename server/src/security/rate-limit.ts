@@ -101,20 +101,33 @@ export class PostgresLockoutStore implements LockoutStore {
           where (locked_until is not null and locked_until < ${expiredBefore})
              or (locked_until is null and count < ${this.maxFails} and last_seen < ${idleBefore})`,
     );
-    const rows = await this.db.select().from(unlockLockouts).where(eq(unlockLockouts.key, key)).limit(1);
-    const existing = rows[0];
-    let count = (existing?.count ?? 0) + 1;
-    let lockedUntil: Date | null = null;
-    if (count >= this.maxFails) {
-      lockedUntil = new Date(now + this.lockMs);
-      count = 0;
-    }
-    const lastSeen = new Date(now);
-    if (existing) {
-      await this.db.update(unlockLockouts).set({ count, lockedUntil, lastSeen }).where(eq(unlockLockouts.key, key));
-    } else {
-      await this.db.insert(unlockLockouts).values({ key, count, lockedUntil, lastSeen });
-    }
+    // Round 7: atomic upsert. The old SELECT-then-INSERT/UPDATE was a
+    // check-then-act race: two concurrent failures on a fresh key both saw "no
+    // row" and both INSERTed (the loser hit the key PK -> unhandled 500), and
+    // two on an existing key both read the same stale count and both wrote
+    // count+1 (one failure silently lost, delaying the lockout). A single
+    // ON CONFLICT upsert makes the increment + lock transition atomic. The
+    // `locked_until > now` branch preserves an already-active lock: a failure
+    // that races in AFTER the key just locked must not reset it (the handler's
+    // isLocked check is the primary gate, but two requests can both pass it).
+    const nowIso = new Date(now).toISOString();
+    const lockUntil = new Date(now + this.lockMs).toISOString();
+    await this.db.execute(
+      sql`insert into unlock_lockouts (key, count, locked_until, last_seen)
+          values (${key}, 1, null, ${nowIso})
+          on conflict (key) do update
+          set count = case
+                when unlock_lockouts.locked_until > ${nowIso} then unlock_lockouts.count
+                when unlock_lockouts.count + 1 >= ${this.maxFails} then 0
+                else unlock_lockouts.count + 1
+              end,
+              locked_until = case
+                when unlock_lockouts.locked_until > ${nowIso} then unlock_lockouts.locked_until
+                when unlock_lockouts.count + 1 >= ${this.maxFails} then ${lockUntil}
+                else null
+              end,
+              last_seen = ${nowIso}`,
+    );
   }
 
   async reset(key: string): Promise<void> {

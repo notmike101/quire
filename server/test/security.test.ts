@@ -159,4 +159,23 @@ describe('PostgresLockoutStore (Chain C)', () => {
     expect(freshRow).toBeDefined();  // fresh sub-threshold row was kept
     await db.execute(sql`delete from unlock_lockouts where key in (${idleKey}, ${freshKey}, 'r4-unrelated-key')`);
   });
+  it('concurrent recordFailure on a fresh key -> no lost updates, no 500 (Round 7)', async () => {
+    // The old SELECT-then-INSERT/UPDATE was a check-then-act race: N concurrent
+    // failures on a fresh key each saw "no row" and each INSERTed (N-1 losers hit
+    // the key PK -> unhandled 500), and on an existing key each read the same
+    // stale count and wrote count+1 (N-1 failures silently lost, delaying the
+    // lockout). The atomic ON CONFLICT upsert closes both: every failure
+    // increments exactly once. The pool (max 10) overlaps these 20 calls, so the
+    // race is real. A high maxFails keeps it a pure increment (no lock transition).
+    const key = 'r7-concurrent-upsert-key';
+    const now = Date.now();
+    await db.execute(sql`delete from unlock_lockouts where key = ${key}`);
+    const store = new PostgresLockoutStore(db, 100, 15 * 60 * 1000);
+    const N = 20;
+    const results = await Promise.allSettled(Array.from({ length: N }, () => store.recordFailure(key, now)));
+    for (const r of results) expect(r.status).toBe('fulfilled'); // no 500 from a PK collision
+    const [row] = await db.execute(sql`select count from unlock_lockouts where key = ${key}`);
+    expect(Number((row as { count: string | number }).count)).toBe(N); // no lost updates
+    await db.execute(sql`delete from unlock_lockouts where key = ${key}`);
+  });
 });

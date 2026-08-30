@@ -196,6 +196,26 @@ function redactMetaField(
  * persisted. Accepts the full shaped session so that session-level free text
  * (title/model/provider) — which the per-part pass never walks — is redacted
  * too (Round 3). Returns the redacted messages plus the redacted meta fields.
+ *
+ * Round 7 (INFO-5, conscious decision to document rather than refactor): this
+ * pass is SYNCHRONOUS — it runs the full rule set over every string on the
+ * event loop, with no await. That means a single large publish blocks the
+ * event loop for the duration of the redaction. This is acceptable and is
+ * deliberately NOT moved to worker_threads because:
+ *   (a) it is OWNER-ONLY — every caller (create/chunk/preview) is behind the
+ *       Bearer API key, so an unauthenticated attacker cannot trigger it;
+ *   (b) it is BOUNDED — the body is capped at 20 MB per request (bodyLimit),
+ *       so the worst case is a bounded number of regex passes over a bounded
+ *       byte budget (a few seconds of event-loop latency, not unbounded);
+ *   (c) the rules are linear-time (Round 5 fixed the ReDoS), so the cost scales
+ *       with input size, not combinatorially.
+ * The shipped compose stack has no fronting proxy, so the event loop is the
+ * only thing serving concurrent requests; a multi-second stall would briefly
+ * delay other in-flight requests. That is a low-severity, owner-only, bounded
+ * latency issue — a worker_threads pool would add unbounded worker memory and
+ * cross-thread marshalling of the (potentially multi-MB) session for a
+ * disproportionate risk/complexity cost. Revisit only if the request cap or the
+ * rule set grows enough that a single publish measurably stalls the loop.
  */
 export function prepareContent(session: ShapedSession, preset: Preset): PreparedContent & { title: string; model?: string; provider?: string } {
   const summary: Record<string, number> = {};

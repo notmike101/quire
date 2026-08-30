@@ -178,10 +178,12 @@ describe('chunked upload', () => {
   });
 
   it('appends a second chunk: messageCount/bytes accumulate, chunk_seq=1, redactions merge', async () => {
-    // self-contained: create a fresh share, then append chunk 1 to it
+    // self-contained: create a fresh share, then append chunk 1 to it.
+    // Round 7: declare expectedChunks=2 — chunk 1 is only valid within the
+    // declared chunk budget (the server now enforces chunkSeq < expectedChunks).
     const createRes = await app.request('/api/chats', {
       method: 'POST', headers: auth,
-      body: JSON.stringify({ session, preset: 'strict' }),
+      body: JSON.stringify({ session, preset: 'strict', expectedChunks: 2 }),
     });
     const created = await json(createRes);
     const tok = created.token as string;
@@ -260,7 +262,10 @@ describe('per-share cap + contiguous chunks (Chain B)', () => {
   });
 
   it('rejects a non-contiguous chunkSeq with 400', async () => {
-    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session }) });
+    // Round 7: declare expectedChunks=3 so chunkSeq=2 is within the declared
+    // budget (the bound check chunkSeq < expectedChunks passes) and the
+    // contiguity check (maxSeq 0 expects 1) is what fires.
+    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session, expectedChunks: 3 }) });
     const f = await json(first);
     expect(first.status).toBe(201);
     // chunk 0 exists, so the next valid seq is 1; skipping to 2 is out-of-order
@@ -274,7 +279,8 @@ describe('per-share cap + contiguous chunks (Chain B)', () => {
   });
 
   it('recomputes messageCount from the rows after a chunk', async () => {
-    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session }) });
+    // Round 7: declare expectedChunks=2 so chunkSeq=1 is within the budget.
+    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session, expectedChunks: 2 }) });
     const f = await json(first);
     expect(first.status).toBe(201);
     const before = f.messageCount as number;
@@ -285,6 +291,61 @@ describe('per-share cap + contiguous chunks (Chain B)', () => {
     expect(chunk.status).toBe(200);
     const c = await json(chunk);
     expect(c.messageCount).toBe(before + 1);
+    await db.execute(sql`delete from shares where token = ${f.token}`);
+  });
+
+  it('rejects chunkSeq >= expectedChunks with 400 (Round 7 bound)', async () => {
+    // Default expectedChunks=1: only chunk 0 (seeded by create) is valid, so
+    // chunkSeq=1 is out of the declared budget and must be rejected by the bound
+    // check (not the contiguity check) — error code 'validation'.
+    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session }) });
+    const f = await json(first);
+    expect(first.status).toBe(201);
+    const over = await app.request(`/api/chats/${f.token}/chunks`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ uploadId: f.uploadId, chunkSeq: 1, messages: [{ role: 'user', parts: [{ type: 'text', text: 'over' }] }] }),
+    });
+    expect(over.status).toBe(400);
+    expect((await json(over)).error.code).toBe('validation');
+    await db.execute(sql`delete from shares where token = ${f.token}`);
+  });
+
+  it('concurrent duplicate chunkSeq -> one 200, one 409 (not 500) (Round 7)', async () => {
+    // Two identical chunk uploads race: whichever loses the (share_id, chunk_seq,
+    // seq) PK race used to surface as an unhandled 500; now it is mapped to the
+    // same 409 the fast path returns. Either the fast path (the loser sees the
+    // winner's committed seq) or the 23505 handler (both INSERTs race) can be the
+    // one that rejects — the contract is exactly one 200 and one 409.
+    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session, expectedChunks: 2 }) });
+    const f = await json(first);
+    expect(first.status).toBe(201);
+    const body = JSON.stringify({ uploadId: f.uploadId, chunkSeq: 1, messages: [{ role: 'user', parts: [{ type: 'text', text: 'race' }] }] });
+    const [a, b] = await Promise.all([
+      app.request(`/api/chats/${f.token}/chunks`, { method: 'POST', headers: auth, body }),
+      app.request(`/api/chats/${f.token}/chunks`, { method: 'POST', headers: auth, body }),
+    ]);
+    const codes = [a.status, b.status].sort((x, y) => x - y);
+    expect(codes).toEqual([200, 409]);
+    const loser = a.status === 409 ? a : b;
+    expect((await json(loser)).error.code).toBe('chunk_exists');
+    await db.execute(sql`delete from shares where token = ${f.token}`);
+  });
+
+  it('enforces the per-share cap on a chunk (413 when it would cross 1 GB) (Round 7)', async () => {
+    // Simulate a share already near the 1 GB cap, then a chunk that would cross
+    // it. The fast-path wouldExceedCap() rejects it with 413 (the atomic SQL cap
+    // in the UPDATE's WHERE clause is the concurrent-overshoot backstop, covered
+    // by the same 413 contract).
+    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session, expectedChunks: 2 }) });
+    const f = await json(first);
+    expect(first.status).toBe(201);
+    await db.execute(sql`update shares set bytes = ${MAX_SHARE_BYTES - 5} where token = ${f.token}`);
+    const chunk = await app.request(`/api/chats/${f.token}/chunks`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ uploadId: f.uploadId, chunkSeq: 1, messages: [{ role: 'user', parts: [{ type: 'text', text: 'cross' }] }] }),
+    });
+    expect(chunk.status).toBe(413);
+    expect((await json(chunk)).error.code).toBe('too_large');
     await db.execute(sql`delete from shares where token = ${f.token}`);
   });
 });

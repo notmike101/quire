@@ -23,6 +23,18 @@ function apiKeyOk(c: Context, config: Config): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+// Thrown inside the chunk transaction when the atomic cap-enforcing UPDATE
+// matched 0 rows (a concurrent chunk crossed the 1 GB cap between the fast-path
+// check and the write). Caught outside and mapped to the same 413 as the
+// fast path so the response is uniform.
+class ShareCapExceeded extends Error {}
+
+/** True when `e` is a Postgres unique-violation (SQLSTATE 23505). */
+function isUniqueViolation(e: unknown): boolean {
+  const err = e as { code?: string; cause?: { code?: string } };
+  return err?.code === '23505' || err?.cause?.code === '23505';
+}
+
 export function ownerRoutes({ db, config }: OwnerDeps): Hono {
   const app = new Hono();
 
@@ -123,6 +135,15 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     if (share.uploadId !== uploadId) {
       return c.json({ error: { code: 'upload_id_mismatch', message: 'uploadId does not match this share' } }, 400);
     }
+    // Round 7: chunkSeq must be within the share's declared chunk budget. Create
+    // seeds chunk 0, so the valid seqs are 1..expectedChunks-1. Without this a
+    // single-chunk share (expectedChunks=1) could accept unlimited sequential
+    // chunks (each bounded by the 20 MB request cap, total by the 1 GB share
+    // cap), breaking the expectedChunks contract and growing the per-chunk
+    // "select all chunkSeqs" query without bound.
+    if (chunkSeq >= share.expectedChunks) {
+      return c.json({ error: { code: 'validation', message: `chunkSeq ${chunkSeq} exceeds expectedChunks ${share.expectedChunks}` } }, 400);
+    }
     // Chunks carry only messages (the session meta was set at create), so wrap
     // them in a minimal session for the shared prepareContent signature.
     const prepared = prepareContent({ sessionId: '', title: '', messages }, share.preset as 'strict' | 'normal' | 'none');
@@ -145,38 +166,62 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     if (chunkSeq !== maxSeq + 1) {
       return c.json({ error: { code: 'chunk_out_of_order', message: `chunkSeq must be ${maxSeq + 1}` } }, 400);
     }
-    const result = await db.transaction(async (tx) => {
-      await tx
-        .insert(shareMessages)
-        .values(
-          prepared.messages.map((m, i) => ({
-            shareId: share.id,
-            chunkSeq,
-            seq: i + 1,
-            role: m.role,
-            time: m.time ? new Date(m.time) : null,
-            parts: m.parts,
-          })),
-        );
-      // Chain B: recompute messageCount from the rows (count(*)) rather than a
-      // blind +N; bytes is the exact running total (each chunk's bytes are known
-      // at ingest). bytes is bigint now, so the arithmetic stays in SQL.
-      const [agg] = await tx
-        .select({ n: sql<number>`count(*)::int` })
-        .from(shareMessages)
-        .where(eq(shareMessages.shareId, share.id));
-      const [updated] = await tx
-        .update(shares)
-        .set({
-          messageCount: agg!.n,
-          bytes: sql`"shares"."bytes" + ${prepared.bytes}`,
-          redactions: sql`(${shares.redactions}) || ${JSON.stringify(prepared.summary)}::jsonb`,
-        })
-        .where(eq(shares.id, share.id))
-        .returning();
-      return updated;
-    });
-    return c.json({ ok: true, messageCount: result!.messageCount, bytes: result!.bytes });
+    // Round 7: the pre-transaction checks above (wouldExceedCap, seqs.has,
+    // contiguity) are fast paths only — they read stale state. Two races are
+    // closed atomically here:
+    //   (a) a concurrent duplicate chunkSeq passes the seqs.has() check and both
+    //       INSERTs race the (share_id, chunk_seq, seq) PK -> the loser throws
+    //       23505 -> mapped to the same 409 the fast path returns (was: 500);
+    //   (b) a concurrent chunk pushes the share over the 1 GB cap between the
+    //       wouldExceedCap() read and the bytes increment -> the cap is enforced
+    //       in the UPDATE's WHERE clause; 0 rows means the cap was crossed ->
+    //       413 and the transaction rolls back the messages (was: the cap could
+    //       be overshot by up to one 20 MB request).
+    try {
+      const updated = await db.transaction(async (tx) => {
+        await tx
+          .insert(shareMessages)
+          .values(
+            prepared.messages.map((m, i) => ({
+              shareId: share.id,
+              chunkSeq,
+              seq: i + 1,
+              role: m.role,
+              time: m.time ? new Date(m.time) : null,
+              parts: m.parts,
+            })),
+          );
+        // Chain B: recompute messageCount from the rows (count(*)) rather than a
+        // blind +N; bytes is the exact running total (each chunk's bytes are known
+        // at ingest). bytes is bigint now, so the arithmetic stays in SQL.
+        const [agg] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(shareMessages)
+          .where(eq(shareMessages.shareId, share.id));
+        const [row] = await tx
+          .update(shares)
+          .set({
+            messageCount: agg!.n,
+            bytes: sql`"shares"."bytes" + ${prepared.bytes}`,
+            redactions: sql`(${shares.redactions}) || ${JSON.stringify(prepared.summary)}::jsonb`,
+          })
+          // Round 7: enforce the cap in the same statement as the increment so a
+          // concurrent chunk cannot overshoot it. 0 rows = cap crossed.
+          .where(sql`${shares.id} = ${share.id} and "shares"."bytes" + ${prepared.bytes} <= ${MAX_SHARE_BYTES}`)
+          .returning();
+        if (!row) throw new ShareCapExceeded();
+        return row;
+      });
+      return c.json({ ok: true, messageCount: updated.messageCount, bytes: updated.bytes });
+    } catch (e) {
+      if (e instanceof ShareCapExceeded) {
+        return c.json({ error: { code: 'too_large', message: 'Share would exceed the 1 GB per-share cap' } }, 413);
+      }
+      if (isUniqueViolation(e)) {
+        return c.json({ error: { code: 'chunk_exists', message: 'chunkSeq already uploaded' } }, 409);
+      }
+      throw e;
+    }
   });
 
   app.get('/api/chats', async (c) => {
