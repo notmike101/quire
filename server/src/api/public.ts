@@ -9,10 +9,29 @@ import { verifyPassword } from '../security/password.js';
 import { RateLimiter, IpWindow } from '../security/rate-limit.js';
 import { unlockBodySchema } from './schema.js';
 
+// Round 6: the first-page response carries the full-share user-message index
+// (one rail tick per user message, so the viewer can render the whole rail
+// before the transcript lazy-loads). Without a bound, a share at the 1 GB cap
+// with a very large number of user messages makes this projection O(share-size)
+// Postgres work on EVERY first-page load AND ships an enormous userIndex array
+// that the viewer would render as thousands of rail ticks (a client-side DoS).
+// The rail is a convenience — a share with more user messages than this shows
+// the first MAX_RAIL_USER_ENTRIES ticks; the full transcript is still reachable
+// by scrolling. 2000 is far beyond any realistic share and bounds both the
+// query and the rendered DOM.
+const MAX_RAIL_USER_ENTRIES = 2000;
+
 export interface PublicDeps {
   db: Db;
   config: Config;
   unlockLimiter: RateLimiter;
+  // Round 6: a SECOND lockout dimension keyed by token ALONE (no IP). The
+  // per-(token, IP) limiter above is evadable by rotating source IPs; this one
+  // accumulates failures across all IPs for a given token, so an IP-rotating
+  // brute-forcer eventually locks the token. It uses a higher threshold (wired
+  // in app.ts) so ordinary multi-user access (a few people each mistyping once)
+  // does not trip it.
+  tokenLimiter: RateLimiter;
   ipWindow: IpWindow;
 }
 
@@ -156,6 +175,7 @@ export function publicRoutes(deps: PublicDeps): Hono {
             .from(shareMessages)
             .where(and(eq(shareMessages.shareId, share.id), eq(shareMessages.role, 'user')))
             .orderBy(asc(shareMessages.chunkSeq), asc(shareMessages.seq))
+            .limit(MAX_RAIL_USER_ENTRIES)
         : Promise.resolve([] as { seq: number; preview: string }[]),
     ]);
     const last = rows[rows.length - 1];
@@ -188,8 +208,13 @@ export function publicRoutes(deps: PublicDeps): Hono {
     if (!share.passwordHash) {
       return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
     }
-    const key = `${share.token}:${clientIp(c, config.trustProxy)}`;
-    if (await deps.unlockLimiter.isLocked(key)) {
+    // Two lockout dimensions (Round 6): per-(token, IP) for the normal case,
+    // plus a per-token (IP-independent) dimension so an IP-rotating brute-forcer
+    // cannot evade the lock by cycling source addresses. Either tripping it
+    // locks the share for the window; a successful unlock clears both.
+    const ipKey = `${share.token}:${clientIp(c, config.trustProxy)}`;
+    const tokenKey = share.token;
+    if ((await deps.unlockLimiter.isLocked(ipKey)) || (await deps.tokenLimiter.isLocked(tokenKey))) {
       return c.json({ error: { code: 'rate_limited', message: 'Too many failed attempts. Try again in 15 minutes.' } }, 429);
     }
     const body = await c.req.json().catch(() => null);
@@ -199,10 +224,12 @@ export function publicRoutes(deps: PublicDeps): Hono {
     }
     const ok = await verifyPassword(share.passwordHash, parsed.data.password);
     if (!ok) {
-      await deps.unlockLimiter.recordFailure(key);
+      await deps.unlockLimiter.recordFailure(ipKey);
+      await deps.tokenLimiter.recordFailure(tokenKey);
       return c.json({ error: { code: 'bad_password', message: 'Incorrect password' } }, 401);
     }
-    await deps.unlockLimiter.reset(key);
+    await deps.unlockLimiter.reset(ipKey);
+    await deps.tokenLimiter.reset(tokenKey);
     const value = signUnlockCookie(config.unlockSecret, share.token, Date.now() + UNLOCK_TTL_MS);
     c.header(
       'Set-Cookie',

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -146,6 +146,23 @@ describe('error handler', () => {
     expect(result.status).toBe(500);
     expect(result.body.error.code).toBe('internal');
     expect(result.body.error.message).not.toContain('secret internal detail');
+  });
+  it('sanitizes server-side error logs (Round 6: no control chars, bounded length)', () => {
+    // An attacker-influenced error message with ANSI escape / NUL bytes and a
+    // very long payload must reach the log stripped of control chars and
+    // truncated (log injection + log bloat defense). Capture the args locally
+    // because mockRestore() clears the spy's call history.
+    const calls: unknown[][] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      calls.push(args);
+    });
+    const hostile = 'boom\u0000\u0001\u001b[31m' + 'x'.repeat(600);
+    errorHandler(new Error(hostile), { json: () => ({}) } as never);
+    spy.mockRestore();
+    expect(calls).toHaveLength(1);
+    const logged = calls[0]!.map((a) => String(a)).join(' ');
+    expect(logged).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(logged.length).toBeLessThan(600);
   });
   it('passes HTTPException status through', () => {
     const fakeCtx = { json: (body: unknown, status?: number) => ({ body, status }) } as never;
