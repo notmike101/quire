@@ -23,24 +23,34 @@ export function walkStrings(value: unknown, fn: (s: string) => string): unknown 
   work.push({ container: root, key: 'value', value, depth: 0 });
   while (work.length > 0) {
     const { container, key, value: v, depth } = work.pop()!;
+    // Round 7: redact the KEY too. A secret in key position (e.g. a tool
+    // `input` of {"sk-…": "v"}) otherwise persists and is served to the viewer —
+    // the Map branch already redacts its keys; the plain-object branch was the
+    // leak. Rename in place: drop the old key first (set() alone would ADD),
+    // then every branch below re-attaches the value at the (possibly renamed)
+    // key — required for container values, which are mutated in place and would
+    // otherwise be orphaned by the delete.
+    const newKey = typeof key === 'string' ? fn(key) : key;
+    if (newKey !== key) delete (container as Record<PropertyKey, unknown>)[key];
     if (typeof v === 'string') {
-      (container as Record<PropertyKey, unknown>)[key] = fn(v);
+      (container as Record<PropertyKey, unknown>)[newKey] = fn(v);
     } else if (typeof v === 'number' || typeof v === 'boolean') {
       const s = String(v);
       const r = fn(s);
-      (container as Record<PropertyKey, unknown>)[key] = r === s ? v : r;
+      (container as Record<PropertyKey, unknown>)[newKey] = r === s ? v : r;
     } else if (Array.isArray(v)) {
       if (depth >= MAX_WALK_DEPTH) {
         // Over-deep: collapse to a JSON string and redact it.
-        (container as Record<PropertyKey, unknown>)[key] = fn(JSON.stringify(v));
+        (container as Record<PropertyKey, unknown>)[newKey] = fn(JSON.stringify(v));
         continue;
       }
       for (let i = 0; i < v.length; i++) work.push({ container: v, key: i, value: v[i], depth: depth + 1 });
+      (container as Record<PropertyKey, unknown>)[newKey] = v;
     } else if (v instanceof Map) {
       // Round 5: a Map's values (and string keys) can carry secrets. Redact
       // each in place via .set() (a Map is not indexable like an object).
       if (depth >= MAX_WALK_DEPTH) {
-        (container as Record<PropertyKey, unknown>)[key] = fn(JSON.stringify([...v.entries()]));
+        (container as Record<PropertyKey, unknown>)[newKey] = fn(JSON.stringify([...v.entries()]));
         continue;
       }
       for (const [k, val] of [...v.entries()]) {
@@ -49,23 +59,26 @@ export function walkStrings(value: unknown, fn: (s: string) => string): unknown 
         if (newK !== k) v.delete(k); // rename: drop the old key first (set() alone would ADD)
         v.set(newK, newVal);
       }
+      (container as Record<PropertyKey, unknown>)[newKey] = v;
     } else if (v instanceof Set) {
       // Round 5: a Set's elements can carry secrets. Rebuild with redacted values.
       if (depth >= MAX_WALK_DEPTH) {
-        (container as Record<PropertyKey, unknown>)[key] = fn(JSON.stringify([...v]));
+        (container as Record<PropertyKey, unknown>)[newKey] = fn(JSON.stringify([...v]));
         continue;
       }
       for (const item of [...v]) {
         const r = walkStrings(item, fn);
         if (r !== item) { v.delete(item); v.add(r); }
       }
+      (container as Record<PropertyKey, unknown>)[newKey] = v;
     } else if (v && typeof v === 'object') {
       if (depth >= MAX_WALK_DEPTH) {
-        (container as Record<PropertyKey, unknown>)[key] = fn(JSON.stringify(v));
+        (container as Record<PropertyKey, unknown>)[newKey] = fn(JSON.stringify(v));
         continue;
       }
       const obj = v as Record<string, unknown>;
       for (const k of Object.keys(obj)) work.push({ container: obj, key: k, value: obj[k], depth: depth + 1 });
+      (container as Record<PropertyKey, unknown>)[newKey] = v;
       // Round 5: symbol-keyed string values are also walked (Object.keys excludes symbols).
       for (const sk of Object.getOwnPropertySymbols(obj)) {
         const val = (obj as Record<PropertyKey, unknown>)[sk];
@@ -106,9 +119,10 @@ export function redactText(
   // EMITTED (a later rule's match inside an earlier rule's span is dropped by
   // the merge and must not be counted — the old sequential-replace naturally
   // avoided this because the placeholder shielded later rules).
-  type Span = { s: number; e: number; replacement: string; rule: string };
+  type Span = { s: number; e: number; replacement: string; rule: string; pri: number };
   const spans: Span[] = [];
-  for (const rule of rules) {
+  for (let ri = 0; ri < rules.length; ri++) {
+    const rule = rules[ri]!;
     if (!rule.presets.includes(preset)) continue;
     rule.pattern.lastIndex = 0;
     let m: RegExpExecArray | null;
@@ -123,19 +137,53 @@ export function redactText(
       const s = m.index;
       const e = s + m[0].length;
       const replacement = rule.replace ? rule.replace(m[0], ...groups) : `[REDACTED:${rule.category}]`;
-      spans.push({ s, e, replacement, rule: rule.category });
+      spans.push({ s, e, replacement, rule: rule.category, pri: ri });
     }
   }
-  // Merge overlapping spans (earlier rules claim first, as before) and count
-  // only the surviving spans.
-  spans.sort((a, b) => a.s - b.s || a.e - b.e);
-  const merged: Span[] = [];
+  // Merge overlapping spans by RULE PRIORITY (a higher-priority rule's span
+  // claims its region before a lower-priority one, so a lower-priority span
+  // that overlaps it is dropped regardless of where it starts). This
+  // reproduces the old sequential-replace semantics ("earlier rules claim
+  // first"). The previous position-only sort let an earlier-starting
+  // low-priority span shadow a higher-priority span that began a few chars in
+  // — e.g. the narrow `key` rule matching `key: -----BEGIN…` (at the `key`)
+  // would drop the private-key span that starts at the `-----BEGIN`, leaking
+  // the key body; likewise `key: postgres://user:pass@…` would shadow the
+  // connection-string span and leak the credential.
+  // O(n log n): coordinate-compress the start positions, process spans in
+  // priority order, and use a Fenwick prefix-max tree to test whether a span
+  // overlaps any already-kept (higher-priority) span. A span [s,e] overlaps a
+  // kept span iff some kept span has start < e and end > s; the prefix-max
+  // over starts < e answers that in O(log n).
+  spans.sort((a, b) => a.pri - b.pri || a.s - b.s || a.e - b.e);
+  const coords = Array.from(new Set(spans.map((sp) => sp.s))).sort((a, b) => a - b);
+  const coordIdx = new Map<number, number>();
+  coords.forEach((c, i) => coordIdx.set(c, i));
+  const size = coords.length;
+  const tree = new Array<number>(size + 1).fill(-1);
+  const fwUpdate = (idx: number, v: number) => {
+    for (let x = idx + 1; x <= size; x += x & -x) if (v > tree[x]!) tree[x] = v;
+  };
+  const fwQuery = (idx: number) => {
+    let res = -1;
+    for (let x = idx + 1; x > 0; x -= x & -x) if (tree[x]! > res) res = tree[x]!;
+    return res;
+  };
+  const firstGE = (e: number) => {
+    let lo = 0, hi = size;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (coords[mid]! >= e) hi = mid; else lo = mid + 1; }
+    return lo;
+  };
+  const kept: Span[] = [];
   for (const sp of spans) {
-    const last = merged[merged.length - 1];
-    if (last && sp.s < last.e) continue; // overlaps an earlier (higher-priority) span
-    merged.push(sp);
+    const i = firstGE(sp.e) - 1; // rightmost kept start < sp.e
+    if (i >= 0 && fwQuery(i) > sp.s) continue; // overlaps a higher-priority kept span
+    kept.push(sp);
     counts[sp.rule] = (counts[sp.rule] ?? 0) + 1;
+    fwUpdate(coordIdx.get(sp.s)!, sp.e);
   }
+  // The output walk below needs spans in positional order.
+  const merged = kept.sort((a, b) => a.s - b.s || a.e - b.e);
   // Walk the original text, emitting non-span text verbatim (zero-width chars
   // inside it survive) and each span as its replacement (zero-width chars
   // inside the span are consumed).

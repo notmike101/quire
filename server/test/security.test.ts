@@ -112,6 +112,15 @@ describe('IpWindow (120 req/min)', () => {
     w.allow('a', t0); w.allow('a', t0 + 1);
     expect(w.allow('a', t0 + 60_000 + 1)).toBe(true);
   });
+  it('stays bounded at maxEntries under a fresh-IP spray (L7)', () => {
+    // An attacker spraying one fresh request from many distinct IPs (all inside
+    // the window, none stale) must not grow the map without bound. The hard cap
+    // evicts the oldest window when at maxEntries, so size stays <= maxEntries.
+    const w = new IpWindow(120, 60_000, 100); // maxEntries = 100
+    for (let i = 0; i < 500; i++) w.allow(`10.0.0.${i}`, t0); // 500 distinct IPs, all fresh
+    const size = (w as unknown as { windows: Map<string, unknown> }).windows.size;
+    expect(size).toBeLessThanOrEqual(100);
+  });
 });
 
 describe('PostgresLockoutStore (Chain C)', () => {
@@ -177,5 +186,61 @@ describe('PostgresLockoutStore (Chain C)', () => {
     const [row] = await db.execute(sql`select count from unlock_lockouts where key = ${key}`);
     expect(Number((row as { count: string | number }).count)).toBe(N); // no lost updates
     await db.execute(sql`delete from unlock_lockouts where key = ${key}`);
+  });
+  it('has indexes on unlock_lockouts.locked_until and last_seen (L5)', async () => {
+    // The opportunistic prune deletes by locked_until OR last_seen on every
+    // unlock failure. Without one index per OR branch that is a full table scan
+    // on the hot path under a key-cycling attack.
+    const rows = await db.execute(sql`
+      select indexname from pg_indexes
+      where tablename = 'unlock_lockouts'
+        and indexname in ('unlock_lockouts_locked_until_idx', 'unlock_lockouts_last_seen_idx')
+    `);
+    const names = (rows as unknown as Array<{ indexname: string }>).map((r) => r.indexname).sort();
+    expect(names).toEqual(['unlock_lockouts_last_seen_idx', 'unlock_lockouts_locked_until_idx']);
+  });
+  it('per-IP prune does not reset per-token sub-threshold counters (L6)', async () => {
+    // The per-IP store (prefix 'ip:', pruneSubThreshold=true) and the per-token
+    // store (prefix 'tok:', pruneSubThreshold=false) share the table. The per-IP
+    // prune is scoped to 'ip:%', so it must NOT touch a 'tok:' row — even an idle
+    // sub-threshold one (which the per-token store deliberately keeps).
+    const now = Date.now();
+    const lockMs = 15 * 60 * 1000;
+    const tokKey = 'tok:idle-token-key';
+    const ipKey = 'ip:idle-ip-key';
+    await db.execute(sql`delete from unlock_lockouts where key in (${tokKey}, ${ipKey})`);
+    // An IDLE per-token sub-threshold row (count 3, last_seen 20 min ago).
+    await db.execute(sql`insert into unlock_lockouts (key, count, locked_until, last_seen)
+        values (${tokKey}, 3, null, ${new Date(now - 20 * 60 * 1000).toISOString()})`);
+    // An IDLE per-IP sub-threshold row (count 2, last_seen 20 min ago).
+    await db.execute(sql`insert into unlock_lockouts (key, count, locked_until, last_seen)
+        values (${ipKey}, 2, null, ${new Date(now - 20 * 60 * 1000).toISOString()})`);
+    // A per-IP recordFailure triggers the per-IP prune (scoped to 'ip:%').
+    const ipStore = new PostgresLockoutStore(db, 5, lockMs, 'ip:', true);
+    await ipStore.recordFailure('some-ip', now);
+    const [tokRow] = await db.execute(sql`select 1 from unlock_lockouts where key = ${tokKey}`);
+    const [ipRow] = await db.execute(sql`select 1 from unlock_lockouts where key = ${ipKey}`);
+    expect(tokRow).toBeDefined();  // per-token row untouched by the per-IP prune
+    expect(ipRow).toBeUndefined(); // idle per-IP sub-threshold row was pruned
+    await db.execute(sql`delete from unlock_lockouts where key in (${tokKey}, ${ipKey}, 'ip:some-ip')`);
+  });
+  it('per-token store keeps idle sub-threshold counters (L6)', async () => {
+    // The per-token store (pruneSubThreshold=false) only drops EXPIRED lockouts,
+    // never idle sub-threshold counters — so a slow per-token attack accumulates
+    // to the threshold instead of being reset by a prune.
+    const now = Date.now();
+    const lockMs = 15 * 60 * 1000;
+    const tokKey = 'tok:slow-token-key';
+    await db.execute(sql`delete from unlock_lockouts where key = ${tokKey}`);
+    // An IDLE per-token sub-threshold row (count 3, last_seen 20 min ago).
+    await db.execute(sql`insert into unlock_lockouts (key, count, locked_until, last_seen)
+        values (${tokKey}, 3, null, ${new Date(now - 20 * 60 * 1000).toISOString()})`);
+    // A per-token recordFailure triggers the per-token prune (expired-only).
+    const tokStore = new PostgresLockoutStore(db, 25, lockMs, 'tok:', false);
+    await tokStore.recordFailure('some-token', now);
+    const [row] = await db.execute(sql`select count from unlock_lockouts where key = ${tokKey}`);
+    // The idle sub-threshold row was KEPT (count still 3), not pruned.
+    expect(Number((row as { count: string | number }).count)).toBe(3);
+    await db.execute(sql`delete from unlock_lockouts where key in (${tokKey}, 'tok:some-token')`);
   });
 });

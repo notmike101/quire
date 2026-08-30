@@ -73,7 +73,11 @@ export const rules: RedactRule[] = [
     // Round 2: more schemes (mariadb/amqps/mssql/oracle/cockroachdb/clickhouse/
     // kafka/valkey/etcd), an OPTIONAL user (redis://:pass@), and `;` as a
     // separator for ODBC-style strings (Server=…;Pwd=…).
-    pattern: /\b(postgres(ql)?|mysql|mariadb|mongodb(\+srv)?|redis|amqps?|mssql|oracle|cockroachdb|clickhouse|kafka|valkey|etcd):\/\/[^/\s:@]*:[^@\s]+@|(?:[;&?])(password|passwd|pwd|token|key|secret)s?=[^&\s]+/gi,
+    // Round 7: http(s) basic-auth URLs (https://user:pass@host) carry a
+    // credential in the userinfo and leak it; the user:pass@ branch already
+    // handles them once the scheme is in the alternation. A user-only URL
+    // (https://user@host, no colon) has no secret and is left untouched.
+    pattern: /\b(postgres(ql)?|mysql|mariadb|mongodb(\+srv)?|redis|amqps?|mssql|oracle|cockroachdb|clickhouse|kafka|valkey|etcd|https?):\/\/[^/\s:@]*:[^@\s]+@|(?:[;&?])(password|passwd|pwd|token|key|secret)s?=[^&\s]+/gi,
     presets: ['strict', 'normal'],
     replace: (m, scheme, _q, _s, credKey) => (scheme ? `${scheme}://[REDACTED:connection-string]@` : `${credKey}=[REDACTED:connection-string]`),
   },
@@ -81,7 +85,12 @@ export const rules: RedactRule[] = [
     category: 'bearer-token',
     // Round 2: case-insensitive + whitespace-tolerant (Authorization:Bearer,
     // BEARER, AUTHORIZATION: Bearer all match now).
-    pattern: /\b(?:authorization\s*:\s*bearer\s+|bearer\s+)[A-Za-z0-9._-]{20,}/gi,
+    // Round 7: the two forms get different floors. The `Authorization: Bearer`
+    // HEADER form is unambiguously an auth credential, so even a short token
+    // (floor 8) is redacted. A BARE `bearer <token>` in prose is ambiguous
+    // (could be the word "bearer" + an identifier), so it keeps the higher
+    // floor (20) to avoid false positives.
+    pattern: /\b(?:authorization\s*:\s*bearer\s+[A-Za-z0-9._-]{8,}|bearer\s+[A-Za-z0-9._-]{20,})/gi,
     presets: ['strict', 'normal'],
   },
   {
@@ -97,9 +106,36 @@ export const rules: RedactRule[] = [
     // separator never matched. The quote is consumed (not backreferenced) so it
     // is removed from the output; a value that is itself quoted still stops at
     // its own quote via the backreference.
-    pattern: /\b(api[_-]?key|secret|token|passwd|password|auth|credential|access|jwt|session|cookie|dsn|conn|private)("|'?)(\s*[:=]\s*)(['"]?)([^'"\s]{8,})\4/gi,
+    // Round 7: the value charset now accepts backslash-ESCAPED characters
+    // ((?:\\.)|…) so a JSON-escaped quote inside a quoted value ({"password":
+    // "ab\"cd…"}) is consumed as part of the value instead of truncating the
+    // match at the escaped quote (which leaked the tail). `pwd` is added to the
+    // name list (a common short alias for password).
+    pattern: /\b(api[_-]?key|secret|token|passwd|password|pwd|auth|credential|access|jwt|session|cookie|dsn|conn|private)("|'?)(\s*[:=]\s*)(['"]?)((?:(?:\\.)|[^'"\s]){8,})\4/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key, _kq, sep, _q, _v) => `${key}${sep}[REDACTED:generic-secret]`,
+  },
+  {
+    category: 'key',
+    // Round 7: a NARROW standalone-`key` rule. `key=…` / `key: …` with a
+    // token-like value is a credential, but a BROAD `key` rule (or adding `key`
+    // to generic-secret, whose value charset is any non-quote/non-whitespace)
+    // would corrupt JSX `key={…}` expressions and quoted values. So the value
+    // charset here is deliberately token-like ([A-Za-z0-9._-], no quotes, no
+    // braces, no spaces) AND must START alphanumeric: it catches `key:
+    // <real-token>` and `key=<token>` but leaves `key={expr}`, `key: "quoted"`,
+    // `key: a.b.c` (dotted member access), and — importantly — `key:
+    // -----BEGIN…` (a PEM header, which starts with `-`) untouched. The
+    // alnum-start guard keeps this narrow rule from claiming the start of a
+    // higher-priority span (a PEM block, a `postgres://` scheme, …) that begins
+    // a few chars in; the priority-based merge in redactText is the backstop
+    // that drops any such overlap. Runs after generic-secret so `api_key` is
+    // claimed by the specific rule first. Known limitation: a QUOTED `key:"…"`
+    // value is not matched here (and `key` is not in generic-secret's name
+    // list), so it is left to the bare-token fallback if the value is 24+ chars.
+    pattern: /\b(key)(\s*[:=]\s*)([A-Za-z0-9][A-Za-z0-9._-]{7,})/gi,
+    presets: ['strict', 'normal'],
+    replace: (_m, key, sep, _v) => `${key}${sep}[REDACTED:key]`,
   },
   {
     category: 'bare-token',
@@ -119,7 +155,13 @@ export const rules: RedactRule[] = [
     // same pure-hex / g-z decision in JS after the match. A declined match still
     // advances lastIndex past the run, so the engine never retries per position.
     // Runs LAST so the specific prefix rules claim their spans first.
-    pattern: /\b[A-Za-z0-9._-]{24,}\b/g,
+    // Round 7: the quantifier is capped at 10000 (was {24,} unbounded). A
+    // secret is never 10000+ chars, so no real redaction is lost; the cap
+    // bounds the V8 backtracker depth at the start of an abnormally long run
+    // (the engine backtracks the {24,10000} quantifier when the trailing \b
+    // fails mid-run) so a pathological multi-MB run cannot force a long
+    // single-position backtrack. Interior positions still fail O(1) at \b.
+    pattern: /\b[A-Za-z0-9._-]{24,10000}\b/g,
     presets: ['strict', 'normal'],
     test: (run) => /^[0-9a-fA-F]{24,}$/.test(run) || /[g-zG-Z]/.test(run),
   },

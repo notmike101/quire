@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { desc, eq, sql } from 'drizzle-orm';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { shares, shareMessages } from '../db/schema.js';
 import type { Db } from '../db/client.js';
 import type { Config } from '../config.js';
@@ -18,9 +18,17 @@ export interface OwnerDeps {
 function apiKeyOk(c: Context, config: Config): boolean {
   const [scheme, value] = (c.req.header('authorization') ?? '').split(' ');
   if (scheme !== 'Bearer' || !value) return false;
-  const a = Buffer.from(value);
-  const b = Buffer.from(config.apiKey);
-  return a.length === b.length && timingSafeEqual(a, b);
+  // Round 7: compare SHA-256 DIGESTS, not raw bytes. The old
+  // `a.length === b.length` gate was a length oracle: a wrong-length key
+  // short-circuited before timingSafeEqual (faster) while a right-length wrong
+  // key ran the full comparison (slower), so an attacker could binary-search
+  // the key's length by timing 401s. Digests are always 32 bytes, so
+  // timingSafeEqual is always valid (no length gate) and constant-time
+  // regardless of the input length — the server-side hash of config.apiKey is
+  // constant across requests, so its length is not leaked.
+  const a = createHash('sha256').update(value).digest();
+  const b = createHash('sha256').update(config.apiKey).digest();
+  return timingSafeEqual(a, b);
 }
 
 // Thrown inside the chunk transaction when the atomic cap-enforcing UPDATE

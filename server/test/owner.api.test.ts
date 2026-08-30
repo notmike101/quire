@@ -57,6 +57,14 @@ describe('owner auth', () => {
     const res = await app.request('/api/chats', { headers: { authorization: 'Bearer wrong' } });
     expect(res.status).toBe(401);
   });
+  it('401 for a wrong-LENGTH API key (no length oracle — L8)', async () => {
+    // The old `a.length === b.length` gate short-circuited before timingSafeEqual
+    // for a wrong-length key (faster) — a timing oracle an attacker could use to
+    // binary-search the key's length. The digest compare always runs the full
+    // 32-byte comparison, so a wrong-length key is just another 401.
+    const res = await app.request('/api/chats', { headers: { authorization: `Bearer ${'a'.repeat(63)}` } });
+    expect(res.status).toBe(401);
+  });
 });
 
 describe('preview', () => {

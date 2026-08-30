@@ -732,3 +732,105 @@ describe('Round 6 fixes (bare-token ReDoS)', () => {
     expect(r2.text).toBe('a [REDACTED:aws-secret-key] b');
   });
 });
+
+describe('Round 7 fixes', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+  // A 24-char run that only the bare-token fallback matches (contains g-z letters).
+  const BARE = 'Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2';
+
+  it('redacts a secret in a plain-object KEY and re-attaches its value (M1)', () => {
+    // A tool `input` of {"<secret>": …} carried the secret in KEY position. The
+    // plain-object branch of walkStrings now redacts the key (the Map branch
+    // already did) and re-attaches the value under the renamed key — a container
+    // value is mutated in place, so a bare set() after the delete would orphan it.
+    const obj: Record<string, unknown> = { [BARE]: { nested: BARE }, clean: 'x' };
+    walkStrings(obj, (s) => redactText(s, 'strict').text);
+    expect(obj[BARE]).toBeUndefined(); // old key removed
+    const renamed = obj['[REDACTED:bare-token]'] as { nested: string };
+    expect(renamed).toBeDefined(); // container value re-attached, not orphaned
+    expect(renamed.nested).toBe('[REDACTED:bare-token]'); // nested value redacted in place
+    expect(obj.clean).toBe('x'); // clean sibling untouched
+  });
+
+  it('redacts a secret in a tool-input object key end-to-end (M1)', () => {
+    const out = prepareContent(
+      {
+        sessionId: 's',
+        title: 't',
+        messages: [{ role: 'assistant', parts: [{ type: 'tool', callID: 'c1', tool: 'Bash', status: 'ok', input: { [secrets.openai]: 'value-here' }, output: 'x' }] }],
+      },
+      'strict',
+    );
+    const all = JSON.stringify(out.messages);
+    expect(all).not.toContain(secrets.openai);
+    expect(all).toContain('[REDACTED:openai-key]');
+  });
+
+  it('redacts an https://user:pass@ basic-auth URL (M2)', () => {
+    const out = one('fetch https://admin:hunter2secret@api.example.com/v1 done');
+    expect(JSON.stringify(out.messages)).not.toContain('hunter2secret');
+    expect(out.summary['connection-string']).toBe(1);
+  });
+  it('leaves a user-only https URL (no password) untouched (M2)', () => {
+    const out = one('fetch https://admin@api.example.com/v1 done');
+    expect(JSON.stringify(out.messages)).toContain('https://admin@api.example.com/v1');
+    expect(out.summary['connection-string']).toBeUndefined();
+  });
+
+  it('still redacts a run up to the 10000-char bare-token cap (L3)', () => {
+    // A 5000-char pure-hex run is within {24,10000} and is redacted.
+    const run = '0'.repeat(5000);
+    const r = redactText(`x ${run} y`, 'strict');
+    expect(r.counts['bare-token']).toBe(1);
+    expect(r.text).toBe('x [REDACTED:bare-token] y');
+  });
+  it('leaves a run longer than the 10000-char cap untouched (L3)', () => {
+    // A 12000-char run exceeds the {24,10000} cap: the trailing \b fails at every
+    // interior position, so the pattern cannot match it. No real secret is
+    // 10000+ chars, so nothing is lost — and the backtracker depth is bounded.
+    const run = '0'.repeat(12_000);
+    const r = redactText(`x ${run} y`, 'strict');
+    expect(r.counts['bare-token']).toBeUndefined();
+    expect(r.text).toBe(`x ${run} y`);
+  });
+
+  it('redacts a short Authorization: Bearer token (floor 8) (L4b)', () => {
+    const out = one('Authorization: Bearer abcdef12');
+    expect(JSON.stringify(out.messages)).not.toContain('abcdef12');
+    expect(out.summary['bearer-token']).toBe(1);
+  });
+  it('spares a short bare bearer in prose (floor 20) (L4b)', () => {
+    const out = one('the bearer abcdef12 was here');
+    expect(JSON.stringify(out.messages)).toContain('bearer abcdef12');
+    expect(out.summary['bearer-token']).toBeUndefined();
+  });
+  it('redacts a generic secret whose quoted value has an escaped quote (L4c)', () => {
+    // {"password":"abcd1234\"ef567890"} — the value is abcd1234"ef567890 (a
+    // JSON-escaped quote mid-value). The old charset [^'"\s] stopped at the
+    // escaped quote and leaked the tail (ef567890); the new charset (?:\\.)
+    // consumes the escaped quote as part of the value.
+    const out = one('{"password":"abcd1234\\"ef567890"}');
+    expect(JSON.stringify(out.messages)).not.toContain('ef567890');
+    expect(out.summary['generic-secret']).toBe(1);
+  });
+  it('redacts a pwd= credential (L4e)', () => {
+    const out = one('pwd=supersecret123456');
+    expect(JSON.stringify(out.messages)).not.toContain('supersecret123456');
+    expect(out.summary['generic-secret']).toBe(1);
+  });
+  it('redacts a token-like key: value (L4d)', () => {
+    const out = one('key: abcdef1234567890');
+    expect(JSON.stringify(out.messages)).not.toContain('abcdef1234567890');
+    expect(out.summary['key']).toBe(1);
+  });
+  it('spares JSX key={expr} and a quoted key value (L4d)', () => {
+    const out = one('key={someExpr} and key: "someValue"');
+    // Assert on the raw part text, not JSON.stringify (which escapes the
+    // double quotes to \"), so the quoted value is checked verbatim.
+    const text = (out.messages[0]!.parts[0] as { text?: string }).text ?? '';
+    expect(text).toContain('key={someExpr}');
+    expect(text).toContain('key: "someValue"');
+    expect(out.summary['key']).toBeUndefined();
+  });
+});

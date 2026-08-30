@@ -252,7 +252,9 @@ describe('unlock endpoint', () => {
     // wiring (no injected limiters) with XFF-simulated distinct IPs. Under the
     // old bug (store default 5), failures 6-20 would return 429 and the 401
     // assertions below fail; under the fix, 25 total failures are required.
-    await db.execute(sql`delete from unlock_lockouts where key = 'pw5' or key like 'pw5:%'`);
+    // Round 7: lockout keys are namespaced (tok: / ip:) so the per-token row
+    // is 'tok:pw5' and the per-IP rows are 'ip:pw5:<ip>'.
+    await db.execute(sql`delete from unlock_lockouts where key = 'tok:pw5' or key like 'ip:pw5:%'`);
     const wired = createApp({ db, config: { ...config, trustProxy: true } });
     await seedShare('pw5', { password: 'right' });
     const post = (ip: string, password: string) =>
@@ -269,7 +271,7 @@ describe('unlock endpoint', () => {
         expect(res.status).toBe(401);
       }
     }
-    const [mid] = await db.select().from(unlockLockouts).where(eq(unlockLockouts.key, 'pw5')).limit(1);
+    const [mid] = await db.select().from(unlockLockouts).where(eq(unlockLockouts.key, 'tok:pw5')).limit(1);
     expect(mid?.count).toBe(20);
     expect(mid?.lockedUntil).toBeNull();
     // The 5th IP pushes the token counter to 25 -> the token locks.
@@ -281,7 +283,7 @@ describe('unlock endpoint', () => {
     const res = await post('10.0.0.6', 'right');
     expect(res.status).toBe(429);
     await db.execute(sql`delete from shares where token = 'pw5'`);
-    await db.execute(sql`delete from unlock_lockouts where key = 'pw5' or key like 'pw5:%'`);
+    await db.execute(sql`delete from unlock_lockouts where key = 'tok:pw5' or key like 'ip:pw5:%'`);
   }, 30_000);
 
   it('404 (no liveness oracle) when the share has no password', async () => {

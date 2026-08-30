@@ -1,0 +1,2 @@
+CREATE INDEX "unlock_lockouts_locked_until_idx" ON "unlock_lockouts" USING btree ("locked_until");--> statement-breakpoint
+CREATE INDEX "unlock_lockouts_last_seen_idx" ON "unlock_lockouts" USING btree ("last_seen");

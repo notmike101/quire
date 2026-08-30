@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, integer, jsonb, primaryKey, bigint } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, integer, jsonb, primaryKey, bigint, index } from 'drizzle-orm/pg-core';
 
 export const shares = pgTable('shares', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -49,4 +49,13 @@ export const unlockLockouts = pgTable('unlock_lockouts', {
   // drop idle sub-threshold counters (a key-cycling attack leaves rows that are
   // never re-touched and never lock) without a scheduled cleanup job.
   lastSeen: timestamp('last_seen', { withTimezone: true }),
-});
+}, (t) => [
+  // Round 7: the opportunistic prune in PostgresLockoutStore.recordFailure
+  // deletes by locked_until (expired lockouts) OR last_seen (idle sub-threshold
+  // counters). Without indexes that is a full table scan on every unlock
+  // failure — under a key-cycling attack the table is large, so the scan is the
+  // hot path. One index per OR branch lets Postgres bitmap-OR two index range
+  // scans instead of scanning the whole table.
+  index('unlock_lockouts_locked_until_idx').on(t.lockedUntil),
+  index('unlock_lockouts_last_seen_idx').on(t.lastSeen),
+]);

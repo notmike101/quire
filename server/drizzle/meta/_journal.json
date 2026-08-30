@@ -43,6 +43,13 @@
       "when": 1788009899591,
       "tag": "0005_nice_wolf_cub",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788066251747,
+      "tag": "0006_round7_lockout_indexes",
+      "breakpoints": true
     }
   ]
 }
