@@ -351,6 +351,54 @@ export async function createRuleShare(
   return { token: body.token };
 }
 
+/**
+ * Round 8 (D5): a session whose assistant message carries XSS payloads in a
+ * text part — executable-scheme links, a protocol-relative link, a
+ * backslash-authority link (four literal backslashes in the markdown source
+ * survive markdown-it's destination un-escaping as two), a data: link,
+ * /assets/ traversal image srcs, and raw HTML script/img tags. The viewer must
+ * render none of them as live elements.
+ */
+export function xssSession(): object {
+  const payload = [
+    '[xss link](javascript:alert(1))',
+    '[xss proto-rel](//evil.example/x)',
+    '[xss backslash](\\\\\\\\evil.example/x)',
+    '[xss data](data:text/html,<script>alert(1)</script>)',
+    '![xss img](javascript:alert(1))',
+    '![xss traverse](/assets/../../api/chats)',
+    '![xss pct](/assets/%2e%2e/secret)',
+    '<script>alert(1)</script>',
+    '<img src=x onerror=alert(1)>',
+  ].join('\n\n');
+  return {
+    sessionId: 'sess_xss',
+    title: 'XSS Session',
+    model: 'test-model',
+    messages: [
+      {
+        role: 'user',
+        time: new Date(Date.UTC(2026, 0, 1, 12, 0)).toISOString(),
+        parts: [{ type: 'text', text: 'render this' }],
+      },
+      {
+        role: 'assistant',
+        time: new Date(Date.UTC(2026, 0, 1, 12, 1)).toISOString(),
+        parts: [{ type: 'text', text: payload }],
+      },
+    ],
+  };
+}
+
+export async function createXssShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
+  const res = await request.post('/api/chats', {
+    headers: { authorization: `Bearer ${API_KEY}` },
+    data: { session: xssSession() },
+  });
+  expect(res.status()).toBe(201);
+  return await res.json();
+}
+
 export async function createChunkedShare(
   request: APIRequestContext,
   opts: { perChunk?: number } = {},

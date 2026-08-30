@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createShare, createChunkedShare, createSystemNoticeShare, createReasoningShare, createImageShare, createToolImageShare, createLongShare, createRuleShare, RULE_SECRETS, TINY_PNG_DATA_URI, OPENAI_KEY, API_KEY } from './helpers';
+import { createShare, createChunkedShare, createSystemNoticeShare, createReasoningShare, createImageShare, createToolImageShare, createLongShare, createRuleShare, createXssShare, RULE_SECRETS, TINY_PNG_DATA_URI, OPENAI_KEY, API_KEY } from './helpers';
 
 test.describe('share viewer', () => {
   test('renders the first page and redacts secrets server-side', async ({ page, request }) => {
@@ -27,6 +27,29 @@ test.describe('share viewer', () => {
       const needle = entry.needle ?? entry.raw;
       expect(body, `${entry.label}: raw secret leaked to DOM`).not.toContain(needle);
     }
+  });
+
+  test('XSS payloads in session content render no executable elements (Round 8)', async ({ page, request }) => {
+    const { token } = await createXssShare(request);
+    await page.goto(`/chats/${token}`);
+    await expect(page.getByRole('heading', { name: 'XSS Session' })).toBeVisible();
+    // The content itself renders (escaped) — the drop is of the executable
+    // elements, not the text.
+    await expect(page.locator('.msg-target').getByText('render this')).toBeVisible();
+    // No executable-scheme, data:, or protocol-relative links.
+    expect(await page.locator('a[href^="javascript:"]').count()).toBe(0);
+    expect(await page.locator('a[href^="data:"]').count()).toBe(0);
+    expect(await page.locator('a[href^="//"]').count()).toBe(0);
+    // No inline <script> (the SPA's own scripts are all src'd modules).
+    expect(await page.locator('script:not([src])').count()).toBe(0);
+    // No event-handler attributes or traversal image srcs.
+    expect(await page.locator('img[onerror]').count()).toBe(0);
+    expect(await page.locator('img[src^="javascript:"]').count()).toBe(0);
+    expect(await page.locator('img[src*=".."]').count()).toBe(0);
+    // Dropped link labels survive as plain text.
+    const body = await page.locator('body').innerText();
+    expect(body).toContain('xss link');
+    expect(body).toContain('xss proto-rel');
   });
 
   test('lazy-loads subsequent pages when scrolling', async ({ page, request }) => {
