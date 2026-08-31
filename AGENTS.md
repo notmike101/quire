@@ -144,8 +144,8 @@ The standing process for this repo (specs and plans are committed under `docs/su
 9. **OMP sharing.** OMP's interactive TUI passes a temporary HTML export to a
    custom share handler (`share.ts`/`share.js`/`share.mjs` in the agent dir,
    `$PI_CODING_AGENT_DIR` else `~/.omp/agent`); the export embeds one base64
-   JSON `SessionData` (entries with `id`/`parentId`/`role`/`content`, `leafId`
-   = active branch). `quire setup omp` installs the bundled handler
+   JSON `SessionData` (entries with `id`/`parentId`/`timestamp`/`role`/
+   `content`; `leafId` names the active branch). `quire setup omp` installs the bundled handler
    (`OMP_SHARE_HANDLER_SOURCE` in `cli/src/omp-share-handler.ts`) — it publishes
    the exact path with `--harness omp --preset strict --yes`, never shells out.
    The adapter (`cli/src/harness/omp.ts`) reconstructs only the selected branch;
