@@ -97,19 +97,20 @@ const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u0080-\u
 // longest valid-UTF-8 PREFIX, we scan the longest maximal valid-UTF-8 RUN
 // ANYWHERE in the buffer. A real image is dense binary with only short valid
 // runs (isolated ASCII-ish bytes, < 8), so it is still skipped; a secret is a
-// long run of clean UTF-8 text and is always found.
-function longestValidUtf8Run(buf: Buffer): string | null {
+// long run of clean UTF-8 text and is always found. The post-Round-14 audit
+// tightened this to scan EVERY meaningful run: a longer clean run must not hide
+// a shorter credential-bearing run elsewhere in the bytes.
+function validUtf8Runs(buf: Buffer): string[] {
   // Round 8: the Round-5 binary search assumed "prefix of length m is valid
   // UTF-8" is monotonic, but it is NOT — a valid 2-byte char (e.g. 0xC3 0xA9 =
   // é) has an INVALID length-1 prefix (a truncated lead byte 0xC3). Walk forward
   // instead: a single O(n) pass over every complete, well-formed code point,
-  // tracking the longest contiguous run of valid code points.
-  let bestStart = 0;
-  let bestLen = 0;
+  // collecting every contiguous run of valid code points.
+  const runs: string[] = [];
   let runStart = 0;
   let i = 0;
   const endRun = (at: number): void => {
-    if (at - runStart > bestLen) { bestStart = runStart; bestLen = at - runStart; }
+    if (at - runStart >= 8) runs.push(buf.subarray(runStart, at).toString('utf8'));
     runStart = at + 1; // next run starts after the offending byte
   };
   while (i < buf.length) {
@@ -134,9 +135,8 @@ function longestValidUtf8Run(buf: Buffer): string | null {
     if (cp >= 0xd800 && cp <= 0xdfff) { endRun(i); i += 1; continue; } // surrogate half (invalid UTF-8)
     i += len; // valid, extend the current run
   }
-  if (buf.length - runStart > bestLen) { bestStart = runStart; bestLen = buf.length - runStart; }
-  if (bestLen < 8) return null; // too short to be a meaningful secret
-  return buf.subarray(bestStart, bestStart + bestLen).toString('utf8');
+  if (buf.length - runStart >= 8) runs.push(buf.subarray(runStart).toString('utf8'));
+  return runs;
 }
 function redactSrc(src: string, preset: Preset, add: (counts: Record<string, number>) => void): string {
   const m = /^data:([^,]*),(.+)$/.exec(src);
@@ -159,12 +159,18 @@ function redactSrc(src: string, preset: Preset, add: (counts: Record<string, num
     return clean;
   }
   const header = m[1];
-  const payload = m[2];
-  let text: string | null = null;
+  let payload: string;
+  try {
+    payload = decodeURIComponent(m[2]);
+  } catch {
+    add({ 'data-uri': 1 });
+    return `data:${header},REDACTED`.replace(CONTROL_CHARS_RE, '');
+  }
+  const texts: string[] = [];
   if (/;base64/i.test(header)) {
-    // base64 payload: decode and scan the longest valid-UTF-8 RUN anywhere in
-    // the buffer (Round 9 F6: a secret can sit after a few binary bytes, so a
-    // prefix-only scan would stop before reaching it; the run is control-char
+    // base64 payload: decode and scan every meaningful valid-UTF-8 run in the
+    // buffer (a secret can sit between binary bytes or behind a longer clean
+    // run). Each run is control-char
     // stripped before the rules see it so an embedded control char cannot
     // break a match — F2).
     let buf: Buffer;
@@ -174,20 +180,20 @@ function redactSrc(src: string, preset: Preset, add: (counts: Record<string, num
       return src.replace(CONTROL_CHARS_RE, '');
     }
     if (buf.length > 0) {
-      const run = longestValidUtf8Run(buf);
-      if (run !== null) text = run.replace(CONTROL_CHARS_RE, '');
+      texts.push(...validUtf8Runs(buf).map((run) => run.replace(CONTROL_CHARS_RE, '')));
     }
   } else {
     // plaintext payload (data:text/plain, etc.): scan verbatim, control chars
     // stripped first (F2: an embedded control char would otherwise break a
     // rule match, then get stripped — leaving the secret clean).
-    text = payload.replace(CONTROL_CHARS_RE, '');
+    texts.push(payload.replace(CONTROL_CHARS_RE, ''));
   }
-  if (text === null) return src.replace(CONTROL_CHARS_RE, '');
-  const r = redactText(text, preset);
-  if (Object.values(r.counts).some((v) => v > 0)) {
-    add(r.counts);
-    return `data:${header},REDACTED`.replace(CONTROL_CHARS_RE, '');
+  for (const text of texts) {
+    const r = redactText(text, preset);
+    if (Object.values(r.counts).some((v) => v > 0)) {
+      add(r.counts);
+      return `data:${header},REDACTED`.replace(CONTROL_CHARS_RE, '');
+    }
   }
   return src.replace(CONTROL_CHARS_RE, '');
 }
@@ -197,7 +203,7 @@ function redactSrc(src: string, preset: Preset, add: (counts: Record<string, num
 // `src` fields, but the plain text pass (redactText) only runs plaintext rules
 // over the raw string, where a base64 payload is invisible to them (base64
 // encodes `sk-` into `c2st`). Decode + scan each data-URI found in the text
-// (reusing redactSrc, i.e. the same longestValidUtf8Run logic); a hit replaces
+// (reusing redactSrc, i.e. the same all-runs scan); a hit replaces
 // the whole URI, a clean image passes through untouched.
 const MD_IMG_URI_RE =
   /!\[[^\]]*\]\(\s*(data:[^)\s]+)\s*\)|<img\s[^>]*\bsrc\s*=\s*["']?(data:[^"'\s>]+)["']?/gi;
@@ -208,7 +214,7 @@ const MD_IMG_URI_RE =
 // protects — no secret can hide in a shielded-but-undecoded URI. A hit replaces
 // the whole URI; a clean image returns unchanged (idempotent, so a
 // markdown-wrapped URI already handled by MD_IMG_URI_RE above is a no-op here).
-const BARE_B64_DATA_URI_RE = /data:[^,\s]*;base64,[a-z0-9+/]+={0,2}/gi;
+const BARE_DATA_URI_RE = /data:[^,\s]*,[^)\s"'<>]+/gi;
 
 function redTextWithDataUris(
   s: string,
@@ -229,7 +235,7 @@ function redTextWithDataUris(
   // pass a base64-encoded secret in a non-markdown data URI would survive.
   // redactSrc is idempotent (clean/already-redacted URIs return unchanged), so
   // a markdown-wrapped URI handled above is a no-op and no count is double-added.
-  const withBareUris = withUris.replace(BARE_B64_DATA_URI_RE, (uri) => redactSrc(uri, preset, add));
+  const withBareUris = withUris.replace(BARE_DATA_URI_RE, (uri) => redactSrc(uri, preset, add));
   const r = redactText(withBareUris, preset);
   add(r.counts);
   return r.text;

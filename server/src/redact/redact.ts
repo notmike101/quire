@@ -160,7 +160,7 @@ function isInvisible(cp: number): boolean {
 // drop non-image data URIs at render time — so the whole URI is shielded from
 // every rule. The `;base64,` marker is the discriminator: a real secret is
 // never preceded by it, so no genuine redaction is lost.
-const DATA_URI_RE = /data:[^,\s]*;base64,[a-z0-9+/]+={0,2}/gi;
+const DATA_URI_RE = /data:[^,\s]*;base64,[a-z0-9+/%=]+/gi;
 
 function findDataUriSpans(s: string): Array<{ s: number; e: number }> {
   const spans: Array<{ s: number; e: number }> = [];
@@ -210,7 +210,16 @@ export function redactText(
   // DATA_URI_RE note). Computed on the stripped text so the spans share the
   // same coordinate space as the rule spans below.
   const dataUriSpans = findDataUriSpans(stripped);
-  const inDataUri = (s: number, e: number) => dataUriSpans.some((d) => s < d.e && e > d.s);
+  const inDataUri = (s: number, e: number) => {
+    let lo = 0;
+    let hi = dataUriSpans.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (dataUriSpans[mid]!.e <= s) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo < dataUriSpans.length && dataUriSpans[lo]!.s < e;
+  };
   for (let ri = 0; ri < rules.length; ri++) {
     const rule = rules[ri]!;
     if (!rule.presets.includes(preset)) continue;
@@ -233,58 +242,37 @@ export function redactText(
       spans.push({ s, e, replacement, rule: rule.category, pri: ri });
     }
   }
-  // Merge overlapping spans by RULE PRIORITY (a higher-priority rule's span
-  // claims its region before a lower-priority one, so a lower-priority span
-  // that overlaps it is dropped regardless of where it starts). This
-  // reproduces the old sequential-replace semantics ("earlier rules claim
-  // first"). The previous position-only sort let an earlier-starting
-  // low-priority span shadow a higher-priority span that began a few chars in
-  // — e.g. the narrow `key` rule matching `key: -----BEGIN…` (at the `key`)
-  // would drop the private-key span that starts at the `-----BEGIN`, leaking
-  // the key body; likewise `key: postgres://user:pass@…` would shadow the
-  // connection-string span and leak the credential.
-  // O(n log n): coordinate-compress the start positions, process spans in
-  // priority order, and use a Fenwick prefix-max tree to test whether a span
-  // overlaps any already-kept (higher-priority) span. A span [s,e] overlaps a
-  // kept span iff some kept span has start < e and end > s; the prefix-max
-  // over starts < e answers that in O(log n).
-  spans.sort((a, b) => a.pri - b.pri || a.s - b.s || a.e - b.e);
-  const coords = Array.from(new Set(spans.map((sp) => sp.s))).sort((a, b) => a - b);
-  const coordIdx = new Map<number, number>();
-  coords.forEach((c, i) => coordIdx.set(c, i));
-  const size = coords.length;
-  const tree = new Array<number>(size + 1).fill(-1);
-  const fwUpdate = (idx: number, v: number) => {
-    for (let x = idx + 1; x <= size; x += x & -x) if (v > tree[x]!) tree[x] = v;
-  };
-  const fwQuery = (idx: number) => {
-    let res = -1;
-    for (let x = idx + 1; x > 0; x -= x & -x) if (tree[x]! > res) res = tree[x]!;
-    return res;
-  };
-  const firstGE = (e: number) => {
-    let lo = 0, hi = size;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (coords[mid]! >= e) hi = mid; else lo = mid + 1; }
-    return lo;
-  };
+  // Merge every overlapping cluster into its full union. Dropping an enclosing
+  // lower-priority span leaked the part outside an inner higher-priority match
+  // (`password=sk-… remaining words`). A containing span keeps its purpose-built
+  // replacement; a partial-overlap union uses the highest-priority category.
+  // Sorting by start and longest-first makes containment deterministic and keeps
+  // the merge O(n log n).
+  spans.sort((a, b) => a.s - b.s || b.e - a.e || a.pri - b.pri);
   const kept: Span[] = [];
   for (const sp of spans) {
-    const i = firstGE(sp.e) - 1; // rightmost kept start < sp.e
-    if (i >= 0 && fwQuery(i) > sp.s) continue; // overlaps a higher-priority kept span
-    kept.push(sp);
-    counts[sp.rule] = (counts[sp.rule] ?? 0) + 1;
-    fwUpdate(coordIdx.get(sp.s)!, sp.e);
+    const prev = kept.at(-1);
+    if (!prev || sp.s >= prev.e) {
+      kept.push({ ...sp });
+      continue;
+    }
+    if (sp.e <= prev.e) {
+      if (sp.pri < prev.pri) {
+        prev.pri = sp.pri;
+        prev.rule = sp.rule;
+        prev.replacement = prev.replacement.replace(/\[REDACTED:[^\]]+\]/, `[REDACTED:${sp.rule}]`);
+      }
+      continue;
+    }
+    prev.e = sp.e;
+    if (sp.pri < prev.pri) {
+      prev.pri = sp.pri;
+      prev.rule = sp.rule;
+    }
+    prev.replacement = `[REDACTED:${prev.rule}]`;
   }
-  // The output walk below needs spans in positional order.
-  const merged = kept.sort((a, b) => a.s - b.s || a.e - b.e);
-  // Round 9 (F4) boundary note: a DROPPED (lower-priority, overlapping) span
-  // is removed entirely, but only its overlap with a kept span is replaced —
-  // any part of the dropped span lying OUTSIDE the kept span is emitted
-  // verbatim by the output walk below (the walk only knows kept spans). That
-  // is intended: e.g. `password=-----BEGIN…` — generic-secret claims
-  // `password=-----BEGIN` (its value stops at the space), private-key claims
-  // the whole PEM block; the block wins and `password=` (a key NAME, not a
-  // secret) is emitted verbatim before the replacement.
+  for (const sp of kept) counts[sp.rule] = (counts[sp.rule] ?? 0) + 1;
+  const merged = kept;
   // Walk the original text, emitting non-span text verbatim (zero-width chars
   // inside it survive) and each span as its replacement (zero-width chars
   // inside the span are consumed).

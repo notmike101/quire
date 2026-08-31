@@ -90,9 +90,9 @@ export const rules: RedactRule[] = [
     // credential in the userinfo and leak it; the user:pass@ branch already
     // handles them once the scheme is in the alternation. A user-only URL
     // (https://user@host, no colon) has no secret and is left untouched.
-    pattern: /\b(postgres(ql)?|mysql|mariadb|mongodb(\+srv)?|redis|amqps?|mssql|oracle|cockroachdb|clickhouse|kafka|valkey|etcd|https?):\/\/[^/\s:@]*:[^@\s]+@|(?:[;&?])(password|passwd|pwd|pass|pw|token|key|secret)s?=[^&\s]+/gi,
+    pattern: /\b(postgres(ql)?|mysql|mariadb|mongodb(\+srv)?|redis|amqps?|mssql|oracle|cockroachdb|clickhouse|kafka|valkey|etcd|https?):\/\/[^/\s:@]*:[^@\s]+@|([;&?])(password|passwd|pwd|pass|pw|token|key|secret)s?=[^&#;\s]+/gi,
     presets: ['strict', 'normal'],
-    replace: (m, scheme, _q, _s, credKey) => (scheme ? `${scheme}://[REDACTED:connection-string]@` : `${credKey}=[REDACTED:connection-string]`),
+    replace: (_m, scheme, _q, _s, separator, credKey) => (scheme ? `${scheme}://[REDACTED:connection-string]@` : `${separator}${credKey}=[REDACTED:connection-string]`),
   },
   {
     category: 'bearer-token',
@@ -111,22 +111,18 @@ export const rules: RedactRule[] = [
     // false-positive on prose; the BARE-prose branch keeps the narrow charset.
     // Round 14: the equally unambiguous Authorization: Basic header gets its
     // own standard-base64 branch so short user:password credentials are caught.
-    pattern: /\b(?:authorization\s*:\s*bearer\s+[A-Za-z0-9._/+-]{8,}|authorization\s*:\s*basic\s+[A-Za-z0-9+/=]{8,}|bearer\s+[A-Za-z0-9._-]{20,})/gi,
+    pattern: /\b(?:authorization[ \t]*:[ \t]*bearer[ \t]+[A-Za-z0-9._/+-]{8,}|authorization[ \t]*:[ \t]*basic[ \t]+[A-Za-z0-9+/=]{4,}(?![A-Za-z0-9+/=])|bearer[ \t]+[A-Za-z0-9._-]{20,})/gi,
     presets: ['strict', 'normal'],
   },
   {
     category: 'generic-secret',
     // Chain F: floor lowered 16→8 and the key-name list widened so short
     // secrets and more naming conventions are caught.
-    // Round 2: the value charset widened to any non-quote/non-whitespace run
-    // (secret values routinely contain @ . ! # % , ; : etc.), still bounded by
-    // the closing quote backreference so a quoted value stops at its quote.
+    // Round 2: the value charset widened for punctuation in secret values.
     // Round 3: an optional closing quote after the key name — JSON tool
     // input/output is the dominant real-world secret format ({"api_key":"…"}),
     // and the key's closing quote sat between the name and the ':' so the
-    // separator never matched. The quote is consumed (not backreferenced) so it
-    // is removed from the output; a value that is itself quoted still stops at
-    // its own quote via the backreference.
+    // separator never matched. The key quote is consumed and removed.
     // Round 7: the value charset now accepts backslash-ESCAPED characters
     // ((?:\\.)|…) so a JSON-escaped quote inside a quoted value ({"password":
     // "ab\"cd…"}) is consumed as part of the value instead of truncating the
@@ -149,7 +145,10 @@ export const rules: RedactRule[] = [
     // backslash, so the alternation is unambiguous and the match is linear.
     // Round 14: pass/pw aliases are credentials too; unquoted := values consume
     // through end-of-line so a multi-word passphrase cannot leak its tail.
-    pattern: /\b(api[_-]?key|secret|token|passwd|password|pwd|pass|pw|auth|credential|passphrase|jwt|cookie|dsn)("|'?)(\s*[:=]\s*)(['"]?)((?:(?:\\.)|[^'"\n\\]){1,})\4/gi,
+    // The sequential re-audit split single/double-quoted branches so the other
+    // quote is legal content, added truncated-quote handling, and bounded EOL at
+    // both CR and LF.
+    pattern: /(?<![?&;])\b(api[_-]?key|secret|token|passwd|password|pwd|pass|pw|auth|credential|passphrase|jwt|cookie|dsn)("|'?)([ \t]*[:=][ \t]*)(?:"(?:(?:\\.)|[^"\r\n\\]){1,}"|'(?:(?:\\.)|[^'\r\n\\]){1,}'|"(?:(?:\\.)|[^"\r\n\\]){1,}(?=\r?(?:\n|$))|'(?:(?:\\.)|[^'\r\n\\]){1,}(?=\r?(?:\n|$))|[^'"\s\\](?:(?:\\.)|[^'"\r\n\\])*)/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key, _kq, sep, _q, _v) => `${key}${sep}[REDACTED:generic-secret]`,
   },
@@ -165,10 +164,8 @@ export const rules: RedactRule[] = [
     // was used". The value charset and 8-char floor match generic-secret; the
     // optional surrounding quotes are consumed with the value. Runs AFTER
     // generic-secret (which claims the `[:=]` forms first) and after
-    // connection-string/bearer-token — the priority merge drops any of this
-    // rule's spans that overlap a higher-priority claim, so a DSN value is
-    // redacted by connection-string (the `--dsn ` prefix survives verbatim),
-    // never double-redacted.
+    // connection-string/bearer-token; overlapping matches are emitted as one
+    // complete redacted union, never double-redacted or partially leaked.
     // Round 11 (R11-1/2/6): hardened. (1) The value is now a 3-branch
     // alternation: a terminated quoted run (which may span a real newline —
     // valid bash; the old `[^'"\s]` charset stopped at \n so the closing quote
@@ -192,8 +189,7 @@ export const rules: RedactRule[] = [
     // `--<secret-name> <value>` / `--<secret-name>=<value>` forms are
     // unambiguous (prose never contains them), so no floor is needed for
     // false-positive control. The separator is non-capturing
-    // `(?:(?:\s+)|\=)` so the quote-group numbering (and the `\2` backreference)
-    // is unchanged. A hyphenated flag with no value (`--password-stdin`) is
+    // `(?:(?:\s+)|\=)`. A hyphenated flag with no value (`--password-stdin`) is
     // still NOT matched: the separator requires whitespace or `=`, not `-`.
     // Round 13 (re-audit F1-UNDER-3, F1-OVER-1, F1-REDOS-1): (a) `passphrase`
     // is added to the name list (`gpg --passphrase …` was leaking). (b) The
@@ -205,7 +201,7 @@ export const rules: RedactRule[] = [
     // is unambiguous at a backslash — the old ambiguity forced exponential
     // backtracking on an unterminated quote after a long backslash run
     // (F1-REDOS-1), a synchronous event-loop DoS.
-    pattern: /--(api[_-]?key|auth[-_]?token|access[-_]?key|secret[-_]?key|api[-_]?secret|secret|token|passwd|password|pwd|pass|pw|passphrase|auth|credential|jwt|cookie|dsn)(?:(?:[ \t]+)|\=)(?:(['"])(?:(?:\\.)|[^'"\\]){1,}\2|(['"])(?:(?:\\.)|[^'"\n\\]){1,}$|(?:(?:\\.)|[^'"\s\\]){1,})/gi,
+    pattern: /--(api[_-]?key|auth[-_]?token|access[-_]?key|secret[-_]?key|api[-_]?secret|secret|token|passwd|password|pwd|pass|pw|passphrase|auth|credential|jwt|cookie|dsn)(?:(?:[ \t]+)|\=)(?:"(?:(?:\\.)|[^"\\]){1,}"|'(?:(?:\\.)|[^'\\]){1,}'|"(?:(?:\\.)|[^"\r\n\\]){1,}(?=\r?(?:\n|$))|'(?:(?:\\.)|[^'\r\n\\]){1,}(?=\r?(?:\n|$))|[^'"\s\\](?:(?:\\.)|[^'"\s\\])*)/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key) => `--${key} [REDACTED:generic-secret]`,
   },
@@ -241,12 +237,12 @@ export const rules: RedactRule[] = [
     // A quoted value stays bounded by its closing quote.
     // Runs after the first generic-secret rule (which claims the bare
     // high-precision names first) and after connection-string/bearer — the
-    // priority merge drops any overlapping span. The backslash is excluded from
+    // overlap union covers the full credential span. The backslash is excluded from
     // both value char classes so the `(?:(?:\\.)|…)` alternation stays
     // unambiguous (linear, no ReDoS — F1-REDOS-1).
     // Round 14: a leading word boundary prevents quadratic retries inside long
     // alphanumeric runs, and pass/pw aliases cover compound credential names.
-    pattern: /\b((?:[A-Za-z0-9]+[_-]?KEY|[A-Za-z0-9]*[_-]?(?:PASSWORD|PASSWD|PWD|PASS|PW|TOKEN|SECRET|AUTH|CREDENTIAL|APIKEY|API_KEY|JWT|COOKIE|DSN|PRIVATE|PASSPHRASE))[_-]?(?:KEY|TOKEN|SECRET)?)(["']?)(\s*[:=]\s*)(?:(['"])(?:(?:\\.)|[^'"\\]){1,}\4|[^'"\n\\]+)/gi,
+    pattern: /\b((?:[A-Za-z0-9]+[_-]?KEY|[A-Za-z0-9]*[_-]?(?:PASSWORD|PASSWD|PWD|TOKEN|SECRET|AUTH|CREDENTIAL|APIKEY|API_KEY|JWT|COOKIE|DSN|PRIVATE|PASSPHRASE)|[A-Za-z0-9]+[_-](?:PASS|PW)|(?:DB|MYSQL|POSTGRES|PG|SMTP|ADMIN)(?:PASS|PW))[_-]?(?:KEY|TOKEN|SECRET)?)(["']?)([ \t]*[:=][ \t]*)(?:"(?:(?:\\.)|[^"\r\n\\]){1,}"|'(?:(?:\\.)|[^'\r\n\\]){1,}'|"(?:(?:\\.)|[^"\r\n\\]){1,}(?=\r?(?:\n|$))|'(?:(?:\\.)|[^'\r\n\\]){1,}(?=\r?(?:\n|$))|[^'"\s\\](?:(?:\\.)|[^'"\r\n\\])*)/gi,
     presets: ['strict', 'normal'],
     replace: (_m, name, _kq, sep) => `${name}${sep}[REDACTED:generic-secret]`,
   },

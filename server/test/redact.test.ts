@@ -565,6 +565,111 @@ describe('Round 14 re-audit: pass aliases, env-var ReDoS, multi-word values, Bas
   });
 });
 
+describe('post-Round 14 sequential re-audit', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'normal') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+  const msg = (out: ReturnType<typeof one>) => JSON.stringify(out.messages);
+
+  it('redacts the full enclosing assignment when it overlaps a higher-priority secret', () => {
+    for (const input of [
+      'password=https://user:hunter2@host correct horse battery staple',
+      'password=sk-abcdefghijklmnopqrstuvwxyz correct horse',
+      '{"password":"https://user:hunter2@host correct horse"}',
+    ]) {
+      const output = msg(one(input));
+      expect(output, input).not.toContain('hunter2');
+      expect(output, input).not.toContain('correct horse');
+      expect(output, input).not.toContain('abcdefghijklmnopqrstuvwxyz');
+    }
+  });
+
+  it('redacts quoted assignment and CLI values containing the opposite quote', () => {
+    for (const input of [
+      '{"password":"don\'t tell"}',
+      '{"db_password":"don\'t tell"}',
+      'run --password "don\'t tell" --yes',
+      "password: 'say \"nothing\"'",
+    ]) {
+      expect(msg(one(input)), input).not.toContain('tell');
+      expect(msg(one(input)), input).not.toContain('nothing');
+    }
+  });
+
+  it('redacts an opened but unterminated quoted assignment through end-of-line', () => {
+    expect(msg(one('{"password":"hunter2'))).not.toContain('hunter2');
+    expect(msg(one('password: "hunter2\nvisible'))).toContain('visible');
+    expect(one('password: "hunter2\nnext: "quoted" line').messages[0]!.parts[0]!.text).toContain('next: "quoted" line');
+  });
+
+  it('decodes percent-encoded plaintext and base64 data-URI payloads before scanning', () => {
+    const uris = [
+      'data:text/plain,password%3Dhunter2',
+      'data:text/plain;base64,%63%47%46%7a%63%33%64%76%63%6d%51%39%61%48%56%75%64%47%56%79%4d%67%3d%3d',
+    ];
+    for (const uri of uris) {
+      const standalone = prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: uri }] }] }, 'normal');
+      expect(JSON.stringify(standalone.messages), uri).not.toContain('hunter2');
+      expect(JSON.stringify(standalone.messages), uri).not.toContain('%63%47');
+      expect(msg(one(`bare ${uri}`)), uri).not.toContain(uri);
+      expect(msg(one(`![x](${uri})`)), uri).not.toContain(uri);
+    }
+  });
+
+  it('redacts malformed percent encoding conservatively', () => {
+    const uri = 'data:text/plain,password%ZZhunter2';
+    const out = prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: uri }] }] }, 'normal');
+    expect(JSON.stringify(out.messages)).not.toContain('hunter2');
+  });
+
+  it('scans every meaningful UTF-8 run in a binary data URI', () => {
+    const bytes = Buffer.concat([
+      Buffer.from('ordinary image metadata '.repeat(20)),
+      Buffer.from([0xff]),
+      Buffer.from('password=hunter2'),
+    ]);
+    const uri = `data:image/png;base64,${bytes.toString('base64')}`;
+    for (const text of [uri, `bare ${uri}`, `![x](${uri})`]) {
+      const out = text === uri
+        ? prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src: uri }] }] }, 'normal')
+        : one(text);
+      expect(JSON.stringify(out.messages), text.slice(0, 40)).not.toContain(uri);
+    }
+  });
+
+  it('redacts four-character Basic credentials without crossing a line for a missing value', () => {
+    expect(msg(one('Authorization: Basic YTpi'))).not.toContain('YTpi');
+    expect(msg(one('Authorization: Basic dTpw'))).not.toContain('dTpw');
+    expect(msg(one('Authorization: Basic\nsuccessful next line'))).toContain('successful next line');
+    expect(msg(one('Authorization: Bearer\nsuccessful next line'))).toContain('successful next line');
+  });
+
+  it('checks many data-URI shields and secret matches in subquadratic time', () => {
+    const input = Array.from({ length: 16_000 }, () => 'data:image/png;base64,QUJD password=x').join('\n');
+    const start = Date.now();
+    const out = redactText(input, 'normal');
+    expect(out.text).not.toContain('password=x');
+    expect(Date.now() - start).toBeLessThan(800);
+  });
+
+  it('does not treat ordinary identifiers ending in pass as credential names', () => {
+    expect(msg(one('{"bypass":false}'))).toContain('false');
+    expect(msg(one('compass: north'))).toContain('north');
+    expect(msg(one('trespass=prohibited'))).toContain('prohibited');
+  });
+
+  it('stops unquoted assignment redaction at CR-only and CRLF line endings', () => {
+    expect(msg(one('passphrase: secret\rvisible second line'))).toContain('visible second line');
+    expect(msg(one('PGPASSWORD=secret\r\nvisible second line'))).toContain('visible second line');
+  });
+
+  it('preserves query separators around redacted credentials', () => {
+    const pass = one('https://db.example/app?pass=hunter2&mode=ro').messages[0]!.parts[0]!.text;
+    const pw = one('https://db.example/app?pw=hunter2#frag').messages[0]!.parts[0]!.text;
+    expect(pass).toBe('https://db.example/app?pass=[REDACTED:connection-string]&mode=ro');
+    expect(pw).toBe('https://db.example/app?pw=[REDACTED:connection-string]#frag');
+  });
+});
+
 describe('Round 2 widened rules', () => {
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
