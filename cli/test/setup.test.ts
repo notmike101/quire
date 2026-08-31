@@ -7,7 +7,7 @@ import * as fsp from 'node:fs/promises';
  import { dirname, join } from 'node:path';
 import { ompAgentDir, installOmpShareHandler, runSetup } from '../src/commands/setup.js';
 import { OMP_SHARE_HANDLER_SOURCE } from '../src/omp-share-handler.js';
- 
+
  vi.mock('node:fs/promises', async (importOriginal) => {
    const actual = await importOriginal<typeof import('node:fs/promises')>();
    return { ...actual, rename: vi.fn(actual.rename) };
@@ -135,7 +135,7 @@ describe('installOmpShareHandler', () => {
    function freshHome(): string {
      return trackTemp(mkdtempSync(join(tmpdir(), 'quire-setup-proc-')));
    }
- 
+
    function runCli(args: string[], home: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
      const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
      delete env.PI_CODING_AGENT_DIR;
@@ -158,37 +158,37 @@ describe('installOmpShareHandler', () => {
        });
      });
    }
- 
+
    it('quire setup omp installs and prints the final path plus the /share behavior', { timeout: 30000 }, async () => {
      const home = freshHome();
      const { code, stdout, stderr } = await runCli(['setup', 'omp'], home);
- 
+
      expect(code, `stderr: ${stderr}`).toBe(0);
      expect(stdout).toContain(join('.omp', 'agent', 'share.mjs'));
      expect(stdout).toContain('strict redaction, no password, no expiry');
      expect(readFileSync(join(home, '.omp', 'agent', 'share.mjs'), 'utf8')).toBe(OMP_SHARE_HANDLER_SOURCE);
    });
- 
+
    it('plain quire setup retains the key-generation instructions', { timeout: 30000 }, async () => {
      const home = freshHome();
      const { code, stdout } = await runCli(['setup'], home);
- 
+
      expect(code).toBe(0);
      expect(stdout).toContain('QUIRE_API_KEY=');
      expect(stdout).toContain('UNLOCK_SECRET=');
      expect(existsSync(join(home, '.omp'))).toBe(false);
    });
- 
+
    it('rejects an unknown setup target with usage and a nonzero exit', { timeout: 30000 }, async () => {
      const { code, stderr } = await runCli(['setup', 'nope'], freshHome());
- 
+
      expect(code).toBe(1);
      expect(stderr).toMatch(/usage: quire setup/);
    });
- 
+
    it('rejects more than one setup positional', { timeout: 30000 }, async () => {
      const { code, stderr } = await runCli(['setup', 'omp', 'omp'], freshHome());
- 
+
      expect(code).toBe(1);
      expect(stderr).toMatch(/usage: quire setup/);
    });
