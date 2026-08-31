@@ -34,6 +34,12 @@ const fakeApi = {
 };
 
 describe('runPublish (unit)', () => {
+  it('rejects an unknown harness with all accepted names', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+
+    await expect(runPublish({ harness: 'nope' }, [])).rejects.toThrow('use zcode, claude-code, or codex');
+  });
+
   it('--current --yes previews, confirms implicitly, creates, prints the URL', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
     const lines: string[] = [];
@@ -371,6 +377,13 @@ describe('runPublish (process)', () => {
       });
     });
   }
+
+  it('lists Codex in CLI usage', async () => {
+    const { code, stderr } = await runCli([], '');
+
+    expect(code).toBe(2);
+    expect(stderr).toContain('zcode|claude-code|codex');
+  });
 
   it('requires confirmation: declining publishes nothing', { timeout: 30000 }, async () => {
     const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode'], 'n\n');

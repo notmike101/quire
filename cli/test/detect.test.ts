@@ -10,6 +10,13 @@ function trackTemp(dir: string): string {
 }
 
 describe('detectHarness', () => {
+  it('CODEX_THREAD_ID env wins', async () => {
+    const { detectHarness } = await import('../src/harness/detect.js');
+    expect(
+      detectHarness({ CODEX_THREAD_ID: 'task-1', CLAUDECODE: '1', ZCODE_APP_VERSION: '1' } as NodeJS.ProcessEnv),
+    ).toBe('codex');
+  });
+
   it('CLAUDECODE env wins', async () => {
     const { detectHarness } = await import('../src/harness/detect.js');
     expect(detectHarness({ CLAUDECODE: '1', ZCODE_APP_VERSION: '1' } as NodeJS.ProcessEnv)).toBe('claude-code');
@@ -24,6 +31,7 @@ describe('detectHarness', () => {
     const dir = trackTemp(mkdtempSync(join(tmpdir(), 'detect-')));
     const zcode = join(dir, 'zcode.sqlite');
     const cc = join(dir, 'cc.jsonl');
+    const codex = join(dir, 'missing-codex.sqlite');
     writeFileSync(zcode, 'x');
     writeFileSync(cc, 'x');
     const old = new Date(Date.now() - 3600_000);
@@ -31,16 +39,37 @@ describe('detectHarness', () => {
     utimesSync(zcode, old, old);
     utimesSync(cc, now, now);
     const { detectHarness } = await import('../src/harness/detect.js');
-    expect(detectHarness({}, { zcode, claudeCode: cc })).toBe('claude-code');
+    expect(detectHarness({}, { zcode, claudeCode: cc, codex })).toBe('claude-code');
     utimesSync(zcode, now, now);
     utimesSync(cc, old, old);
-    expect(detectHarness({}, { zcode, claudeCode: cc })).toBe('zcode');
+    expect(detectHarness({}, { zcode, claudeCode: cc, codex })).toBe('zcode');
+  });
+
+  it('uses Codex task recency when it is newer than the other stores', async () => {
+    const dir = trackTemp(mkdtempSync(join(tmpdir(), 'detect-codex-')));
+    const zcode = join(dir, 'zcode.sqlite');
+    const cc = join(dir, 'cc.jsonl');
+    const codex = join(dir, 'state_5.sqlite');
+    writeFileSync(zcode, 'x');
+    writeFileSync(cc, 'x');
+    const old = new Date(1_600_000_000_000);
+    utimesSync(zcode, old, old);
+    utimesSync(cc, old, old);
+    const db = new (await import('node:sqlite')).DatabaseSync(codex);
+    db.exec('create table threads (updated_at integer not null, updated_at_ms integer)');
+    db.prepare('insert into threads values (?, ?)').run(1_700_000_000, 1_700_000_000_000);
+    db.close();
+    const { detectHarness } = await import('../src/harness/detect.js');
+
+    expect(detectHarness({}, { zcode, claudeCode: cc, codex })).toBe('codex');
   });
 
   it('throws when no signal matches', async () => {
     const dir = trackTemp(mkdtempSync(join(tmpdir(), 'detect-empty-')));
     const { detectHarness } = await import('../src/harness/detect.js');
-    expect(() => detectHarness({}, { zcode: join(dir, 'nope'), claudeCode: join(dir, 'nope2') })).toThrow(/--harness/);
+    expect(() => detectHarness({}, { zcode: join(dir, 'nope'), claudeCode: join(dir, 'nope2'), codex: join(dir, 'nope3') })).toThrow(
+      /zcode.*claude-code.*codex/,
+    );
   });
 });
 

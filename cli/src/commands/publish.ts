@@ -81,8 +81,8 @@ async function resolveSession(adapter: HarnessAdapter, values: PublishValues, po
 
 export async function runPublish(values: PublishValues, positionals: string[], deps: PublishDeps = {}): Promise<void> {
   const out = deps.out ?? console.log;
-  if (values.harness !== undefined && values.harness !== 'zcode' && values.harness !== 'claude-code') {
-    throw new Error(`unknown --harness "${values.harness}" (use zcode or claude-code)`);
+  if (values.harness !== undefined && values.harness !== 'zcode' && values.harness !== 'claude-code' && values.harness !== 'codex') {
+    throw new Error(`unknown --harness "${values.harness}" (use zcode, claude-code, or codex)`);
   }
   const adapter = deps.adapter ?? makeAdapter((values.harness as HarnessName | undefined) ?? detectHarness());
   const api = deps.api ?? new QuireApi();
