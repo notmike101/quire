@@ -67,4 +67,14 @@ describe('stripControlChars (Round 9 C-F10)', () => {
   it('leaves plain text unchanged', () => {
     expect(stripControlChars('plain')).toBe('plain');
   });
+  it('removes C1 control characters and bidi overrides (Round 11)', () => {
+    // C1 (0x80-0x9F) includes the C1 form of ESC (0x9B) — the same terminal
+    // injection vector as 0x1B. Bidi overrides (0x202A-0x202E) and isolates
+    // (0x2066-0x2069) can spoof text direction to forge output. Align with the
+    // server's C1 set (prepare.ts CONTROL_CHARS_RE).
+    expect(stripControlChars('A\x9bB')).toBe('AB'); // C1 ESC
+    expect(stripControlChars('A\u0080B')).toBe('AB'); // C1 PAD
+    expect(stripControlChars('A\u202eB')).toBe('AB'); // RLO
+    expect(stripControlChars('A\u2066B\u2069C')).toBe('ABC'); // bidi isolates
+  });
 });

@@ -282,24 +282,28 @@ describe('runPublish (unit)', () => {
     expect(redactions).toContain('4 generic-secret'); // 2 chunks × 2
   });
 
-  it('strips control characters from the session title in the Sharing line (C-F10)', async () => {
-    // A session title with ANSI escapes / NUL bytes must not inject terminal
-    // sequences into the CLI's own output.
+  it('does not echo the raw session title in the Sharing line (Round 11: the server redacts titles)', async () => {
+    // A title can embed a secret ("Debugging AWS key AKIA…") — the server
+    // redacts it before storing, and the preview returns no redacted title to
+    // print instead. The CLI must not echo the RAW title to stdout (the agent
+    // captures stdout); the session id still identifies the share.
     const { runPublish } = await import('../src/commands/publish.js');
+    const secretTitle = 'Debugging AWS key AKIAIOSFODNN7EXAMPLE';
     const evilAdapter = {
       ...fakeAdapter,
-      resolveCurrent: vi.fn(async () => ({ id: 'sess_a', title: 'A\x00B\x1b[31mC', updatedAt: '', isSubagent: false })),
+      resolveCurrent: vi.fn(async () => ({ id: 'sess_a', title: secretTitle, updatedAt: '', isSubagent: false })),
       loadSession: vi.fn(async (id: string) => ({
-        sessionId: id, title: 'A\x00B\x1b[31mC',
+        sessionId: id, title: secretTitle,
         messages: [{ role: 'user', parts: [{ type: 'text', text: 'hi' }] }],
       })),
     };
     const lines: string[] = [];
     await runPublish({ current: true, yes: true }, [], { adapter: evilAdapter as never, api: fakeApi as never, out: (l) => lines.push(l) });
     const sharing = lines.find((l) => l.startsWith('Sharing:'))!;
-    expect(sharing).toContain('AB[31mC');
-    expect(sharing).not.toContain('\x1b');
-    expect(sharing).not.toContain('\x00');
+    expect(sharing).not.toContain(secretTitle);
+    expect(sharing).not.toContain('AKIA');
+    expect(sharing).toContain('sess_a'); // the id still identifies the share
+    expect(sharing).toContain('1 messages');
   });
 });
 

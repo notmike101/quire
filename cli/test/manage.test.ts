@@ -38,11 +38,27 @@ describe('runUpdate (unit)', () => {
     expect(fakeApi.patch).toHaveBeenCalledWith('tok123', expect.objectContaining({ password: 'pw', expiresAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) }));
   });
 
-  it('--password random generates a secret for the PATCH', async () => {
+  it('--password random generates a secret for the PATCH and prints it once (Round 11)', async () => {
+    // A generated password is hashed server-side and never returned — if the
+    // update doesn't print it, the owner is locked out (mirrors publish.ts).
+    const fakeApi = { patch: vi.fn(async (_token: string, _body: { password?: string; expiresAt?: string }) => ({ ok: true })) };
+    const { runUpdate } = await import('../src/commands/update.js');
+    const lines: string[] = [];
+    await runUpdate('tok123', { password: 'random' }, fakeApi as never, (l) => lines.push(l));
+    const sent = (fakeApi.patch.mock.calls[0]![1] as { password: string }).password;
+    expect(sent).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    const printed = lines.filter((l) => l.startsWith('Password: '));
+    expect(printed).toHaveLength(1);
+    expect(printed[0]).toBe(`Password: ${sent}`);
+  });
+
+  it('--password with a literal value is sent as-is and not printed (Round 11)', async () => {
     const fakeApi = { patch: vi.fn(async () => ({ ok: true })) };
     const { runUpdate } = await import('../src/commands/update.js');
-    await runUpdate('tok123', { password: 'random' }, fakeApi as never);
-    expect(fakeApi.patch).toHaveBeenCalledWith('tok123', expect.objectContaining({ password: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/) }));
+    const lines: string[] = [];
+    await runUpdate('tok123', { password: 'hunter2' }, fakeApi as never, (l) => lines.push(l));
+    expect(fakeApi.patch).toHaveBeenCalledWith('tok123', expect.objectContaining({ password: 'hunter2' }));
+    expect(lines.some((l) => l.startsWith('Password: '))).toBe(false);
   });
 
   it('refuses to run with nothing to update', async () => {

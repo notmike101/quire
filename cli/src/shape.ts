@@ -68,13 +68,15 @@ export function truncatePartText(text: string): string {
 }
 
 /**
- * Round 9 (C-F10): strip control characters (C0 + DEL) from strings that are
- * printed to the terminal (share titles, preview lines). A session title or
- * message comes from a session file an attacker could have shaped, and ANSI
- * escapes / NUL bytes there would forge terminal output (fake "Published:"
- * lines, cursor tricks). \n and \t are in the class too — fine, these are
- * single-line display values.
+ * Round 9 (C-F10): strip control characters from strings that are printed to
+ * the terminal (preview lines). A session message comes from a session file an
+ * attacker could have shaped, and control bytes there would forge terminal
+ * output (fake "Published:" lines, cursor tricks). \n and \t are in the class
+ * too — fine, these are single-line display values.
+ * Round 11: extend to C1 (0x80-0x9F, incl. the C1 form of ESC 0x9B) and the
+ * bidi override/isolate controls (0x202A-0x202E, 0x2066-0x2069), which can
+ * spoof text direction — aligning with the server's C1 set (CONTROL_CHARS_RE).
  */
 export function stripControlChars(s: string): string {
-  return s.replace(/[\u0000-\u001f\u007f]/g, '');
+  return s.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '');
 }

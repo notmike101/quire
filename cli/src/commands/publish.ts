@@ -8,7 +8,7 @@ import { parseExpiry } from '../expires.js';
 import { stripControlChars } from '../shape.js';
 
 // --password values that mean "generate one for me" rather than a literal secret.
-const RANDOM_PASSWORD_WORDS = new Set(['random', 'generate', 'auto']);
+export const RANDOM_PASSWORD_WORDS = new Set(['random', 'generate', 'auto']);
 
 /** Returns a generated password when `value` is a "random" keyword, else the literal value. */
 export function resolvePassword(value: string | undefined): string | undefined {
@@ -90,9 +90,12 @@ export async function runPublish(values: PublishValues, positionals: string[], d
 
   const session = await resolveSession(adapter, values, positionals);
   const shaped = await adapter.loadSession(session.id);
-  // Round 9 (C-F10): the title comes from the session file — strip control
-  // chars so an ANSI escape / NUL cannot forge terminal output.
-  out(`Sharing: ${stripControlChars(shaped.title)} (${shaped.sessionId}) — ${shaped.messages.length} messages`);
+  // Round 11: the title is session content the server redacts before storing
+  // (a title like "Debugging AWS key AKIA…" is a leak — see prepareContent),
+  // and the preview returns no redacted title to print instead. The CLI must
+  // not echo the RAW title to stdout (the agent captures stdout), so the
+  // Sharing line identifies the share by session id only.
+  out(`Sharing: ${shaped.sessionId} — ${shaped.messages.length} messages`);
 
   const preset = values.preset ?? 'strict';
   // Round 9 (F7): 'none' (no redaction) is rejected at the API boundary — the
