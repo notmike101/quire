@@ -208,6 +208,11 @@ test.describe('share viewer', () => {
     });
     expect(res.status()).toBe(413);
     expect(await res.json()).toEqual({ error: { code: 'too_large', message: 'Request body too large' } });
+    // The over-cap 413 leaves the body unconsumed on the socket; the response
+    // MUST advertise Connection: close so a pooling client (Playwright's driver
+    // shares one keep-alive agent across all APIRequestContexts) never reuses
+    // the dirty socket — the reuse is what caused the "socket hang up" flake.
+    expect((await res.headers())['connection']).toBe('close');
   });
 
   test('respects the reader dark mode preference', async ({ browser, request }) => {
