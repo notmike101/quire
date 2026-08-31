@@ -90,7 +90,7 @@ export const rules: RedactRule[] = [
     // credential in the userinfo and leak it; the user:pass@ branch already
     // handles them once the scheme is in the alternation. A user-only URL
     // (https://user@host, no colon) has no secret and is left untouched.
-    pattern: /\b(postgres(ql)?|mysql|mariadb|mongodb(\+srv)?|redis|amqps?|mssql|oracle|cockroachdb|clickhouse|kafka|valkey|etcd|https?):\/\/[^/\s:@]*:[^@\s]+@|(?:[;&?])(password|passwd|pwd|token|key|secret)s?=[^&\s]+/gi,
+    pattern: /\b(postgres(ql)?|mysql|mariadb|mongodb(\+srv)?|redis|amqps?|mssql|oracle|cockroachdb|clickhouse|kafka|valkey|etcd|https?):\/\/[^/\s:@]*:[^@\s]+@|(?:[;&?])(password|passwd|pwd|pass|pw|token|key|secret)s?=[^&\s]+/gi,
     presets: ['strict', 'normal'],
     replace: (m, scheme, _q, _s, credKey) => (scheme ? `${scheme}://[REDACTED:connection-string]@` : `${credKey}=[REDACTED:connection-string]`),
   },
@@ -109,7 +109,9 @@ export const rules: RedactRule[] = [
     // bare-token 24 floor, so nothing else caught it). The header form is
     // unambiguous (`Authorization: Bearer`), so widening its charset cannot
     // false-positive on prose; the BARE-prose branch keeps the narrow charset.
-    pattern: /\b(?:authorization\s*:\s*bearer\s+[A-Za-z0-9._/+-]{8,}|bearer\s+[A-Za-z0-9._-]{20,})/gi,
+    // Round 14: the equally unambiguous Authorization: Basic header gets its
+    // own standard-base64 branch so short user:password credentials are caught.
+    pattern: /\b(?:authorization\s*:\s*bearer\s+[A-Za-z0-9._/+-]{8,}|authorization\s*:\s*basic\s+[A-Za-z0-9+/=]{8,}|bearer\s+[A-Za-z0-9._-]{20,})/gi,
     presets: ['strict', 'normal'],
   },
   {
@@ -145,7 +147,9 @@ export const rules: RedactRule[] = [
     // exponential backtracking (F1-REDOS-1, a synchronous event-loop DoS).
     // Excluding the backslash makes `(?:\\.)` the only arm that consumes a
     // backslash, so the alternation is unambiguous and the match is linear.
-    pattern: /\b(api[_-]?key|secret|token|passwd|password|pwd|auth|credential|passphrase|jwt|cookie|dsn)("|'?)(\s*[:=]\s*)(['"]?)((?:(?:\\.)|[^'"\s\\]){1,})\4/gi,
+    // Round 14: pass/pw aliases are credentials too; unquoted := values consume
+    // through end-of-line so a multi-word passphrase cannot leak its tail.
+    pattern: /\b(api[_-]?key|secret|token|passwd|password|pwd|pass|pw|auth|credential|passphrase|jwt|cookie|dsn)("|'?)(\s*[:=]\s*)(['"]?)((?:(?:\\.)|[^'"\n\\]){1,})\4/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key, _kq, sep, _q, _v) => `${key}${sep}[REDACTED:generic-secret]`,
   },
@@ -201,7 +205,7 @@ export const rules: RedactRule[] = [
     // is unambiguous at a backslash — the old ambiguity forced exponential
     // backtracking on an unterminated quote after a long backslash run
     // (F1-REDOS-1), a synchronous event-loop DoS.
-    pattern: /--(api[_-]?key|auth[-_]?token|access[-_]?key|secret[-_]?key|api[-_]?secret|secret|token|passwd|password|pwd|passphrase|auth|credential|jwt|cookie|dsn)(?:(?:[ \t]+)|\=)(?:(['"])(?:(?:\\.)|[^'"\\]){1,}\2|(['"])(?:(?:\\.)|[^'"\n\\]){1,}$|(?:(?:\\.)|[^'"\s\\]){1,})/gi,
+    pattern: /--(api[_-]?key|auth[-_]?token|access[-_]?key|secret[-_]?key|api[-_]?secret|secret|token|passwd|password|pwd|pass|pw|passphrase|auth|credential|jwt|cookie|dsn)(?:(?:[ \t]+)|\=)(?:(['"])(?:(?:\\.)|[^'"\\]){1,}\2|(['"])(?:(?:\\.)|[^'"\n\\]){1,}$|(?:(?:\\.)|[^'"\s\\]){1,})/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key) => `--${key} [REDACTED:generic-secret]`,
   },
@@ -232,17 +236,17 @@ export const rules: RedactRule[] = [
     // prefix of a longer word) unmatched: the separator `[:=]` must follow the
     // word, and `BOARD` sits between `KEY` and `=`.
     //
-    // The unquoted value charset is deliberately TOKEN-LIKE (alnum-start,
-    // [A-Za-z0-9._/+-]) — mirroring the narrow `key` rule below — because
-    // `KEY` is a common code word (JSX `key={…}`, PEM `-----BEGIN…`); a broad
-    // charset would corrupt those. A quoted value keeps the broad charset
-    // (bounded by its closing quote), so `PGPASSWORD="p@ss"` is still caught.
+    // The rule only matches compound names (bare KEY remains owned by the narrow
+    // rule below), so unquoted values can safely consume through end-of-line.
+    // A quoted value stays bounded by its closing quote.
     // Runs after the first generic-secret rule (which claims the bare
     // high-precision names first) and after connection-string/bearer — the
     // priority merge drops any overlapping span. The backslash is excluded from
     // both value char classes so the `(?:(?:\\.)|…)` alternation stays
     // unambiguous (linear, no ReDoS — F1-REDOS-1).
-    pattern: /((?:[A-Za-z0-9]+[_-]?KEY|[A-Za-z0-9]*[_-]?(?:PASSWORD|PASSWD|PWD|TOKEN|SECRET|AUTH|CREDENTIAL|APIKEY|API_KEY|JWT|COOKIE|DSN|PRIVATE|PASSPHRASE))[_-]?(?:KEY|TOKEN|SECRET)?)(["']?)(\s*[:=]\s*)(?:(['"])(?:(?:\\.)|[^'"\\]){1,}\4|[A-Za-z0-9][A-Za-z0-9._/+-]{0,})/gi,
+    // Round 14: a leading word boundary prevents quadratic retries inside long
+    // alphanumeric runs, and pass/pw aliases cover compound credential names.
+    pattern: /\b((?:[A-Za-z0-9]+[_-]?KEY|[A-Za-z0-9]*[_-]?(?:PASSWORD|PASSWD|PWD|PASS|PW|TOKEN|SECRET|AUTH|CREDENTIAL|APIKEY|API_KEY|JWT|COOKIE|DSN|PRIVATE|PASSPHRASE))[_-]?(?:KEY|TOKEN|SECRET)?)(["']?)(\s*[:=]\s*)(?:(['"])(?:(?:\\.)|[^'"\\]){1,}\4|[^'"\n\\]+)/gi,
     presets: ['strict', 'normal'],
     replace: (_m, name, _kq, sep) => `${name}${sep}[REDACTED:generic-secret]`,
   },

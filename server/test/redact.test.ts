@@ -523,6 +523,48 @@ describe('Round 13 re-audit: env-var + compound names, floor, passphrase, ReDoS,
   });
 });
 
+describe('Round 14 re-audit: pass aliases, env-var ReDoS, multi-word values, Basic auth', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'normal') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+  const msg = (out: ReturnType<typeof one>) => JSON.stringify(out.messages);
+
+  it('redacts pass and pw aliases in assignment, compound, JSON, CLI, and query forms (R14-1)', () => {
+    for (const input of [
+      'pass: hunter2',
+      'pw: hunter2',
+      'dbpass=hunter2',
+      'mysql_pass=hunter2',
+      'POSTGRES_PASS=hunter2',
+      '{"pass":"hunter2"}',
+      'gpg --pass hunter2 --decrypt file.gpg',
+      'https://db.example/app?pass=hunter2',
+      'https://db.example/app?pw=hunter2',
+    ]) {
+      expect(msg(one(input)), input).not.toContain('hunter2');
+    }
+  });
+
+  it('processes a long alphanumeric run before a compound secret in linear time (R14-2)', () => {
+    const start = Date.now();
+    expect(msg(one(`${'a'.repeat(40_000)} PGPASSWORD=hunter2`))).not.toContain('hunter2');
+    expect(Date.now() - start).toBeLessThan(1_000);
+  });
+
+  it('redacts unquoted multi-word values through end-of-line (R14-3)', () => {
+    expect(msg(one('passphrase: correct horse battery staple'))).not.toContain('horse battery staple');
+    expect(msg(one('PGPASSWORD=correct horse battery staple'))).not.toContain('horse battery staple');
+  });
+
+  it('keeps a quoted value bounded by its closing quote (R14-3 guard)', () => {
+    expect(msg(one('password: "correct horse" visible tail'))).toContain('visible tail');
+  });
+
+  it('redacts a short Basic Authorization credential and still redacts Bearer (R14-4)', () => {
+    expect(msg(one('Authorization: Basic dXNlcjpwYXNz'))).not.toContain('dXNlcjpwYXNz');
+    expect(msg(one('Authorization: Bearer abcdefgh'))).not.toContain('abcdefgh');
+  });
+});
+
 describe('Round 2 widened rules', () => {
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
