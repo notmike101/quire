@@ -7,6 +7,51 @@ export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // request; this caps the TOTAL a share may grow to across create + chunks.
 export const MAX_SHARE_BYTES = 1_073_741_824;
 
+// Round 11: how much of an over-cap body to consume before answering the 413.
+// Bounded so a huge (1 GB) or slow body can't hang the reject. Mirrors the
+// @hono/node-server's own post-response drain (64 MB / 500 ms).
+const DRAIN_CAP = 64 * 1024 * 1024;
+const DRAIN_TIMEOUT_MS = 500;
+
+/**
+ * Read and discard up to `cap` bytes from `reader`, stopping after
+ * `timeoutMs`. Used on an over-cap reject to consume the request body BEFORE
+ * the response is sent, so the server can close the socket gracefully (a FIN,
+ * not a RST). A RST — unread body bytes sitting in the receive buffer when the
+ * socket closes — makes the kernel discard the queued 413, so a pooling client
+ * sees a bare ECONNRESET instead of the response. Best-effort: never throws.
+ */
+async function drainReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  cap: number,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let drained = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    for (;;) {
+      if (drained >= cap || Date.now() >= deadline) break;
+      const remaining = deadline - Date.now();
+      const readPromise = reader.read();
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('drain timeout')), remaining);
+      });
+      try {
+        const { done, value } = await Promise.race([readPromise, timeoutPromise]);
+        if (done) break;
+        drained += value.byteLength;
+      } catch {
+        break; // timeout or read error — stop draining
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  } catch {
+    // The drain must never throw — a reject path is already in flight.
+  }
+}
+
 /** Pure cap comparison (Chain B): would `added` bytes push `current` over `cap`? */
 export function wouldExceedCap(currentBytes: number, addedBytes: number, cap: number = MAX_SHARE_BYTES): boolean {
   return currentBytes + addedBytes > cap;
@@ -58,11 +103,33 @@ export function securityHeaders(): MiddlewareHandler {
 // a chunked (no-content-length) body of arbitrary size was fully memory-buffered
 // before the reject. That is a memory-exhaustion DoS: the shipped compose stack
 // has no fronting proxy to catch it, so this middleware is the only guard.
+//
+// Round 11: every reject path answers with `Connection: close`. An over-cap
+// 413 leaves the body unconsumed on the socket; advertising keep-alive (Node's
+// default) invites a pooling client to reuse that socket while the server may
+// still be draining — or force-closing (500 ms drain timeout) — the unread
+// body. Under load that reuse lands on a socket the server is destroying:
+// "socket hang up" (the e2e "lazy-loads subsequent pages" flake; Playwright's
+// driver shares one keep-alive agent across all APIRequestContexts). nginx and
+// Express do the same: close the connection on an oversized-body reject.
 export function bodyLimit(maxBytes: number = MAX_UPLOAD_BYTES): MiddlewareHandler {
   return async (c, next) => {
     // Cheap fast path: reject an oversized DECLARED length before reading.
     const declared = Number(c.req.header('content-length') ?? 0);
     if (Number.isFinite(declared) && declared > maxBytes) {
+      // Round 11: drain the body BEFORE answering so the socket close is a
+      // graceful FIN, not a RST. Unread body bytes in the receive buffer make
+      // the kernel RST the close, which discards the queued 413 — a pooling
+      // client sees a bare ECONNRESET instead of the response. Bounded by
+      // DRAIN_CAP / DRAIN_TIMEOUT_MS so a huge or slow body can't hang the
+      // reject (a no-body declaration just hits the timeout).
+      const body = c.req.raw.body;
+      if (body) {
+        const reader = body.getReader();
+        await drainReader(reader, DRAIN_CAP, DRAIN_TIMEOUT_MS);
+        reader.releaseLock();
+      }
+      c.header('Connection', 'close');
       return c.json({ error: { code: 'too_large', message: 'Request body too large' } }, 413);
     }
     // Always stream-count the ACTUAL bytes.
@@ -76,14 +143,25 @@ export function bodyLimit(maxBytes: number = MAX_UPLOAD_BYTES): MiddlewareHandle
           if (done) break;
           received += value.byteLength;
           if (received > maxBytes) {
-            // Over the cap: stop immediately, do NOT buffer the excess.
-            await reader.cancel().catch(() => {});
+            // Over the cap: stop buffering. Round 11: drain the REMAINDER
+            // before answering so the socket close is a graceful FIN, not a
+            // RST (unread body bytes would make the kernel discard the queued
+            // 413 → the client sees a bare ECONNRESET). We have already read
+            // `received` bytes, so the remaining drain is capped at
+            // DRAIN_CAP - received. releaseLock (NOT reader.cancel): cancel
+            // destroys the socket BEFORE the 413 flushes.
+            await drainReader(reader, Math.max(0, DRAIN_CAP - received), DRAIN_TIMEOUT_MS);
+            reader.releaseLock();
+            c.header('Connection', 'close');
             return c.json({ error: { code: 'too_large', message: 'Request body too large' } }, 413);
           }
           chunks.push(value);
         }
       } catch {
-        await reader.cancel().catch(() => {});
+        // The body stream errored mid-read: the connection state is suspect —
+        // do not let a pooling client reuse it.
+        reader.releaseLock();
+        c.header('Connection', 'close');
         throw new HTTPException(400, { message: 'Failed to read request body' });
       }
       const body = new Uint8Array(received);
