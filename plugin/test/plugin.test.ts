@@ -42,4 +42,29 @@ describe('plugin manifest', () => {
   it('ships a README', () => {
     expect(existsSync(join(root, 'README.md'))).toBe(true);
   });
+
+  it('has a native Codex plugin manifest pointing at its skills', () => {
+    const manifest = JSON.parse(readFileSync(join(root, '.codex-plugin', 'plugin.json'), 'utf8'));
+    expect(manifest).toMatchObject({
+      name: 'quire',
+      version: '0.1.0',
+      skills: './skills/',
+    });
+    expect(typeof manifest.description).toBe('string');
+  });
+
+  it('ships a native $share skill that publishes the current Codex task non-interactively', () => {
+    const md = readFileSync(join(root, 'skills', 'share', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+    expect(md.startsWith('---\n')).toBe(true);
+    expect(md).toMatch(/\nname: share\n/);
+    expect(md).toMatch(/\ndescription: Use when .+\n/);
+    expect(md).toContain('quire publish --current');
+    expect(md).toContain('--harness codex');
+    expect(md).toContain('--yes');
+    expect(md).not.toContain('quire publish --current $ARGUMENTS');
+    expect(md).not.toContain('--confirm-raw');
+    expect(md).toMatch(/no redaction|raw|unredacted/);
+    expect(md).toMatch(/always redacts|hard security boundary/i);
+    expect(md).toMatch(/do not pass `--preset none`/i);
+  });
 });
