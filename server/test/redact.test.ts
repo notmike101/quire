@@ -308,6 +308,65 @@ describe('Round 10 space-separated CLI-arg secrets (R10-PLUGIN-1)', () => {
   });
 });
 
+describe('Round 11 CLI-arg hardening (R11-1/2/6)', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+
+  // R11-1: a quoted value that spans a real newline. Valid bash; the value
+  // charset of the original rule stopped at \n, so the closing quote never
+  // matched and the whole secret survived.
+  it('redacts a quoted --password value that spans a newline (R11-1)', () => {
+    const out = one('run --password "hunter2secret\nmore args" --yes');
+    expect(JSON.stringify(out.messages)).not.toContain('hunter2secret');
+    expect(out.summary['generic-secret']).toBe(1);
+  });
+
+  // R11-1: the 20 KB output cap can truncate the part mid-value, cutting the
+  // closing quote and leaving an opened-but-unterminated quoted run at the end
+  // of the string. The original rule required the closing quote, so it leaked.
+  it('redacts an unterminated quoted --password value truncated at end-of-string (R11-1)', () => {
+    const out = one('run --password "hunter2secret');
+    expect(JSON.stringify(out.messages)).not.toContain('hunter2secret');
+    expect(out.summary['generic-secret']).toBe(1);
+  });
+
+  // R11-2: compound flag names. The original rule required the name to be
+  // immediately followed by whitespace, so `--auth-token` (name `auth` + `-token`
+  // suffix) never matched and the value leaked.
+  it('redacts a compound --auth-token value (R11-2)', () => {
+    const out = one('run --auth-token hunter2secret12345');
+    expect(JSON.stringify(out.messages)).not.toContain('hunter2secret12345');
+    expect(out.summary['generic-secret']).toBe(1);
+  });
+  it('redacts a compound --access-key value (R11-2)', () => {
+    const out = one('run --access-key hunter2secret12345');
+    expect(JSON.stringify(out.messages)).not.toContain('hunter2secret12345');
+  });
+  it('redacts a compound --secret-key value (R11-2)', () => {
+    const out = one('run --secret-key hunter2secret12345');
+    expect(JSON.stringify(out.messages)).not.toContain('hunter2secret12345');
+  });
+
+  // R11-6: false-positive guards. The space-separated form hits non-secret
+  // values (ids, modes, paths) far more often than the `[:=]` form, so the name
+  // list is narrowed to the high-precision subset. These must survive.
+  it('does NOT redact a --session value (a session id is not a secret) (R11-6)', () => {
+    const out = one('run --session abcdef1234');
+    expect(JSON.stringify(out.messages)).toContain('abcdef1234');
+    expect(out.summary['generic-secret']).toBeUndefined();
+  });
+  it('does NOT redact a bare --access value (a mode, not a secret) (R11-6)', () => {
+    const out = one('run --access restricted');
+    expect(JSON.stringify(out.messages)).toContain('restricted');
+    expect(out.summary['generic-secret']).toBeUndefined();
+  });
+  it('does NOT redact a --private value (not in the narrowed name list) (R11-6)', () => {
+    const out = one('run --private somevalue123');
+    expect(JSON.stringify(out.messages)).toContain('somevalue123');
+    expect(out.summary['generic-secret']).toBeUndefined();
+  });
+});
+
 describe('Round 2 widened rules', () => {
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);

@@ -144,7 +144,21 @@ export const rules: RedactRule[] = [
     // rule's spans that overlap a higher-priority claim, so a DSN value is
     // redacted by connection-string (the `--dsn ` prefix survives verbatim),
     // never double-redacted.
-    pattern: /--(api[_-]?key|secret|token|passwd|password|pwd|auth|credential|access|jwt|session|cookie|dsn|conn|private)\s+(['"]?)((?:(?:\\.)|[^'"\s]){8,})\2/gi,
+    // Round 11 (R11-1/2/6): hardened. (1) The value is now a 3-branch
+    // alternation: a terminated quoted run (which may span a real newline —
+    // valid bash; the old `[^'"\s]` charset stopped at \n so the closing quote
+    // never matched and the whole secret leaked), an opened-but-unterminated
+    // quoted run at end-of-string (the 20 KB output cap can cut the closing
+    // quote), and the original unquoted run. (2) The flag name accepts compound
+    // secret names (`--auth-token`, `--access-key`, `--secret-key`,
+    // `--api-secret`): a high-precision secret word optionally followed by a
+    // `-`/`_`-joined secret suffix — the old rule required the name to be
+    // immediately followed by whitespace, so `--auth-token` never matched.
+    // (3) The name list is NARROWED to the high-precision subset: `access`,
+    // `session`, `conn`, `private` are dropped because in the space-separated
+    // form their values are usually non-secrets (ids, modes, paths) — a
+    // false positive the `[:=]` form hits far less often.
+    pattern: /--(api[_-]?key|auth[-_]?token|access[-_]?key|secret[-_]?key|api[-_]?secret|secret|token|passwd|password|pwd|auth|credential|jwt|cookie|dsn)\s+(?:(['"])(?:(?:\\.)|[^'"]){8,}\2|(['"])(?:(?:\\.)|[^'"\n]){8,}$|(?:(?:\\.)|[^'"\s]){8,})/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key) => `--${key} [REDACTED:generic-secret]`,
   },
