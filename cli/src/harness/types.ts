@@ -48,7 +48,7 @@ export interface HarnessSessionInfo {
 }
 
 export interface HarnessAdapter {
-  name: 'zcode' | 'claude-code';
+  name: 'zcode' | 'claude-code' | 'codex';
   listSessions(): Promise<HarnessSessionInfo[]>;
   resolveCurrent(): Promise<HarnessSessionInfo>;
   loadSession(id: string): Promise<ShapedSession>;
