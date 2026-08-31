@@ -260,6 +260,54 @@ describe('Chain F widened rules', () => {
   });
 });
 
+describe('Round 10 space-separated CLI-arg secrets (R10-PLUGIN-1)', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+
+  it('redacts a space-separated --password value (the plugin passes literal passwords as CLI args)', () => {
+    // The /share plugin maps a literal user password to `--password hunter2`
+    // (a space-separated CLI arg). The harness captures bash commands into its
+    // session log; if that session is later published, the server must redact
+    // the value. The generic-secret rule's separator requires `:` or `=`, so the
+    // space-separated form needs its own rule. The `--` flag prefix is the
+    // discriminator: prose never contains `--password <value>`.
+    for (const preset of ['strict', 'normal'] as const) {
+      const out = one('quire publish --current --password hunter2secret --yes', preset);
+      expect(JSON.stringify(out.messages)).not.toContain('hunter2secret');
+      expect(out.summary['generic-secret']).toBe(1);
+    }
+  });
+
+  it('redacts a space-separated --api-key value', () => {
+    const out = one('curl --api-key abcdef1234567890 https://x');
+    expect(JSON.stringify(out.messages)).not.toContain('abcdef1234567890');
+    expect(out.summary['generic-secret']).toBe(1);
+  });
+
+  it('redacts a quoted space-separated --password value', () => {
+    const out = one('quire publish --current --password "hunter2secret" --yes');
+    expect(JSON.stringify(out.messages)).not.toContain('hunter2secret');
+  });
+
+  it('does NOT redact prose that merely mentions a password word (false-positive guard)', () => {
+    // No `--` flag prefix: the sentence must survive untouched.
+    const out = one('the password hunter2secret was used to log in');
+    expect(JSON.stringify(out.messages)).toContain('hunter2secret');
+    expect(out.summary['generic-secret']).toBeUndefined();
+  });
+
+  it('does NOT redact a hyphenated flag with no value (e.g. --password-stdin)', () => {
+    const out = one('ssh --password-stdin user@host');
+    expect(out.summary['generic-secret']).toBeUndefined();
+  });
+
+  it('does NOT redact a --password value below the 8-char floor', () => {
+    const out = one('quire publish --password ab --yes');
+    expect(JSON.stringify(out.messages)).toContain('ab');
+    expect(out.summary['generic-secret']).toBeUndefined();
+  });
+});
+
 describe('Round 2 widened rules', () => {
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);

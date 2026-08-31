@@ -129,6 +129,26 @@ export const rules: RedactRule[] = [
     replace: (_m, key, _kq, sep, _q, _v) => `${key}${sep}[REDACTED:generic-secret]`,
   },
   {
+    category: 'generic-secret',
+    // Round 10 (R10-PLUGIN-1): the space-separated CLI-arg form. A literal
+    // password/key passed as a CLI flag value (`--password hunter2secret`,
+    // `--api-key abc…`) is captured verbatim in the harness's session log as a
+    // bash command; if that session is later published, the generic-secret rule
+    // above misses it (its separator requires `:` or `=`, not a space). The `--`
+    // flag prefix is the discriminator: prose never contains `--password
+    // <value>`, so this does not false-positive on "the password hunter2secret
+    // was used". The value charset and 8-char floor match generic-secret; the
+    // optional surrounding quotes are consumed with the value. Runs AFTER
+    // generic-secret (which claims the `[:=]` forms first) and after
+    // connection-string/bearer-token — the priority merge drops any of this
+    // rule's spans that overlap a higher-priority claim, so a DSN value is
+    // redacted by connection-string (the `--dsn ` prefix survives verbatim),
+    // never double-redacted.
+    pattern: /--(api[_-]?key|secret|token|passwd|password|pwd|auth|credential|access|jwt|session|cookie|dsn|conn|private)\s+(['"]?)((?:(?:\\.)|[^'"\s]){8,})\2/gi,
+    presets: ['strict', 'normal'],
+    replace: (_m, key) => `--${key} [REDACTED:generic-secret]`,
+  },
+  {
     category: 'key',
     // Round 7: a NARROW standalone-`key` rule. `key=…` / `key: …` with a
     // token-like value is a credential, but a BROAD `key` rule (or adding `key`
