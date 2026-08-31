@@ -11,7 +11,7 @@ Usage:
   quire list
   quire revoke <token> [--yes]
   quire update <token> [--password <pw|random>] [--expires <dur|ISO|tomorrow|today|week|month|year>]
-  quire setup
+  quire setup [omp]
 
   publish requires --current or a session id (no interactive picker).
   --password random generates a random secret and prints it once.
@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   switch (command) {
     case 'setup':
-      await runSetup();
+      await runSetup(rest);
       return;
     case 'publish':
     case 'list':
