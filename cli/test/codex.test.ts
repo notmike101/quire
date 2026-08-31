@@ -117,6 +117,41 @@ describe('Codex task discovery', () => {
 });
 
 describe('Codex rollout shaping', () => {
+  it('drops leading Codex context injections without dropping ordinary mentions', async () => {
+    const { dbPath, parentRollout } = makeStateDb();
+    const events = [
+      event({
+        type: 'message',
+        role: 'user',
+        content: [
+          { type: 'input_text', text: '<recommended_plugins>\nprivate plugin inventory\n</recommended_plugins>' },
+          { type: 'input_text', text: '# AGENTS.md instructions for D:\\quire\n\n<INSTRUCTIONS>private instructions</INSTRUCTIONS>' },
+          { type: 'input_text', text: '<environment_context>\n<cwd>D:\\quire</cwd>\n</environment_context>' },
+          { type: 'input_text', text: '<system-reminder>private reminder</system-reminder>' },
+        ],
+      }),
+      event({ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Tell me about this repository.' }] }),
+      event({
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'The docs mention <recommended_plugins> in prose.' }],
+      }),
+    ];
+    writeFileSync(parentRollout, `${events.join('\n')}\n`);
+    const { makeCodexAdapter } = await import('../src/harness/codex.js');
+
+    const session = await makeCodexAdapter(dbPath, {}).loadSession('parent-new');
+
+    expect(session.messages).toEqual([
+      { role: 'user', time: '2026-08-31T12:00:00.000Z', parts: [{ type: 'text', text: 'Tell me about this repository.' }] },
+      {
+        role: 'user',
+        time: '2026-08-31T12:00:00.000Z',
+        parts: [{ type: 'text', text: 'The docs mention <recommended_plugins> in prose.' }],
+      },
+    ]);
+  });
+
   it('keeps visible conversation items and correlates tool outputs', async () => {
     const { dbPath, parentRollout } = makeStateDb();
     const events = [

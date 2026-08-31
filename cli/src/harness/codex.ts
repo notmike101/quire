@@ -125,6 +125,10 @@ function reasoningSummary(summary: unknown): string | undefined {
   return texts.length > 0 ? texts.join('\n') : undefined;
 }
 
+function isCodexContextInjection(text: string): boolean {
+  return /^\s*(?:<recommended_plugins(?:\s|>)|# AGENTS\.md instructions for\b|<environment_context(?:\s|>))/.test(text);
+}
+
 export function makeCodexAdapter(
   dbPath: string = codexStateDbPath(),
   env: NodeJS.ProcessEnv = process.env,
@@ -191,7 +195,10 @@ export function makeCodexAdapter(
       const imageBudget: ImageBudget = { remaining: maxImageBytes };
       let capWarned = false;
       const pushMessage = (role: 'user' | 'assistant', parts: ShapedPart[], time?: string): void => {
-        const kept = extractReasoningParts(extractSystemParts(parts));
+        const shaped = extractReasoningParts(extractSystemParts(parts));
+        const kept = role === 'user'
+          ? shaped.filter((part) => part.type !== 'system' && !(part.type === 'text' && isCodexContextInjection(part.text ?? '')))
+          : shaped;
         if (kept.length === 0) return;
         if (messages.length >= maxMessages) {
           if (!capWarned) {
