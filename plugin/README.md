@@ -46,3 +46,20 @@ to flags: "random password" → `--password random`, "expire tomorrow/today/in N
 hours/a week" → `--expires …`, and "strict/normal redaction" → `--preset …`.
 Quire never supports raw or unredacted publishing; `normal` is the loosest
 preset because redaction at server ingestion is the security boundary.
+
+## Oh My Pi (OMP)
+
+OMP does not use this plugin. `quire setup omp` installs Quire's bundled
+custom share handler as `share.mjs` in OMP's agent directory
+(`$PI_CODING_AGENT_DIR`, else `~/.omp/agent`). After restarting or reloading
+OMP, `/share` in an interactive, persisted TUI session publishes the exact
+active conversation through Quire with strict redaction, no password, and no
+expiry — no prompt, no options.
+
+- Advanced options: publish an OMP HTML export directly —
+  `quire publish <export.html> --harness omp --password random --expires tomorrow`.
+- Headless/ACP sessions and `--no-session` runs keep OMP's native behavior.
+- The installer refuses to overwrite or chain an existing `share.ts`,
+  `share.js`, or `share.mjs`; re-running it with matching bytes is a no-op.
+  OMP does not fall back when an installed handler fails: to revert, rename
+  or remove the Quire-installed `share.mjs`, then restart/reload OMP.

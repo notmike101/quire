@@ -1,6 +1,6 @@
 # Quire
 
-Share AI coding-harness chat sessions (ZCode, Claude Code, Codex) over the web as
+Share AI coding-harness chat sessions (ZCode, Claude Code, Codex, Oh My Pi) over the web as
 read-only, password-protectable, expiring links — with secrets redacted on the
 server before anything is stored or sent.
 
@@ -30,7 +30,7 @@ pnpm workspace monorepo:
 | Package         | What it is                                                        |
 | --------------- | ----------------------------------------------------------------- |
 | `server/`       | Hono + Drizzle (Postgres) API, redaction engine, security layer  |
-| `cli/`          | `quire` publisher CLI with adapters for ZCode, Claude Code, and Codex |
+| `cli/`          | `quire` publisher CLI with adapters for ZCode, Claude Code, Codex, and OMP |
 | `plugin/`       | `/share` for Claude Code/ZCode plus a native Codex `$share` skill    |
 | `web/`          | Vue 3 + Vite + Tailwind v4 read-only viewer                      |
 | `e2e/`          | Playwright full-stack tests (drives the Docker stack)            |
@@ -81,6 +81,7 @@ quire publish --current --password random --expires tomorrow --yes
 quire list                 # list active shares
 quire revoke <token> --yes # soft-revoke (share becomes a 404), no prompt
 quire update <token> --expires 2026-09-01
+quire setup omp            # installs the OMP /share handler (interactive TUI only)
 ```
 
 `--password random` (or `generate`/`auto`) generates a random secret and prints
@@ -89,11 +90,28 @@ a keyword (`tomorrow`, `today`, `week`, `month`, `year`, or `in <duration>`).
 `publish` requires `--current` or a session id (there is no interactive picker).
 
 Environment: `QUIRE_SERVER_URL`, `QUIRE_API_KEY` (override the config file).
-Harness detection: `--harness zcode|claude-code|codex` flag, else the active
+Harness detection: `--harness zcode|claude-code|codex|omp` flag, else the active
 Codex/Claude Code/ZCode environment, else the most recently updated session
 store. Codex reads `~/.codex/state_5.sqlite` plus the selected task's rollout
 JSONL, both read-only. Top-level tasks are discovered normally; a subagent task
-can be published by passing its explicit task ID.
+can be published by passing its explicit task ID. OMP is never auto-detected:
+publish an OMP HTML export by path with `--harness omp`.
+
+### Oh My Pi (OMP)
+
+`quire setup omp` installs Quire's custom share handler into OMP's agent
+directory (`$PI_CODING_AGENT_DIR`, else `~/.omp/agent`) as `share.mjs`. After
+restarting or reloading OMP, `/share` in an interactive, persisted OMP TUI
+session publishes the exact active conversation through Quire with strict
+redaction, no password, and no expiry. The installer never overwrites or
+chains an existing handler: if `share.ts`, `share.js`, or a different
+`share.mjs` is present, it refuses and says what to rename or remove; a
+re-run with matching bytes is a no-op. OMP does not fall back to its native
+share when an installed handler fails, so to revert, rename or remove the
+Quire-installed `share.mjs` and restart/reload OMP. Advanced options
+(password, expiry, preset) are not part of OMP's argumentless `/share`;
+publish the export directly with the desired flags instead. Headless and ACP
+sessions, and `--no-session` runs, keep OMP's native behavior.
 
 ## Plugin
 

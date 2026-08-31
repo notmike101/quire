@@ -14,7 +14,7 @@ pnpm-workspace monorepo, five packages:
 | Package | Role |
 |---|---|
 | `server/` | Hono + Drizzle (Postgres) API, redaction engine, security layer; serves the built viewer |
-| `cli/` | `quire` publisher CLI with harness adapters (ZCode, Claude Code, Codex) |
+| `cli/` | `quire` publisher CLI with harness adapters (ZCode, Claude Code, Codex, OMP) |
 | `plugin/` | Claude Code/ZCode `/share` command and native Codex `$share` skill |
 | `web/` | Vue 3 + Vite + Tailwind v4 read-only viewer |
 | `e2e/` | Playwright full-stack tests (drives the Docker stack) |
@@ -141,6 +141,17 @@ The standing process for this repo (specs and plans are committed under `docs/su
    and the selected row's rollout JSONL for content, always read-only. `CODEX_THREAD_ID`
    resolves the exact active task. Ordinary discovery excludes `thread_spawn_edges` children;
    an explicit child task ID remains publishable.
+9. **OMP sharing.** OMP's interactive TUI passes a temporary HTML export to a
+   custom share handler (`share.ts`/`share.js`/`share.mjs` in the agent dir,
+   `$PI_CODING_AGENT_DIR` else `~/.omp/agent`); the export embeds one base64
+   JSON `SessionData` (entries with `id`/`parentId`/`role`/`content`, `leafId`
+   = active branch). `quire setup omp` installs the bundled handler
+   (`OMP_SHARE_HANDLER_SOURCE` in `cli/src/omp-share-handler.ts`) — it publishes
+   the exact path with `--harness omp --preset strict --yes`, never shells out.
+   The adapter (`cli/src/harness/omp.ts`) reconstructs only the selected branch;
+   internal/system/subagent entries, abandoned branches, and remote content
+   never reach the wire; local file reads are confined to OMP-declared
+   workspace roots. OMP is never auto-detected by the CLI.
 
 ## 7. Known test issues
 
