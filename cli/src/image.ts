@@ -1,5 +1,7 @@
 import { readdirSync, readFileSync, existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { ShapedPart } from './harness/types.js';
 
 /**
  * Per-image embed cap (raw bytes). Base64 inflates ~33%, so 2 MB raw → ~2.7 MB
@@ -200,4 +202,52 @@ export function fileToDataUri(
     return null;
   }
   return { dataUri: `data:${mime};base64,${buf.toString('base64')}`, mime, bytes: buf.length };
+}
+
+const MARKDOWN_IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+
+/** Embed local markdown images only when their canonical file is inside an allowed root. */
+export function embedLocalMarkdownImages(
+  text: string,
+  roots: string[],
+  budget: ImageBudget,
+): { text: string; images: ShapedPart[] } {
+  if (roots.length === 0) return { text, images: [] };
+  const images: ShapedPart[] = [];
+  let out = '';
+  let last = 0;
+  MARKDOWN_IMAGE_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MARKDOWN_IMAGE_RE.exec(text)) !== null) {
+    const alt = match[1] ?? '';
+    const target = match[2] ?? '';
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(target) && !target.startsWith('file://')) continue;
+    let requested: string;
+    try {
+      requested = target.startsWith('file://') ? fileURLToPath(target) : target;
+    } catch {
+      continue;
+    }
+    const candidates = isAbsolute(requested) ? [requested] : roots.map((root) => join(root, requested));
+    let uri: DataUri | null = null;
+    for (const candidate of candidates) {
+      const mime = mimeFromExtension(candidate);
+      if (!mime) continue;
+      for (const root of roots) {
+        uri = fileToDataUri(candidate, mime, MAX_IMAGE_BYTES, root);
+        if (uri) break;
+      }
+      if (uri) break;
+    }
+    if (!uri) continue;
+    const image: ShapedPart = budget.remaining < uri.bytes
+      ? { type: 'image', mime: uri.mime, alt: alt || requested, bytes: uri.bytes, tooLarge: true }
+      : { type: 'image', src: uri.dataUri, mime: uri.mime, alt: alt || requested, bytes: uri.bytes };
+    if (!image.tooLarge) budget.remaining -= uri.bytes;
+    out += text.slice(last, match.index) + `![${alt}]`;
+    images.push(image);
+    last = match.index + match[0].length;
+  }
+  out += text.slice(last);
+  return { text: out, images };
 }

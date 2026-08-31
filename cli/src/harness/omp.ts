@@ -1,7 +1,7 @@
 import { lstat, readFile } from 'node:fs/promises';
-import type { HarnessAdapter, ShapedMessage, ShapedSession } from './types.js';
-import { MAX_SESSION_MESSAGES } from '../shape.js';
-import { MAX_SESSION_IMAGE_BYTES } from '../image.js';
+import type { HarnessAdapter, ShapedImage, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
+import { MAX_SESSION_MESSAGES, truncateInput, truncateOutput, truncatePartText } from '../shape.js';
+import { embedLocalMarkdownImages, isImageMime, MAX_IMAGE_BYTES, MAX_SESSION_IMAGE_BYTES, type ImageBudget } from '../image.js';
 
 export const OMP_MAX_HTML_BYTES = 32 * 1024 * 1024;
 export const OMP_MAX_SESSION_DATA_BYTES = 20 * 1024 * 1024;
@@ -128,8 +128,118 @@ export function activeOmpBranch(data: OmpSessionData): OmpEntry[] {
   return branch.reverse();
 }
 
-function shapeOmpBranch(_branch: OmpEntry[], _header: OmpHeader): ShapedMessage[] {
-  return [];
+function messageTime(message: Record<string, unknown>, entry: OmpEntry): string | undefined {
+  if (typeof message.timestamp === 'number' && Number.isFinite(message.timestamp)) {
+    return new Date(message.timestamp).toISOString();
+  }
+  if (typeof entry.timestamp === 'string' && Number.isFinite(Date.parse(entry.timestamp))) return entry.timestamp;
+  return undefined;
+}
+
+function imagePart(raw: Record<string, unknown>, budget: ImageBudget): ShapedPart | null {
+  if (typeof raw.data !== 'string' || typeof raw.mimeType !== 'string' || !isImageMime(raw.mimeType)) return null;
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(raw.data)) return null;
+  const bytes = Buffer.byteLength(raw.data, 'base64');
+  if (bytes > MAX_IMAGE_BYTES || budget.remaining < bytes) {
+    return { type: 'image', mime: raw.mimeType, bytes, tooLarge: true };
+  }
+  budget.remaining -= bytes;
+  return { type: 'image', src: `data:${raw.mimeType};base64,${raw.data}`, mime: raw.mimeType, bytes };
+}
+
+function visibleParts(content: unknown, roots: string[], budget: ImageBudget): ShapedPart[] {
+  const rawParts = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : [];
+  const parts: ShapedPart[] = [];
+  for (const raw of rawParts) {
+    if (!raw || typeof raw !== 'object') continue;
+    const part = raw as Record<string, unknown>;
+    if (part.type === 'text' && typeof part.text === 'string') {
+      const embedded = embedLocalMarkdownImages(truncatePartText(part.text), roots, budget);
+      parts.push({ type: 'text', text: embedded.text }, ...embedded.images);
+    } else if (part.type === 'image') {
+      const shaped = imagePart(part, budget);
+      if (shaped) parts.push(shaped);
+    }
+  }
+  return parts;
+}
+
+export function shapeOmpBranch(
+  branch: OmpEntry[],
+  header: OmpHeader,
+  options: { maxMessages: number; maxImageBytes: number },
+): ShapedMessage[] {
+  const roots = [header.cwd, ...(header.additionalDirectories ?? [])]
+    .filter((root): root is string => typeof root === 'string' && root.length > 0);
+  const budget: ImageBudget = { remaining: options.maxImageBytes };
+  const messages: ShapedMessage[] = [];
+  const calls = new Map<string, ShapedPart>();
+  let warned = false;
+  const push = (message: ShapedMessage): void => {
+    if (message.parts.length === 0) return;
+    if (messages.length >= options.maxMessages) {
+      if (!warned) {
+        process.stderr.write(`[quire] warning: OMP session has more than ${options.maxMessages} messages; only the first ${options.maxMessages} are published\n`);
+        warned = true;
+      }
+      return;
+    }
+    messages.push(message);
+  };
+
+  for (const entry of branch) {
+    if (entry.type === 'message') {
+      if (!entry.message || typeof entry.message !== 'object') continue;
+      const raw = entry.message as Record<string, unknown>;
+      const time = messageTime(raw, entry);
+      if (raw.role === 'user') {
+        if (raw.synthetic === true || raw.steering === true || raw.attribution === 'agent') continue;
+        push({ role: 'user', ...(time ? { time } : {}), parts: visibleParts(raw.content, roots, budget) });
+      } else if (raw.role === 'assistant' && Array.isArray(raw.content)) {
+        const parts: ShapedPart[] = [];
+        for (const item of raw.content) {
+          if (!item || typeof item !== 'object') continue;
+          const content = item as Record<string, unknown>;
+          if (content.type === 'text' && typeof content.text === 'string') {
+            const embedded = embedLocalMarkdownImages(truncatePartText(content.text), roots, budget);
+            parts.push({ type: 'text', text: embedded.text }, ...embedded.images);
+          } else if (content.type === 'thinking' && typeof content.thinking === 'string') {
+            parts.push({ type: 'reasoning', text: truncatePartText(content.thinking) });
+          } else if (content.type === 'image') {
+            const shaped = imagePart(content, budget);
+            if (shaped) parts.push(shaped);
+          } else if (content.type === 'toolCall' && typeof content.id === 'string' && typeof content.name === 'string') {
+            const tool: ShapedPart = {
+              type: 'tool', callID: content.id, tool: content.name,
+              input: truncateInput(content.arguments),
+            };
+            parts.push(tool);
+            calls.set(content.id, tool);
+          }
+        }
+        push({ role: 'assistant', ...(time ? { time } : {}), parts });
+      } else if (raw.role === 'toolResult' && typeof raw.toolCallId === 'string') {
+        const tool = calls.get(raw.toolCallId);
+        if (!tool) continue;
+        const resultParts = visibleParts(raw.content, roots, budget);
+        const output = resultParts.filter((part) => part.type === 'text').map((part) => part.text ?? '').join('\n');
+        if (output) tool.output = truncateOutput(output);
+        const images = resultParts.filter((part): part is ShapedImage & { type: 'image' } => part.type === 'image');
+        if (images.length > 0) tool.images = images.map(({ type: _type, ...image }) => image);
+        tool.status = raw.isError === true ? 'error' : 'completed';
+      }
+    } else if (entry.type === 'custom_message' && entry.display === true) {
+      const text = typeof entry.content === 'string'
+        ? entry.content
+        : Array.isArray(entry.content)
+          ? entry.content.filter((part): part is { type: 'text'; text: string } => !!part && typeof part === 'object' && (part as { type?: unknown }).type === 'text' && typeof (part as { text?: unknown }).text === 'string').map((part) => part.text).join('\n')
+          : '';
+      if (text) push({ role: 'assistant', ...(entry.timestamp ? { time: entry.timestamp } : {}), parts: [{ type: 'system', text: truncatePartText(text) }] });
+    } else if (entry.type === 'reset_boundary') {
+      push({ role: 'assistant', ...(entry.timestamp ? { time: entry.timestamp } : {}), parts: [{ type: 'system', text: 'Conversation cleared' }] });
+    }
+  }
+  return messages;
 }
 
 export function makeOmpAdapter(options: OmpAdapterOptions = {}): HarnessAdapter {
@@ -137,9 +247,6 @@ export function makeOmpAdapter(options: OmpAdapterOptions = {}): HarnessAdapter 
   const maxSessionDataBytes = options.maxSessionDataBytes ?? OMP_MAX_SESSION_DATA_BYTES;
   const maxMessages = options.maxMessages ?? MAX_SESSION_MESSAGES;
   const maxImageBytes = options.maxImageBytes ?? MAX_SESSION_IMAGE_BYTES;
-  void maxMessages;
-  void maxImageBytes;
-
   return {
     name: 'omp',
     async listSessions() {
@@ -158,10 +265,18 @@ export function makeOmpAdapter(options: OmpAdapterOptions = {}): HarnessAdapter 
       if (!info.isFile() || info.isSymbolicLink() || info.size > maxHtmlBytes) throw new Error('invalid OMP export file');
       const data = extractOmpSessionData(await readFile(exportPath, 'utf8'), { maxHtmlBytes, maxSessionDataBytes });
       const branch = activeOmpBranch(data);
+      const ordinary = branch
+        .filter((entry) => entry.type === 'message' && entry.message && typeof entry.message === 'object')
+        .map((entry) => entry.message as Record<string, unknown>)
+        .find((message) => message.role === 'assistant' &&
+          ((typeof message.model === 'string' && message.model.length > 0) ||
+            (typeof message.provider === 'string' && message.provider.length > 0)));
       return {
         sessionId: data.header.id,
         title: data.header.title ?? data.header.id,
-        messages: shapeOmpBranch(branch, data.header),
+        ...(typeof ordinary?.model === 'string' && ordinary.model.length > 0 ? { model: ordinary.model } : {}),
+        ...(typeof ordinary?.provider === 'string' && ordinary.provider.length > 0 ? { provider: ordinary.provider } : {}),
+        messages: shapeOmpBranch(branch, data.header, { maxMessages, maxImageBytes }),
       };
     },
   };

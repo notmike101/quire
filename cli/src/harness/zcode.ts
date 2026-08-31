@@ -1,11 +1,10 @@
 import { DatabaseSync } from 'node:sqlite';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import type { HarnessAdapter, HarnessSessionInfo, ShapedImage, ShapedMessage, ShapedPart, ShapedSession } from './types.js';
 import { truncateOutput, truncateInput, MAX_SESSION_MESSAGES } from '../shape.js';
 import { extractSystemParts, extractReasoningParts } from '../system.js';
-import { readArtifactDataUri, fileToDataUri, mimeFromExtension, isImageMime, MAX_IMAGE_BYTES, MAX_SESSION_IMAGE_BYTES, type ImageBudget } from '../image.js';
-import { fileURLToPath } from 'node:url';
+import { readArtifactDataUri, fileToDataUri, mimeFromExtension, isImageMime, MAX_IMAGE_BYTES, MAX_SESSION_IMAGE_BYTES, embedLocalMarkdownImages, type ImageBudget } from '../image.js';
 
 export function zcodeDbPath(): string {
   return join(homedir(), '.zcode', 'cli', 'db', 'db.sqlite');
@@ -107,59 +106,6 @@ function isScreenshotTool(tool: string | undefined): boolean {
 }
 
 /**
- * A markdown image link: `![alt](target)`. Captures [1]=alt, [2]=target. The
- * target is matched loosely (anything up to the closing paren, no whitespace or
- * nested parens); `markdownImagePart` then validates it is a local image file
- * (file:// URL, Windows drive path, or a path with an image extension) and
- * returns null for anything else (e.g. a remote https URL), leaving the link
- * untouched.
- */
-const MD_IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
-
-/**
- * Resolve a markdown image link's local file to an image part. Returns null if
- * the target is not a local image file (e.g. a remote https URL), the file is
- * missing, or it exceeds the embed cap (the link is then left in the text and
- * redacted on the server).
- */
-function markdownImagePart(alt: string, target: string, workDir: string | undefined, budget: ImageBudget): ShapedPart | null {
-  // No working dir → no containment root for fileToDataUri, so an absolute
-  // model-emitted path would read an arbitrary local image and exfiltrate it
-  // (the containment check only runs when a root is given). Refuse to embed;
-  // the link stays in the text and is redacted server-side. Mirrors
-  // imageFromScreenshotFile.
-  if (!workDir) return null;
-  // Only local files are embeddable: file:// URLs, Windows drive paths
-  // (C:\…), or bare relative/POSIX paths. Remote URLs (http/https) are left
-  // alone — they render as ordinary markdown links.
-  const isLocal =
-    target.startsWith('file://') ||
-    /^[A-Za-z]:[\\/]/.test(target) ||
-    !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(target); // no scheme → bare path
-  if (!isLocal) return null;
-  let filePath: string;
-  try {
-    if (target.startsWith('file://')) filePath = fileURLToPath(target);
-    else if (isAbsolute(target)) filePath = target;
-    else filePath = workDir ? join(workDir, target) : target;
-  } catch {
-    return null;
-  }
-  const mime = mimeFromExtension(filePath);
-  if (!mime) return null;
-  // Contain the read under the session working dir: a model-emitted link must
-  // not be able to point at an arbitrary local file and exfiltrate it.
-  const uri = fileToDataUri(filePath, mime, MAX_IMAGE_BYTES, workDir);
-  if (!uri) return null;
-  // Round 8: per-image cap AND the session-wide cumulative budget.
-  if (uri.bytes > MAX_IMAGE_BYTES || budget.remaining < uri.bytes) {
-    return { type: 'image', mime: uri.mime, alt: alt || filePath, bytes: uri.bytes, tooLarge: true };
-  }
-  budget.remaining -= uri.bytes;
-  return { type: 'image', src: uri.dataUri, mime: uri.mime, alt: alt || filePath, bytes: uri.bytes };
-}
-
-/**
  * Embed markdown image links (`![alt](file:///…)`) in a text part as `image`
  * parts. Each link is replaced by a short placeholder in the text and an image
  * part is emitted immediately after it, so the transcript shows the actual image
@@ -167,20 +113,7 @@ function markdownImagePart(alt: string, target: string, workDir: string | undefi
  * are left untouched (they get redacted server-side as before).
  */
 function embedMarkdownImages(text: string, workDir: string | undefined, budget: ImageBudget): { text: string; images: ShapedPart[] } {
-  const images: ShapedPart[] = [];
-  let out = '';
-  let last = 0;
-  let m: RegExpExecArray | null;
-  MD_IMAGE_RE.lastIndex = 0;
-  while ((m = MD_IMAGE_RE.exec(text)) !== null) {
-    const part = markdownImagePart(m[1] ?? '', m[2] ?? '', workDir, budget);
-    if (!part) continue; // not a local image file — leave the link in place
-    out += text.slice(last, m.index) + `![${m[1] ?? ''}]`;
-    images.push(part);
-    last = m.index + m[0].length;
-  }
-  out += text.slice(last);
-  return { text: out, images };
+  return embedLocalMarkdownImages(text, workDir ? [workDir] : [], budget);
 }
 
 
