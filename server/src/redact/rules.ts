@@ -130,7 +130,22 @@ export const rules: RedactRule[] = [
     // "ab\"cd…"}) is consumed as part of the value instead of truncating the
     // match at the escaped quote (which leaked the tail). `pwd` is added to the
     // name list (a common short alias for password).
-    pattern: /\b(api[_-]?key|secret|token|passwd|password|pwd|auth|credential|access|jwt|session|cookie|dsn|conn|private)("|'?)(\s*[:=]\s*)(['"]?)((?:(?:\\.)|[^'"\s]){8,})\4/gi,
+    // Round 13 (re-audit F1-UNDER-1/2, F1-REDOS-1): (a) the floor is dropped
+    // 8→1 so a short `NAME=value` secret (e.g. `PASSWORD=abc1234`) is caught —
+    // the `[:=]` form is unambiguous enough that a 1-char floor adds no
+    // meaningful false-positive risk, and under-redaction is the failure we
+    // must avoid. (b) The low-precision names `access|session|conn|private`
+    // are dropped: with a 1-char floor they would over-redact legitimate short
+    // values (`session: <id>`, `access: <mode>`); prefixed/compound forms of
+    // those words (ACCESS_TOKEN, PRIVATE_KEY, …) are caught by the dedicated
+    // env-var rule below instead. (c) `passphrase` is added. (d) The value
+    // charset now EXCLUDES the backslash (`[^'"\s\\]`): the old `[^'"\s]` made
+    // the `(?:(?:\\.)|…)` alternation ambiguous at a backslash (both arms
+    // matched it), so an unterminated quote after a long backslash run forced
+    // exponential backtracking (F1-REDOS-1, a synchronous event-loop DoS).
+    // Excluding the backslash makes `(?:\\.)` the only arm that consumes a
+    // backslash, so the alternation is unambiguous and the match is linear.
+    pattern: /\b(api[_-]?key|secret|token|passwd|password|pwd|auth|credential|passphrase|jwt|cookie|dsn)("|'?)(\s*[:=]\s*)(['"]?)((?:(?:\\.)|[^'"\s\\]){1,})\4/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key, _kq, sep, _q, _v) => `${key}${sep}[REDACTED:generic-secret]`,
   },
@@ -176,9 +191,60 @@ export const rules: RedactRule[] = [
     // `(?:(?:\s+)|\=)` so the quote-group numbering (and the `\2` backreference)
     // is unchanged. A hyphenated flag with no value (`--password-stdin`) is
     // still NOT matched: the separator requires whitespace or `=`, not `-`.
-    pattern: /--(api[_-]?key|auth[-_]?token|access[-_]?key|secret[-_]?key|api[-_]?secret|secret|token|passwd|password|pwd|auth|credential|jwt|cookie|dsn)(?:(?:\s+)|\=)(?:(['"])(?:(?:\\.)|[^'"]){1,}\2|(['"])(?:(?:\\.)|[^'"\n]){1,}$|(?:(?:\\.)|[^'"\s]){1,})/gi,
+    // Round 13 (re-audit F1-UNDER-3, F1-OVER-1, F1-REDOS-1): (a) `passphrase`
+    // is added to the name list (`gpg --passphrase …` was leaking). (b) The
+    // separator is narrowed from `\s+` to `[ \t]+` so it does NOT match a
+    // newline: an unquoted `--password` at end-of-line previously redacted the
+    // NEXT line's first token (`tool --password\necho` → `echo` redacted).
+    // (c) Each value branch's char class now EXCLUDES the backslash
+    // (`[^'"\\]` / `[^'"\n\\]` / `[^'"\s\\]`) so the `(?:(?:\\.)|…)` alternation
+    // is unambiguous at a backslash — the old ambiguity forced exponential
+    // backtracking on an unterminated quote after a long backslash run
+    // (F1-REDOS-1), a synchronous event-loop DoS.
+    pattern: /--(api[_-]?key|auth[-_]?token|access[-_]?key|secret[-_]?key|api[-_]?secret|secret|token|passwd|password|pwd|passphrase|auth|credential|jwt|cookie|dsn)(?:(?:[ \t]+)|\=)(?:(['"])(?:(?:\\.)|[^'"\\]){1,}\2|(['"])(?:(?:\\.)|[^'"\n\\]){1,}$|(?:(?:\\.)|[^'"\s\\]){1,})/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key) => `--${key} [REDACTED:generic-secret]`,
+  },
+  {
+    category: 'generic-secret',
+    // Round 13 (re-audit F1-UNDER-1): a dedicated rule for PREFIXED / COMPOUND
+    // secret names in the `[:=]` form — env vars and JSON fields where the
+    // secret word is embedded in a longer identifier (PGPASSWORD, DB_PASSWORD,
+    // MYSQL_PWD, REDIS_PASSWORD) or carries a secret suffix (SECRET_KEY,
+    // AUTH_TOKEN, ACCESS_TOKEN, SESSION_TOKEN, ACCESS_KEY, PRIVATE_KEY). The
+    // first generic-secret rule misses these: its \b anchor requires the name
+    // to START at a word boundary, so `password` inside `PGPASSWORD` (preceded
+    // by `PG`) has no boundary and never matches — and a <24-char value then
+    // slips past bare-token.
+    //
+    // The NAME is a high-precision secret word, optionally preceded by an
+    // identifier prefix ([A-Za-z0-9]*[_-]?) and optionally followed by a secret
+    // suffix ([_-]?(?:KEY|TOKEN|SECRET)?). `access`/`session` are deliberately
+    // NOT secret words: they only work as PREFIXES via the [A-Za-z0-9]* arm, so
+    // ACCESS_TOKEN / SESSION_TOKEN are caught but a bare `access:` / `session:`
+    // (a mode / id, not a secret) is not. The suffix set excludes `id`, so
+    // `session_id` / `access_id` are not over-redacted. `KEY` is a secret word
+    // ONLY when it carries a non-empty identifier prefix (`ACCESS_KEY`,
+    // `MY_KEY`, `PRIVATE_KEY`) — bare `key` is deliberately NOT matched here,
+    // because the narrow `key` rule below owns the bare form (and its
+    // alnum-start / no-quoted-value discipline spares JSX `key={…}` and
+    // `key: "…"`). Requiring the prefix also keeps `KEYBOARD=` (key as a
+    // prefix of a longer word) unmatched: the separator `[:=]` must follow the
+    // word, and `BOARD` sits between `KEY` and `=`.
+    //
+    // The unquoted value charset is deliberately TOKEN-LIKE (alnum-start,
+    // [A-Za-z0-9._/+-]) — mirroring the narrow `key` rule below — because
+    // `KEY` is a common code word (JSX `key={…}`, PEM `-----BEGIN…`); a broad
+    // charset would corrupt those. A quoted value keeps the broad charset
+    // (bounded by its closing quote), so `PGPASSWORD="p@ss"` is still caught.
+    // Runs after the first generic-secret rule (which claims the bare
+    // high-precision names first) and after connection-string/bearer — the
+    // priority merge drops any overlapping span. The backslash is excluded from
+    // both value char classes so the `(?:(?:\\.)|…)` alternation stays
+    // unambiguous (linear, no ReDoS — F1-REDOS-1).
+    pattern: /((?:[A-Za-z0-9]+[_-]?KEY|[A-Za-z0-9]*[_-]?(?:PASSWORD|PASSWD|PWD|TOKEN|SECRET|AUTH|CREDENTIAL|APIKEY|API_KEY|JWT|COOKIE|DSN|PRIVATE|PASSPHRASE))[_-]?(?:KEY|TOKEN|SECRET)?)(["']?)(\s*[:=]\s*)(?:(['"])(?:(?:\\.)|[^'"\\]){1,}\4|[A-Za-z0-9][A-Za-z0-9._/+-]{0,})/gi,
+    presets: ['strict', 'normal'],
+    replace: (_m, name, _kq, sep) => `${name}${sep}[REDACTED:generic-secret]`,
   },
   {
     category: 'key',

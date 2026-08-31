@@ -434,6 +434,95 @@ describe('Round 12 CLI-arg floor + base64 bearer (F1/F2)', () => {
   });
 });
 
+describe('Round 13 re-audit: env-var + compound names, floor, passphrase, ReDoS, over-redact', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'normal') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+  const msg = (out: ReturnType<typeof one>) => JSON.stringify(out.messages);
+  // 40 backslashes, built at runtime (no backslash literals in this source).
+  const BS = String.fromCharCode(92).repeat(40);
+
+  // F1-UNDER-1 (HIGH): prefixed/compound env-var secret names. The secret word
+  // is embedded in a longer identifier (PG+PASSWORD) or carries a suffix
+  // (SECRET_KEY), so the first generic-secret rule's \b anchor + immediate
+  // separator requirement misses it, and a <24-char value slips past
+  // bare-token. These must be redacted.
+  it('redacts a prefixed env-var secret (PGPASSWORD=) (F1-UNDER-1)', () => {
+    expect(msg(one('PGPASSWORD=hunter2 psql -h db -U user -d app'))).not.toContain('hunter2');
+  });
+  it('redacts DB_PASSWORD= / MYSQL_PWD= / REDIS_PASSWORD= (F1-UNDER-1)', () => {
+    expect(msg(one('DB_PASSWORD=hunter2secret db-tool'))).not.toContain('hunter2secret');
+    expect(msg(one('MYSQL_PWD=hunter2 mysql -u root app'))).not.toContain('hunter2');
+    expect(msg(one('REDIS_PASSWORD=hunter2 redis-cli'))).not.toContain('hunter2');
+  });
+  it('redacts secret-word + suffix env-var names (SECRET_KEY= / AUTH_TOKEN=) (F1-UNDER-1)', () => {
+    expect(msg(one('SECRET_KEY=hunter2 app'))).not.toContain('hunter2');
+    expect(msg(one('AUTH_TOKEN=hunter2 app'))).not.toContain('hunter2');
+  });
+  it('redacts ACCESS_TOKEN / SESSION_TOKEN / ACCESS_KEY / PRIVATE_KEY (F1-UNDER-1)', () => {
+    expect(msg(one('ACCESS_TOKEN=hunter2 app'))).not.toContain('hunter2');
+    expect(msg(one('SESSION_TOKEN=hunter2 app'))).not.toContain('hunter2');
+    expect(msg(one('ACCESS_KEY=hunter2 app'))).not.toContain('hunter2');
+    expect(msg(one('PRIVATE_KEY=hunter2 app'))).not.toContain('hunter2');
+  });
+  it('redacts a prefixed env-var secret after `export` (F1-UNDER-1)', () => {
+    expect(msg(one('export PGPASSWORD=hunter2 && psql -h db'))).not.toContain('hunter2');
+  });
+  it('redacts a compound JSON secret name (access_token:) (F1-UNDER-1)', () => {
+    expect(msg(one('{"access_token": "hunter2secret"}'))).not.toContain('hunter2secret');
+  });
+
+  // F1-UNDER-1 false-positive guards: identifiers that merely CONTAIN a secret
+  // word as a non-suffix, or a low-precision bare name, must survive.
+  it('does NOT redact a KEYBOARD= identifier (key is not a suffix) (F1-UNDER-1 guard)', () => {
+    expect(msg(one('KEYBOARD=uslayout mode'))).toContain('uslayout');
+  });
+  it('does NOT redact a bare session: id (low-precision name) (F1-UNDER-1 guard)', () => {
+    expect(msg(one('{"session": "abc123"}'))).toContain('abc123');
+  });
+  it('does NOT redact a session_id: identifier (id is not a secret suffix) (F1-UNDER-1 guard)', () => {
+    expect(msg(one('{"session_id": "abc123"}'))).toContain('abc123');
+  });
+
+  // F1-UNDER-2 (MEDIUM): a short (1-7 char) value after a high-precision name
+  // in the := form. The first rule's floor was 8, so short values leaked.
+  it('redacts a short PASSWORD= value (7 chars) (F1-UNDER-2)', () => {
+    expect(msg(one('PASSWORD=abc1234 psql'))).not.toContain('abc1234');
+  });
+  it('redacts a short API_KEY= value (6 chars) (F1-UNDER-2)', () => {
+    expect(msg(one('API_KEY=abc123 app'))).not.toContain('abc123');
+  });
+
+  // F1-UNDER-3 (MEDIUM): --passphrase was missing from the CLI name list.
+  it('redacts a --passphrase value (F1-UNDER-3)', () => {
+    expect(msg(one('gpg --batch --yes --passphrase mysecretpassphrase --decrypt f.gpg'))).not.toContain('mysecretpassphrase');
+  });
+
+  // F1-OVER-1 (MEDIUM): the CLI separator \s+ matched a newline, so an unquoted
+  // --password at end-of-line redacted the NEXT line's first token.
+  it('does NOT redact the next line after --password at end-of-line (F1-OVER-1)', () => {
+    expect(msg(one('tool --password\necho hello world'))).toContain('echo');
+  });
+
+  // F1-REDOS-1 (MEDIUM): the quoted-value branch (?:(?:\\.)|[^'"]) is ambiguous
+  // at a backslash (both arms match), so an unterminated quote after a long
+  // backslash run forces exponential backtracking — synchronous DoS on the
+  // event loop. The char class must exclude the backslash so a backslash is
+  // only consumed via (?:\\.) (linear).
+  it('redacts an unterminated quoted --password value with a long backslash run in linear time (F1-REDOS-1)', () => {
+    const start = Date.now();
+    expect(msg(one(`run --password "${BS}`))).not.toContain(BS.slice(0, 20));
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+  it('redacts an unterminated quoted password: value with a long backslash run in linear time (F1-REDOS-1)', () => {
+    // The first rule's match FAILS here (no closing quote), so the backslashes
+    // are not redacted — the discriminator is that the engine finishes in
+    // linear time instead of exponential backtracking.
+    const start = Date.now();
+    one(`password: "${BS}`);
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+});
+
 describe('Round 2 widened rules', () => {
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
