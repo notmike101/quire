@@ -230,6 +230,20 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     //       be overshot by up to one 20 MB request).
     try {
       const updated = await db.transaction(async (tx) => {
+        // Round 11 (S-2): re-read the share row under a FOR UPDATE lock so the
+        // redactions merge below uses the CURRENT committed value, not the stale
+        // snapshot read before the transaction (the `share` const at the top of
+        // this handler). A concurrent chunk upload that commits between that
+        // pre-tx read and this merge would otherwise have its per-rule counts
+        // dropped — the merge would use the stale base and overwrite the
+        // concurrent chunk's contribution. The row lock serializes concurrent
+        // chunk uploads: each reads the latest committed redactions before
+        // merging its own summary.
+        const [locked] = await tx
+          .select()
+          .from(shares)
+          .where(eq(shares.id, share.id))
+          .for('update');
         await insertMessagesBatched(
           tx,
           prepared.messages.map((m, i) => ({
@@ -255,7 +269,9 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
             bytes: sql`"shares"."bytes" + ${prepared.bytes}`,
             // Round 10 (I2): SUM the per-rule counts across chunks (was a shallow
             // `jsonb ||` merge that kept the last chunk's count on key conflict).
-            redactions: mergeRedactionSummary(share.redactions as Record<string, number>, prepared.summary),
+            // Round 11 (S-2): merge from the FOR UPDATE-locked current value,
+            // not the stale pre-tx snapshot (see the lock at the top of the tx).
+            redactions: mergeRedactionSummary((locked?.redactions ?? {}) as Record<string, number>, prepared.summary),
           })
           // Round 7: enforce the cap in the same statement as the increment so a
           // concurrent chunk cannot overshoot it. 0 rows = cap crossed.

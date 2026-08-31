@@ -310,6 +310,30 @@ describe('unlock endpoint', () => {
     expect(res.status).toBe(404);
     expect((await json(res)).error.code).toBe('not_found');
   });
+
+  it('429 when the per-IP window is exhausted on the unlock endpoint (Round 11 S-1)', async () => {
+    // The unlock endpoint's 400/404/410 paths (malformed body, unknown token,
+    // expired) previously had NO volume limiter — only the 401 wrong-password
+    // path was failure-limited. An attacker could fire unbounded malformed-body
+    // or unknown-token unlock requests (each a full share DB lookup + a full
+    // JSON parse of up to a 20 MB body) for CPU/DB DoS and unlimited token
+    // probing. The ipWindow gate (shared with the content endpoint) now bounds
+    // total per-IP volume on unlock too, so these paths 429 once the window is
+    // exhausted.
+    const tiny = createApp({ db, config, ipWindow: new IpWindow(3, 60_000) });
+    // 404 path: unknown tokens. Three pass, the fourth is volume-limited.
+    for (let i = 0; i < 3; i++) {
+      const res = await tiny.request('/api/public/chats/nope/unlock', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'x' }),
+      });
+      expect(res.status).toBe(404);
+    }
+    const res = await tiny.request('/api/public/chats/nope/unlock', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'x' }),
+    });
+    expect(res.status).toBe(429);
+    expect((await json(res)).error.code).toBe('rate_limited');
+  });
 });
 
 describe('completion gate (Chain E)', () => {
@@ -337,6 +361,34 @@ describe('completion gate (Chain E)', () => {
     expect(second.status).toBe(200);
     const complete = await app.request(`/api/public/chats/${f.token}`);
     expect(complete.status).toBe(200);
+    await db.execute(sql`delete from shares where token = ${f.token}`);
+  });
+
+  it('completes a 3-chunk share only when the last expected chunk exists (Round 11 S-3)', async () => {
+    // Regression guard for the point-lookup completion check (replacing
+    // count(distinct chunk_seq)): completeness is "chunk (expectedChunks - 1)
+    // exists" because chunks arrive contiguously (chunkSeq = maxSeq + 1) and
+    // are written atomically. With 2 of 3 chunks present, chunk 2 is absent ->
+    // 404; after chunk 2 arrives, it exists -> 200.
+    const first = await app.request('/api/chats', {
+      method: 'POST', headers: { authorization: `Bearer ${'a'.repeat(64)}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        session: { sessionId: 's_e3', title: 'E3', messages: [{ role: 'user', parts: [{ type: 'text', text: 'c0' }] }] },
+        expectedChunks: 3,
+      }),
+    });
+    expect(first.status).toBe(201);
+    const f = await json(first);
+    const postChunk = (chunkSeq: number) => app.request(`/api/chats/${f.token}/chunks`, {
+      method: 'POST', headers: { authorization: `Bearer ${'a'.repeat(64)}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ uploadId: f.uploadId, chunkSeq, messages: [{ role: 'user', parts: [{ type: 'text', text: `c${chunkSeq}` }] }] }),
+    });
+    expect((await postChunk(1)).status).toBe(200);
+    // 2 of 3 present (last expected chunk 2 absent) -> still hidden.
+    expect((await app.request(`/api/public/chats/${f.token}`)).status).toBe(404);
+    expect((await postChunk(2)).status).toBe(200);
+    // 3 of 3 present (last expected chunk 2 exists) -> served.
+    expect((await app.request(`/api/public/chats/${f.token}`)).status).toBe(200);
     await db.execute(sql`delete from shares where token = ${f.token}`);
   });
 

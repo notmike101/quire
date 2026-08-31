@@ -142,11 +142,22 @@ export function publicRoutes(deps: PublicDeps): Hono {
     // Chain E: a chunked share is not ready until all expected chunks have
     // arrived. Incomplete shares return the SAME 404 as not-found (no existence
     // oracle) so a killed upload never serves a partial share as complete.
-    const [chunkAgg] = await db
-      .select({ n: sql<number>`count(distinct "chunk_seq")::int` })
+    // Round 11 (S-3): completeness is a POINT LOOKUP, not an aggregate. Chunks
+    // arrive contiguously (a chunk is accepted only when chunkSeq = maxSeq + 1,
+    // owner.ts) and each is written atomically, so the present chunk set is
+    // always {0..M}; the share is complete iff the LAST expected chunk
+    // (chunk_seq = expectedChunks - 1) exists. Checking that one row is an O(1)
+    // PK seek on (share_id, chunk_seq) — the old count(distinct chunk_seq)
+    // scanned every message row of the share (O(share-size)) on EVERY page
+    // load. (A max(chunk_seq) aggregate was tried first but Postgres does not
+    // apply the backward min/max index optimization for this composite PK, so
+    // it still scanned all rows — the point lookup is the real O(1).)
+    const [lastChunk] = await db
+      .select({ one: sql<number>`1` })
       .from(shareMessages)
-      .where(eq(shareMessages.shareId, share.id));
-    if ((chunkAgg?.n ?? 0) < (share.expectedChunks ?? 1)) {
+      .where(and(eq(shareMessages.shareId, share.id), eq(shareMessages.chunkSeq, (share.expectedChunks ?? 1) - 1)))
+      .limit(1);
+    if (!lastChunk) {
       return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
     }
     if (share.passwordHash) {
@@ -212,6 +223,17 @@ export function publicRoutes(deps: PublicDeps): Hono {
   });
 
   app.post('/api/public/chats/:token/unlock', async (c) => {
+    // Round 11 (S-1): the failure lockout below only fires on the 401
+    // wrong-password path. The 400 (malformed body), 404 (unknown token / no
+    // password) and 410 (expired) paths had NO volume bound — an attacker
+    // could fire unbounded unlock requests (each a full share DB lookup plus a
+    // full JSON parse of up to a 20 MB body) for CPU/DB DoS and unlimited
+    // token probing. The same per-IP volume window that gates the content GET
+    // now gates unlock too, so total per-IP volume on this endpoint is bounded
+    // regardless of which path each request hits.
+    if (!deps.ipWindow.allow(clientIp(c, config.trustProxy))) {
+      return c.json({ error: { code: 'rate_limited', message: 'Too many requests' } }, 429);
+    }
     const share = await activeShareByToken(c, db);
     if (!share) return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
     // Round 8: same deliberate 410 for the expired case (see the GET handler).

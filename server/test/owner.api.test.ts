@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import postgres from 'postgres';
 import { makeDb, migrateDb, type Db } from '../src/db/client.js';
 import { createApp } from '../src/app.js';
 import { shares, shareMessages } from '../src/db/schema.js';
@@ -265,6 +266,53 @@ describe('chunked upload', () => {
     // so this read 2 — an undercount the owner saw in their list/get.
     expect((share.redactions as Record<string, number>)['aws-access-key']).toBe(3);
     await db.execute(sql`delete from shares where token = ${tok}`);
+  });
+
+  it('re-reads redactions under FOR UPDATE so a concurrent chunk commit is not dropped (Round 11 S-2)', async () => {
+    // The chunk handler reads the share row (incl. redactions) BEFORE its
+    // transaction, then merges its chunk summary into that snapshot. If a
+    // concurrent chunk commits between the read and the merge, the stale base
+    // drops the concurrent chunk's counts. The fix re-reads the row under a
+    // FOR UPDATE lock inside the tx, so the merge uses the current value.
+    //
+    // Deterministic interleaving: hold a FOR UPDATE lock on the share row on a
+    // SEPARATE connection, fire the chunk upload (its tx blocks on the lock),
+    // then raise redactions and commit. The fixed handler reads the raised value
+    // (5) and merges 5 + 1 = 6; the stale-base bug would merge 1 + 1 = 2.
+    const first = await app.request('/api/chats', { method: 'POST', headers: auth, body: JSON.stringify({ session, expectedChunks: 2 }) });
+    expect(first.status).toBe(201);
+    const f = await json(first);
+    const share = (await db.select().from(shares).where(eq(shares.token, f.token)))[0]!;
+    // Chunk 0 (the `session` fixture) has exactly 1 aws-access-key.
+    expect((share.redactions as Record<string, number>)['aws-access-key']).toBe(1);
+
+    const hold = postgres(url, { max: 1 });
+    let res: Response | undefined;
+    try {
+      await hold.unsafe('begin');
+      await hold.unsafe('select * from shares where id = $1 for update', [share.id]);
+      // Fire the chunk 1 upload (1 aws-access-key). It reads the stale
+      // redactions pre-tx, then blocks on our lock inside its transaction.
+      const chunk1 = app.request(`/api/chats/${f.token}/chunks`, {
+        method: 'POST', headers: auth,
+        body: JSON.stringify({ uploadId: f.uploadId, chunkSeq: 1, messages: [{ role: 'user', parts: [{ type: 'text', text: 'AKIAABCDEFGHIJKLMNOP' }] }] }),
+      });
+      // Settle: give the handler time to pass its pre-tx read and reach the
+      // blocking lock. The lock — not this delay — guarantees the interleaving.
+      await new Promise((r) => setTimeout(r, 200));
+      // Simulate a concurrent chunk commit that raised the count to 5, then
+      // release the lock. The handler must read THIS value, not its stale 1.
+      await hold.unsafe("update shares set redactions = $1::jsonb where id = $2", ['{"aws-access-key": 5}', share.id]);
+      await hold.unsafe('commit');
+      res = await chunk1;
+    } finally {
+      await hold.end();
+    }
+    expect(res?.status).toBe(200);
+    const after = (await db.select().from(shares).where(eq(shares.token, f.token)))[0]!;
+    // Fix: 5 (locked current) + 1 (this chunk) = 6. Bug: 1 (stale) + 1 = 2.
+    expect((after.redactions as Record<string, number>)['aws-access-key']).toBe(6);
+    await db.execute(sql`delete from shares where token = ${f.token}`);
   });
 
   it('returns the chunk redaction summary in the chunk response (Round 9 C-F9)', async () => {
