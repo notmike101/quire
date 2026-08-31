@@ -103,7 +103,13 @@ export const rules: RedactRule[] = [
     // (floor 8) is redacted. A BARE `bearer <token>` in prose is ambiguous
     // (could be the word "bearer" + an identifier), so it keeps the higher
     // floor (20) to avoid false positives.
-    pattern: /\b(?:authorization\s*:\s*bearer\s+[A-Za-z0-9._-]{8,}|bearer\s+[A-Za-z0-9._-]{20,})/gi,
+    // Round 12 (F2): the HEADER form's value charset now includes `/` and `+`
+    // (standard base64, not base64url). The old charset [A-Za-z0-9._-] stopped
+    // at the first `/`, so the tail after it leaked (e.g. 18 chars — under the
+    // bare-token 24 floor, so nothing else caught it). The header form is
+    // unambiguous (`Authorization: Bearer`), so widening its charset cannot
+    // false-positive on prose; the BARE-prose branch keeps the narrow charset.
+    pattern: /\b(?:authorization\s*:\s*bearer\s+[A-Za-z0-9._/+-]{8,}|bearer\s+[A-Za-z0-9._-]{20,})/gi,
     presets: ['strict', 'normal'],
   },
   {
@@ -158,7 +164,19 @@ export const rules: RedactRule[] = [
     // `session`, `conn`, `private` are dropped because in the space-separated
     // form their values are usually non-secrets (ids, modes, paths) — a
     // false positive the `[:=]` form hits far less often.
-    pattern: /--(api[_-]?key|auth[-_]?token|access[-_]?key|secret[-_]?key|api[-_]?secret|secret|token|passwd|password|pwd|auth|credential|jwt|cookie|dsn)\s+(?:(['"])(?:(?:\\.)|[^'"]){8,}\2|(['"])(?:(?:\\.)|[^'"\n]){8,}$|(?:(?:\\.)|[^'"\s]){8,})/gi,
+    // Round 12 (F1): the floor is dropped 8→1 in all three value branches and
+    // the separator now accepts `=` as well as whitespace. The harness records
+    // the bash command line into the session store BEFORE the command runs, and
+    // /share publishes the CURRENT session — so a short literal password
+    // (`--password s3cret`, `--password=short`) lands in the published
+    // transcript and the reader could read it and unlock the share. The
+    // `--<secret-name> <value>` / `--<secret-name>=<value>` forms are
+    // unambiguous (prose never contains them), so no floor is needed for
+    // false-positive control. The separator is non-capturing
+    // `(?:(?:\s+)|\=)` so the quote-group numbering (and the `\2` backreference)
+    // is unchanged. A hyphenated flag with no value (`--password-stdin`) is
+    // still NOT matched: the separator requires whitespace or `=`, not `-`.
+    pattern: /--(api[_-]?key|auth[-_]?token|access[-_]?key|secret[-_]?key|api[-_]?secret|secret|token|passwd|password|pwd|auth|credential|jwt|cookie|dsn)(?:(?:\s+)|\=)(?:(['"])(?:(?:\\.)|[^'"]){1,}\2|(['"])(?:(?:\\.)|[^'"\n]){1,}$|(?:(?:\\.)|[^'"\s]){1,})/gi,
     presets: ['strict', 'normal'],
     replace: (_m, key) => `--${key} [REDACTED:generic-secret]`,
   },

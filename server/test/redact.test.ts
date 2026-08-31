@@ -301,10 +301,18 @@ describe('Round 10 space-separated CLI-arg secrets (R10-PLUGIN-1)', () => {
     expect(out.summary['generic-secret']).toBeUndefined();
   });
 
-  it('does NOT redact a --password value below the 8-char floor', () => {
-    const out = one('quire publish --password ab --yes');
-    expect(JSON.stringify(out.messages)).toContain('ab');
-    expect(out.summary['generic-secret']).toBeUndefined();
+  it('redacts a SHORT --password value (Round 12 F1: no floor in the unambiguous --flag form)', () => {
+    // F1: the harness records the bash command line into the session store
+    // BEFORE the command runs, and /share publishes the CURRENT session — so a
+    // short literal password (`--password s3cret`) lands in the published
+    // transcript and the reader could read it and unlock the share. The
+    // `--<secret-name> <value>` form is unambiguous (prose never contains it),
+    // so the 8-char floor is dropped to 1.
+    for (const preset of ['strict', 'normal'] as const) {
+      const out = one('quire publish --current --password s3cret --yes', preset);
+      expect(JSON.stringify(out.messages)).not.toContain('s3cret');
+      expect(out.summary['generic-secret']).toBe(1);
+    }
   });
 });
 
@@ -364,6 +372,65 @@ describe('Round 11 CLI-arg hardening (R11-1/2/6)', () => {
     const out = one('run --private somevalue123');
     expect(JSON.stringify(out.messages)).toContain('somevalue123');
     expect(out.summary['generic-secret']).toBeUndefined();
+  });
+});
+
+describe('Round 12 CLI-arg floor + base64 bearer (F1/F2)', () => {
+  const one = (text: string, preset: 'strict' | 'normal' = 'normal') =>
+    prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+
+  // F1: the `=`-form CLI arg (`--password=short`). The original rule's
+  // separator required a space, so the equals form never matched and the
+  // value leaked. The `--<secret-name>=<value>` form is unambiguous, so the
+  // separator now accepts `=` as well as whitespace.
+  it('redacts an equals-form --password= value (Round 12 F1)', () => {
+    for (const preset of ['strict', 'normal'] as const) {
+      const out = one('quire publish --password=short --yes', preset);
+      expect(JSON.stringify(out.messages)).not.toContain('short');
+      expect(out.summary['generic-secret']).toBe(1);
+    }
+  });
+
+  // F1: a short QUOTED value (`--password "s3cret"`). The quoted branch had the
+  // same 8-char floor; a 6-char quoted password leaked.
+  it('redacts a short quoted --password value (Round 12 F1)', () => {
+    for (const preset of ['strict', 'normal'] as const) {
+      const out = one('quire publish --password "s3cret" --yes', preset);
+      expect(JSON.stringify(out.messages)).not.toContain('s3cret');
+      expect(out.summary['generic-secret']).toBe(1);
+    }
+  });
+
+  // F1 false-positive guard: the hyphenated flag with no value is still NOT
+  // matched (the separator requires whitespace or `=`, not `-`).
+  it('does NOT redact --password-stdin (separator is not a hyphen) (Round 12 F1 guard)', () => {
+    const out = one('ssh --password-stdin user@host');
+    expect(out.summary['generic-secret']).toBeUndefined();
+  });
+
+  // F2: a standard-base64 (not base64url) Authorization: Bearer token uses `/`
+  // and `+`. The header-form value charset [A-Za-z0-9._-] stopped at the first
+  // `/`, so the tail after it leaked (18 chars — under the bare-token 24 floor,
+  // so no other rule caught it). The header form is unambiguous
+  // (`Authorization: Bearer`), so widen its charset to include `/` and `+`.
+  it('redacts a base64 Authorization: Bearer token containing / and + (Round 12 F2)', () => {
+    const token = 'abcdefghijklmnopqrst/uvwxyz0123456789AB+Q';
+    for (const preset of ['strict', 'normal'] as const) {
+      const out = one(`Authorization: Bearer ${token}`, preset);
+      expect(JSON.stringify(out.messages)).not.toContain(token);
+      // The tail after the first / must not leak either.
+      expect(JSON.stringify(out.messages)).not.toContain('uvwxyz0123456789AB');
+      expect(out.summary['bearer-token']).toBe(1);
+    }
+  });
+
+  // F2 false-positive guard: the BARE-prose `bearer <token>` branch keeps the
+  // narrower charset (no / +) and the 20-char floor — only the header form was
+  // widened. A bare `bearer` in prose with a short token is still untouched.
+  it('does NOT redact a bare prose bearer with a short token (Round 12 F2 guard)', () => {
+    const out = one('the bearer of the note abc12345');
+    expect(JSON.stringify(out.messages)).toContain('abc12345');
+    expect(out.summary['bearer-token']).toBeUndefined();
   });
 });
 
