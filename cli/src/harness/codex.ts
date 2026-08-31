@@ -230,11 +230,13 @@ export function makeCodexAdapter(
             const callID = typeof payload.call_id === 'string' ? payload.call_id : undefined;
             const name = typeof payload.name === 'string' ? payload.name : '?';
             const namespace = typeof payload.namespace === 'string' ? payload.namespace : undefined;
+            const rawInput = payload.arguments ?? payload.input;
+            if (name === 'exec' && typeof rawInput === 'string' && /\bquire\s+publish\b/.test(rawInput)) continue;
             const part: ShapedPart = {
               type: 'tool',
               callID,
               tool: namespace ? `${namespace}.${name}` : name,
-              input: truncateInput(parseJsonOrString(payload.arguments ?? payload.input)),
+              input: truncateInput(parseJsonOrString(rawInput)),
             };
             if (typeof payload.status === 'string') part.status = payload.status;
             pushMessage('assistant', [part], event.timestamp);

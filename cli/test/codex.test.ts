@@ -152,6 +152,37 @@ describe('Codex rollout shaping', () => {
     ]);
   });
 
+  it('omits Quire publish calls so an earlier preview cannot leak back into a republished task', async () => {
+    const { dbPath, parentRollout } = makeStateDb();
+    const events = [
+      event({
+        type: 'custom_tool_call',
+        call_id: 'share-call',
+        name: 'exec',
+        input: 'tools.exec_command({"cmd":"quire publish --current --harness codex --yes"})',
+      }),
+      event({
+        type: 'custom_tool_call_output',
+        call_id: 'share-call',
+        output: 'preview: <recommended_plugins>private plugin inventory</recommended_plugins>',
+      }),
+      event({ type: 'custom_tool_call', call_id: 'normal-call', name: 'exec', input: 'tools.exec_command({"cmd":"git status"})' }),
+      event({ type: 'custom_tool_call_output', call_id: 'normal-call', output: 'clean' }),
+    ];
+    writeFileSync(parentRollout, `${events.join('\n')}\n`);
+    const { makeCodexAdapter } = await import('../src/harness/codex.js');
+
+    const session = await makeCodexAdapter(dbPath, {}).loadSession('parent-new');
+
+    expect(session.messages).toEqual([
+      {
+        role: 'assistant',
+        time: '2026-08-31T12:00:00.000Z',
+        parts: [{ type: 'tool', callID: 'normal-call', tool: 'exec', input: 'tools.exec_command({"cmd":"git status"})', output: 'clean' }],
+      },
+    ]);
+  });
+
   it('keeps visible conversation items and correlates tool outputs', async () => {
     const { dbPath, parentRollout } = makeStateDb();
     const events = [
