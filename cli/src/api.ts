@@ -94,8 +94,15 @@ export class QuireApi {
       }
       // Round 9 (C-F6b): a misconfigured server URL must produce an actionable
       // error, not a raw TypeError from URL/fetch internals.
+      // Round 10 (R10-CLI-1): echo `this.origin`, not `this.baseUrl` — a base
+      // URL like `https://user:pass@host ` (trailing space) passes `new URL()`
+      // in loadCliConfig but makes the `${baseUrl}${path}` concat below throw
+      // "Invalid URL", and printing the raw baseUrl would leak the userinfo
+      // (credentials) into stderr, which the harness may capture into its own
+      // session log. `origin` strips userinfo (and degrades to baseUrl if the
+      // URL is unparseable, i.e. has no userinfo to leak).
       if (err instanceof TypeError && err.message.includes('Invalid URL')) {
-        throw new QuireApiError(0, 'invalid_url', `invalid server URL: ${this.baseUrl}`);
+        throw new QuireApiError(0, 'invalid_url', `invalid server URL: ${this.origin}`);
       }
       throw err;
     }

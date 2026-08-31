@@ -243,12 +243,19 @@ export function makeZcodeAdapter(
              order by time_updated desc limit 50`,
           )
           .all() as SessionRow[];
-        return rows.map((r) => ({
-          id: r.id,
-          title: r.title ?? r.id,
-          updatedAt: new Date(r.time_updated).toISOString(),
-          isSubagent: false,
-        }));
+        return rows.map((r) => {
+          // Round 10 (R10-CLI-3): a non-numeric time_updated (corrupt/drifted
+          // row) makes toISOString() throw a raw RangeError, crashing
+          // listSessions/resolveCurrent (and thus `publish --current`). Fall
+          // back to epoch 0 for an unparseable timestamp.
+          const d = new Date(r.time_updated);
+          return {
+            id: r.id,
+            title: r.title ?? r.id,
+            updatedAt: Number.isFinite(d.getTime()) ? d.toISOString() : new Date(0).toISOString(),
+            isSubagent: false,
+          };
+        });
       } finally {
         db.close();
       }

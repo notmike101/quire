@@ -81,6 +81,25 @@ describe('zcode adapter', () => {
     expect(current.id).toBe('sess_fixture');
   });
 
+  it('does not crash on a corrupt (non-numeric) time_updated (Round 10 R10-CLI-3)', async () => {
+    // A drifted/corrupt session row can carry a non-convertible TEXT value in
+    // the integer time_updated column (SQLite stores it as TEXT). The adapter
+    // must not throw a raw RangeError from toISOString(); it falls back to
+    // epoch 0 so `publish --current` / id resolution stays usable.
+    const { DatabaseSync } = await import('node:sqlite');
+    const { makeZcodeAdapter } = await import('../src/harness/zcode.js');
+    const corruptDb = join(tempDir, 'corrupt-time.sqlite');
+    const db = new DatabaseSync(corruptDb);
+    db.exec(`create table session (id text primary key, title text, directory text, time_created integer, time_updated integer, task_type text, share_url text);`);
+    db.prepare('insert into session (id, title, directory, time_created, time_updated, task_type, share_url) values (?,?,?,?,?,?,?)')
+      .run('sess_corrupt', 'Corrupt', '/tmp', 0, 'garbage', 'interactive', null);
+    db.close();
+    const sessions = await makeZcodeAdapter(corruptDb).listSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]!.id).toBe('sess_corrupt');
+    expect(sessions[0]!.updatedAt).toBe('1970-01-01T00:00:00.000Z');
+  });
+
   it('caps a session at the injected maxMessages (Round 5)', async () => {
     // A pathological session must not be able to OOM the CLI. Build a small
     // DB with 5 messages and cap at 3 — the adapter must stop at the cap.

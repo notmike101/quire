@@ -31,8 +31,6 @@ export interface SystemSegment {
   text: string;
 }
 
-const REMINDER_RE = /<system-reminder>([\s\S]*?)<\/system-reminder>/g;
-
 /**
  * Split a text part into ordered segments, extracting a LEADING run of
  * well-formed `<system-reminder>` blocks. A block counts as a real injection
