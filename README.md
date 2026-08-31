@@ -1,6 +1,6 @@
 # Quire
 
-Share AI coding-harness chat sessions (ZCode, Claude Code) over the web as
+Share AI coding-harness chat sessions (ZCode, Claude Code, Codex) over the web as
 read-only, password-protectable, expiring links — with secrets redacted on the
 server before anything is stored or sent.
 
@@ -30,8 +30,8 @@ pnpm workspace monorepo:
 | Package         | What it is                                                        |
 | --------------- | ----------------------------------------------------------------- |
 | `server/`       | Hono + Drizzle (Postgres) API, redaction engine, security layer  |
-| `cli/`          | `quire` publisher CLI with harness adapters (ZCode, Claude Code) |
-| `plugin/`       | Claude Code–format `/share` plugin (works in ZCode too)          |
+| `cli/`          | `quire` publisher CLI with adapters for ZCode, Claude Code, and Codex |
+| `plugin/`       | `/share` for Claude Code/ZCode plus a native Codex `$share` skill    |
 | `web/`          | Vue 3 + Vite + Tailwind v4 read-only viewer                      |
 | `e2e/`          | Playwright full-stack tests (drives the Docker stack)            |
 
@@ -89,15 +89,18 @@ a keyword (`tomorrow`, `today`, `week`, `month`, `year`, or `in <duration>`).
 `publish` requires `--current` or a session id (there is no interactive picker).
 
 Environment: `QUIRE_SERVER_URL`, `QUIRE_API_KEY` (override the config file).
-Harness detection: `--harness zcode|claude-code` flag, else `CLAUDECODE` /
-`ZCODE_APP_VERSION` env, else the more recently modified session store.
+Harness detection: `--harness zcode|claude-code|codex` flag, else the active
+Codex/Claude Code/ZCode environment, else the most recently updated session
+store. Codex reads `~/.codex/state_5.sqlite` plus the selected task's rollout
+JSONL, both read-only. Top-level tasks are discovered normally; a subagent task
+can be published by passing its explicit task ID.
 
 ## Plugin
 
-Claude Code–format plugin; install it in Claude Code or ZCode and use
-`/share` in a session. The command infers the password/expiration/preset from
-what you ask and publishes immediately (always `--yes`, no prompt), then reports
-the link — e.g. `/share random password, expire tomorrow`.
+Install the plugin in Claude Code or ZCode and use `/share`. In Codex, install
+the native plugin and use `$share`. Both infer password/expiration/preset from
+what you ask and publish immediately (always `--yes`, no prompt), then report
+the link — e.g. `$share random password, expire tomorrow`.
 
 ## Deployment (Docker)
 

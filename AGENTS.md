@@ -5,7 +5,7 @@ The human-facing README is `README.md`; this file is for agents.
 
 ## 1. Project overview
 
-Quire shares AI coding-harness sessions (ZCode, Claude Code) over the web as
+Quire shares AI coding-harness sessions (ZCode, Claude Code, Codex) over the web as
 read-only, password-protectable, expiring links. Secrets are redacted
 **server-side at ingestion** — only redacted content is ever stored or served.
 
@@ -14,8 +14,8 @@ pnpm-workspace monorepo, five packages:
 | Package | Role |
 |---|---|
 | `server/` | Hono + Drizzle (Postgres) API, redaction engine, security layer; serves the built viewer |
-| `cli/` | `quire` publisher CLI with harness adapters (ZCode, Claude Code) |
-| `plugin/` | Claude Code–format `/share` plugin (works in ZCode too) |
+| `cli/` | `quire` publisher CLI with harness adapters (ZCode, Claude Code, Codex) |
+| `plugin/` | Claude Code/ZCode `/share` command and native Codex `$share` skill |
 | `web/` | Vue 3 + Vite + Tailwind v4 read-only viewer |
 | `e2e/` | Playwright full-stack tests (drives the Docker stack) |
 
@@ -137,6 +137,10 @@ The standing process for this repo (specs and plans are committed under `docs/su
 7. **Viewer verification traps.** The public API cursor param is `?cursor=` (format
    `chunkSeq:seq`), not `?before=`; the viewer lazy-loads the first 50 messages — scroll or
    hit the API before concluding a part type is absent.
+8. **Codex task stores.** The Codex adapter reads `~/.codex/state_5.sqlite` for task metadata
+   and the selected row's rollout JSONL for content, always read-only. `CODEX_THREAD_ID`
+   resolves the exact active task. Ordinary discovery excludes `thread_spawn_edges` children;
+   an explicit child task ID remains publishable.
 
 ## 7. Known test issues
 
