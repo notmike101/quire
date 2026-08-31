@@ -224,6 +224,22 @@ describe('Chain F widened rules', () => {
     expect(JSON.stringify(out.messages)).not.toContain('abcd1234');
     expect(out.summary['generic-secret']).toBe(1);
   });
+  it('redacts the CLI-generated share password the CLI prints to stdout (Round 10 R10-CLI-2)', () => {
+    // cli/src/commands/publish.ts prints a freshly generated share password to
+    // stdout as `Password: <22-char base64url>`. The harness captures stdout
+    // into its own session log; if that session is later published, the server
+    // must redact this exact line or the password leaks into the share. This
+    // test pins the cross-package coupling (CLI print format ↔ generic-secret
+    // rule): if the CLI's line ever changes (e.g. `Your password is: …`), this
+    // fails.
+    const generated = 'aB3-dEfGhIjKlMnOpQr56s'; // 22-char base64url
+    const line = `Password: ${generated}`;
+    for (const preset of ['strict', 'normal'] as const) {
+      const out = one(line, preset);
+      expect(JSON.stringify(out.messages)).not.toContain(generated);
+      expect(out.summary['generic-secret']).toBe(1);
+    }
+  });
   it('redacts a query-string DSN credential (?password=)', () => {
     const out = one('postgres://db.example.com/app?password=hunter22');
     expect(JSON.stringify(out.messages)).not.toContain('hunter22');
