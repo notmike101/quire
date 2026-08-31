@@ -43,4 +43,5 @@ Thumbs.db
 
 # Agent data
 .superpowers
+.worktrees/
 .zcode
