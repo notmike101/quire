@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -37,7 +37,62 @@ describe('runPublish (unit)', () => {
   it('rejects an unknown harness with all accepted names', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
 
-    await expect(runPublish({ harness: 'nope' }, [])).rejects.toThrow('use zcode, claude-code, or codex');
+    await expect(runPublish({ harness: 'nope' }, [])).rejects.toThrow('use zcode, claude-code, codex, or omp');
+  });
+
+  it('rejects --current for OMP with an actionable message and publishes nothing', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    const { makeOmpAdapter } = await import('../src/harness/omp.js');
+    const previewsBefore = fakeApi.preview.mock.calls.length;
+
+    await expect(
+      runPublish({ current: true, harness: 'omp', yes: true }, [], { adapter: makeOmpAdapter() as never, api: fakeApi as never }),
+    ).rejects.toThrow(/OMP --current is unsupported/);
+    expect(fakeApi.preview.mock.calls.length).toBe(previewsBefore);
+  });
+
+  it('publishes an exact OMP export path with strict preset', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    const { makeOmpAdapter } = await import('../src/harness/omp.js');
+    const dir = mkdtempSync(join(tmpdir(), 'quire-omp-publish-'));
+    const path = join(dir, 'current session.html');
+    const data = {
+      header: { type: 'session', id: 'omp-session-1', title: 'OMP fixture', cwd: 'D:/workspace' },
+      entries: [{ type: 'message', id: 'u1', parentId: null, message: { role: 'user', content: [{ type: 'text', text: 'hello omp' }] } }],
+      leafId: 'u1',
+    };
+    writeFileSync(path, `<!doctype html><script id="session-data" type="application/json">${Buffer.from(JSON.stringify(data), 'utf8').toString('base64')}</script>`);
+    const lines: string[] = [];
+    try {
+      await runPublish(
+        { harness: 'omp', preset: 'strict', yes: true },
+        [path],
+        { adapter: makeOmpAdapter() as never, api: fakeApi as never, out: (l) => lines.push(l) },
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    expect(fakeApi.preview).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'omp-session-1', title: 'OMP fixture' }), 'strict');
+    expect(fakeApi.create).toHaveBeenCalled();
+    expect(lines.join('\n')).toContain('https://srv.example.com/chats/');
+  });
+
+  it('reports OMP parse failures with their specific diagnostic, not session-not-found and not fixture content', async () => {
+    const { runPublish } = await import('../src/commands/publish.js');
+    const { makeOmpAdapter } = await import('../src/harness/omp.js');
+    const dir = mkdtempSync(join(tmpdir(), 'quire-omp-bad-'));
+    const path = join(dir, 'bad.html');
+    writeFileSync(path, '<html><body>SECRET_omp_content</body></html>');
+    const previewsBefore = fakeApi.preview.mock.calls.length;
+    try {
+      await expect(
+        runPublish({ harness: 'omp', yes: true }, [path], { adapter: makeOmpAdapter() as never, api: fakeApi as never }),
+      ).rejects.toThrow('OMP export is missing the session-data script');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(fakeApi.preview.mock.calls.length).toBe(previewsBefore);
   });
 
   it('--current --yes previews, confirms implicitly, creates, prints the URL', async () => {
@@ -378,11 +433,11 @@ describe('runPublish (process)', () => {
     });
   }
 
-  it('lists Codex in CLI usage', async () => {
+  it('lists all harnesses including OMP in CLI usage', async () => {
     const { code, stderr } = await runCli([], '');
 
     expect(code).toBe(2);
-    expect(stderr).toContain('zcode|claude-code|codex');
+    expect(stderr).toContain('zcode|claude-code|codex|omp');
   });
 
   it('requires confirmation: declining publishes nothing', { timeout: 30000 }, async () => {
@@ -522,5 +577,37 @@ describe('runPublish (process)', () => {
     expect(code, `stderr: ${stderr}`).not.toBe(0);
     expect(`${stdout}${stderr}`).toContain('Unknown option');
     expect(createCalls).toHaveLength(3); // nothing new published
+  });
+
+  it('publishes an OMP export path end-to-end: quire publish <export.html> --harness omp --preset strict --yes', { timeout: 30000 }, async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'quire-omp-proc-'));
+    const path = join(dir, 'current session.html');
+    const data = {
+      header: { type: 'session', id: 'omp-proc-1', title: 'OMP proc', cwd: 'D:/workspace' },
+      entries: [
+        { type: 'message', id: 'u1', parentId: null, message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } },
+        { type: 'message', id: 'a1', parentId: 'u1', message: { role: 'assistant', model: 'omp-model', content: [{ type: 'text', text: 'hi' }] } },
+      ],
+      leafId: 'a1',
+    };
+    writeFileSync(path, `<!doctype html><script id="session-data" type="application/json">${Buffer.from(JSON.stringify(data), 'utf8').toString('base64')}</script>`);
+    const before = createCalls.length;
+    const { code, stdout, stderr } = await runCli(['publish', path, '--harness', 'omp', '--preset', 'strict', '--yes'], '');
+    rmSync(dir, { recursive: true, force: true });
+
+    expect(code, `stderr: ${stderr}`).toBe(0);
+    expect(stdout).toContain('/chats/');
+    expect(createCalls).toHaveLength(before + 1);
+    const body = createCalls[before] as { session: { sessionId: string; model?: string; messages: unknown[] } };
+    expect(body.session.sessionId).toBe('omp-proc-1');
+    expect(body.session.model).toBe('omp-model');
+    expect(body.session.messages).toHaveLength(2);
+  });
+
+  it('rejects --current --harness omp with the actionable message (no fallback, no generic error)', { timeout: 30000 }, async () => {
+    const { code, stderr } = await runCli(['publish', '--current', '--harness', 'omp', '--yes'], '');
+    expect(code).toBe(1);
+    expect(stderr).toContain('OMP --current is unsupported');
+    expect(stderr).not.toContain('session not found');
   });
 });

@@ -68,8 +68,21 @@ describe('detectHarness', () => {
     const dir = trackTemp(mkdtempSync(join(tmpdir(), 'detect-empty-')));
     const { detectHarness } = await import('../src/harness/detect.js');
     expect(() => detectHarness({}, { zcode: join(dir, 'nope'), claudeCode: join(dir, 'nope2'), codex: join(dir, 'nope3') })).toThrow(
-      /zcode.*claude-code.*codex/,
+      /zcode.*claude-code.*codex.*omp/,
     );
+  });
+
+  it('never auto-detects OMP from env or store signals', async () => {
+    const dir = trackTemp(mkdtempSync(join(tmpdir(), 'detect-omp-')));
+    const { detectHarness } = await import('../src/harness/detect.js');
+    expect(() => detectHarness({ PI_CODING_AGENT_DIR: 'omp' } as NodeJS.ProcessEnv, { zcode: join(dir, 'nope'), claudeCode: join(dir, 'nope2'), codex: join(dir, 'nope3') })).toThrow(
+      /could not detect a harness/,
+    );
+  });
+
+  it('builds the OMP adapter only by explicit name', async () => {
+    const { makeAdapter } = await import('../src/harness/detect.js');
+    expect(makeAdapter('omp').name).toBe('omp');
   });
 });
 

@@ -68,9 +68,12 @@ async function resolveSession(adapter: HarnessAdapter, values: PublishValues, po
     if (prefix.length > 1) throw new Error(`session id prefix "${id}" is ambiguous: ${prefix.map((s) => s.id).join(', ')}`);
     try {
       // Not in the recent list (older than 50, or a subagent): try the full id directly.
+      // Return the ORIGINAL id, not shaped.sessionId: the caller reloads by this
+      // id, and for path-based adapters (OMP) shaped.sessionId is not loadable.
       const shaped = await adapter.loadSession(id);
-      return { id: shaped.sessionId, title: shaped.title, updatedAt: '', isSubagent: false };
-    } catch {
+      return { id, title: shaped.title, updatedAt: '', isSubagent: false };
+    } catch (err) {
+      if (adapter.preserveDirectLoadError === true && err instanceof Error) throw err;
       throw new Error(`session not found: ${id}`);
     }
   }
@@ -81,8 +84,8 @@ async function resolveSession(adapter: HarnessAdapter, values: PublishValues, po
 
 export async function runPublish(values: PublishValues, positionals: string[], deps: PublishDeps = {}): Promise<void> {
   const out = deps.out ?? console.log;
-  if (values.harness !== undefined && values.harness !== 'zcode' && values.harness !== 'claude-code' && values.harness !== 'codex') {
-    throw new Error(`unknown --harness "${values.harness}" (use zcode, claude-code, or codex)`);
+  if (values.harness !== undefined && values.harness !== 'zcode' && values.harness !== 'claude-code' && values.harness !== 'codex' && values.harness !== 'omp') {
+    throw new Error(`unknown --harness "${values.harness}" (use zcode, claude-code, codex, or omp)`);
   }
   const adapter = deps.adapter ?? makeAdapter((values.harness as HarnessName | undefined) ?? detectHarness());
   const api = deps.api ?? new QuireApi();

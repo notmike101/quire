@@ -249,6 +249,7 @@ export function makeOmpAdapter(options: OmpAdapterOptions = {}): HarnessAdapter 
   const maxImageBytes = options.maxImageBytes ?? MAX_SESSION_IMAGE_BYTES;
   return {
     name: 'omp',
+    preserveDirectLoadError: true,
     async listSessions() {
       return [];
     },

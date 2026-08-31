@@ -2,9 +2,10 @@ import { existsSync, statSync } from 'node:fs';
 import { makeZcodeAdapter, zcodeDbPath } from './zcode.js';
 import { makeClaudeCodeAdapter, claudeProjectsDir } from './claude-code.js';
 import { codexStateDbPath, codexStoreUpdatedAt, makeCodexAdapter } from './codex.js';
+import { makeOmpAdapter } from './omp.js';
 import type { HarnessAdapter } from './types.js';
 
-export type HarnessName = 'zcode' | 'claude-code' | 'codex';
+export type HarnessName = 'zcode' | 'claude-code' | 'codex' | 'omp';
 
 export function defaultStorePaths(): { zcode: string; claudeCode: string; codex: string } {
   return { zcode: zcodeDbPath(), claudeCode: claudeProjectsDir(), codex: codexStateDbPath() };
@@ -30,10 +31,10 @@ export function detectHarness(
     { name: 'claude-code' as const, updatedAt: mtimeIfExists(paths.claudeCode) },
     { name: 'codex' as const, updatedAt: codexStoreUpdatedAt(paths.codex) },
   ]
-    .filter((candidate): candidate is { name: HarnessName; updatedAt: number } => candidate.updatedAt !== undefined)
+    .filter((candidate): candidate is { name: 'zcode' | 'claude-code' | 'codex'; updatedAt: number } => candidate.updatedAt !== undefined)
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
   if (newest) return newest.name;
-  throw new Error('could not detect a harness; pass --harness zcode, claude-code, or codex');
+  throw new Error('could not detect a harness; pass --harness zcode, claude-code, codex, or omp');
 }
 
 export function makeAdapter(name: HarnessName): HarnessAdapter {
@@ -41,5 +42,6 @@ export function makeAdapter(name: HarnessName): HarnessAdapter {
     case 'zcode': return makeZcodeAdapter();
     case 'claude-code': return makeClaudeCodeAdapter();
     case 'codex': return makeCodexAdapter();
+    case 'omp': return makeOmpAdapter();
   }
 }

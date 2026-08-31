@@ -5,7 +5,7 @@ import { runSetup } from './commands/setup.js';
 const USAGE = `quire — share AI coding sessions as expiring, password-protected web links
 
 Usage:
-  quire publish [sessionId] [--current] [--harness zcode|claude-code|codex]
+  quire publish [sessionId] [--current] [--harness zcode|claude-code|codex|omp]
                 [--password <pw|random>] [--expires <dur|ISO|tomorrow|today|week|month|year>]
                 [--preset strict|normal] [--no-chunk] [--yes]
   quire list

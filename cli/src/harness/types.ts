@@ -49,6 +49,10 @@ export interface HarnessSessionInfo {
 
 export interface HarnessAdapter {
   name: 'zcode' | 'claude-code' | 'codex' | 'omp';
+  // Adapters whose loadSession id is an exact input path (not a discovered
+  // session id) set this so resolveSession rethrows their specific
+  // fail-closed diagnostics instead of masking them as "session not found".
+  preserveDirectLoadError?: boolean;
   listSessions(): Promise<HarnessSessionInfo[]>;
   resolveCurrent(): Promise<HarnessSessionInfo>;
   loadSession(id: string): Promise<ShapedSession>;
