@@ -4,3 +4,4 @@ packages:
   - web
   - e2e
   - plugin
+  - protocol

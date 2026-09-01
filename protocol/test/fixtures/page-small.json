@@ -1,0 +1,33 @@
+{
+  "protocol": "quire-share-v1",
+  "shareId": "fixture-share",
+  "seq": 0,
+  "messages": [
+    {
+      "chunkSeq": 0,
+      "seq": 0,
+      "role": "user",
+      "time": "1970-01-01T00:00:00.000Z",
+      "parts": [
+        { "type": "text", "text": "Hello, fixture." }
+      ]
+    },
+    {
+      "chunkSeq": 1,
+      "seq": 1,
+      "role": "assistant",
+      "time": "1970-01-01T00:00:01.000Z",
+      "parts": [
+        { "type": "text", "text": "Here is the result." },
+        {
+          "type": "tool",
+          "callID": "call_fixture",
+          "tool": "Bash",
+          "status": "completed",
+          "input": { "command": "echo fixture" },
+          "output": "fixture"
+        }
+      ]
+    }
+  ]
+}
