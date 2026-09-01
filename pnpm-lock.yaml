@@ -12,6 +12,10 @@ importers:
   .: {}
 
   cli:
+    dependencies:
+      '@quire/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       '@types/node':
         specifier: ^22

@@ -11,6 +11,9 @@
     "test": "vitest run",
     "build": "tsup"
   },
+  "dependencies": {
+    "@quire/protocol": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^22",
     "tsup": "^8.3.0",

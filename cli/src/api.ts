@@ -38,6 +38,31 @@ export interface ShareMeta {
   preset: string;
 }
 
+export interface V2CreateResponse {
+  shareId: string;
+  uploadToken: string;
+  acceptedSourceChunk: number;
+  redactions: Record<string, number>;
+  messageCount: number;
+  bytes: number;
+}
+
+export interface V2ChunkResponse {
+  acceptedSourceChunk: number;
+  redactions: Record<string, number>;
+  messageCount: number;
+  bytes: number;
+}
+
+export interface V2FinalizeResponse {
+  shareId: string;
+  publicPath: string;
+  messageCount: number;
+  pageCount: number;
+  bytes: number;
+  redactions: Record<string, number>;
+}
+
 export class QuireApi {
   readonly baseUrl: string;
   private readonly apiKey: string;
@@ -62,6 +87,16 @@ export class QuireApi {
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return this.requestRaw(method, path, body === undefined ? undefined : JSON.stringify(body));
+  }
+
+  /**
+   * Low-level variant taking the request body pre-serialized. The v2
+   * chunk/finalize methods use it so the exact bytes sent are the bytes the
+   * server digests: a retried chunk re-sends the same serialized body
+   * (byte-exact idempotency).
+   */
+  private async requestRaw<T>(method: string, path: string, rawBody: string | undefined, headers: Record<string, string> = {}): Promise<T> {
     let res: Response;
     try {
       // Round 9 (C-F6b): Node's fetch() throws "Request cannot be constructed
@@ -77,9 +112,10 @@ export class QuireApi {
         method,
         headers: {
           authorization: `Bearer ${this.apiKey}`,
-          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+          ...(rawBody !== undefined ? { 'content-type': 'application/json' } : {}),
+          ...headers,
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: rawBody,
         // Round 9 (C-F1): never follow a server redirect. With 'manual' a 3xx
         // comes back unfollowed (res.ok false) and is refused below — a
         // followed redirect could point the bearer key at an attacker host.
@@ -144,6 +180,25 @@ export class QuireApi {
     body: { uploadId: string; chunkSeq: number; messages: unknown[] },
   ): Promise<{ ok: boolean; messageCount: number; bytes: number; summary: Record<string, number> }> {
     return this.request('POST', `/api/chats/${token}/chunks`, body);
+  }
+
+  // v2 sealed shares (OMP-inspired sharing migration). The body is serialized
+  // once per call; the orchestrator reuses the same body object on retry, so
+  // the serialized bytes — and the server's byte-exact digest — are stable.
+  createV2Share(body: unknown): Promise<V2CreateResponse> {
+    return this.requestRaw('POST', '/api/v2/shares', JSON.stringify(body));
+  }
+
+  uploadV2Chunk(shareId: string, seq: number, body: unknown, uploadToken: string): Promise<V2ChunkResponse> {
+    return this.requestRaw('PUT', `/api/v2/shares/${shareId}/source-chunks/${seq}`, JSON.stringify(body), {
+      'x-upload-token': uploadToken,
+    });
+  }
+
+  finalizeV2Share(shareId: string, body: unknown, uploadToken: string): Promise<V2FinalizeResponse> {
+    return this.requestRaw('POST', `/api/v2/shares/${shareId}/finalize`, JSON.stringify(body), {
+      'x-upload-token': uploadToken,
+    });
   }
 
   list(): Promise<{ shares: ShareMeta[] }> {
