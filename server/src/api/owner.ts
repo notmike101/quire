@@ -38,7 +38,7 @@ function apiKeyOk(c: Context, config: Config): boolean {
 class ShareCapExceeded extends Error {}
 
 /** True when `e` is a Postgres unique-violation (SQLSTATE 23505). */
-function isUniqueViolation(e: unknown): boolean {
+export function isUniqueViolation(e: unknown): boolean {
   const err = e as { code?: string; cause?: { code?: string } };
   return err?.code === '23505' || err?.cause?.code === '23505';
 }
@@ -51,7 +51,7 @@ function isUniqueViolation(e: unknown): boolean {
 // state to add this chunk to: chunks are contiguous (chunkSeq = maxSeq+1), so at
 // most one chunk is in flight at a time and no other request can commit a
 // redactions update in the window between the read and this write.
-function mergeRedactionSummary(
+export function mergeRedactionSummary(
   prev: Record<string, number> | null | undefined,
   next: Record<string, number>,
 ): Record<string, number> {
