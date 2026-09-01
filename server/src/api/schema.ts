@@ -66,6 +66,8 @@ export const patchBodySchema = z
     password: z.string().min(1).max(200).nullable().optional(),
     expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
     revoke: z.boolean().optional(),
+    // Task 7: v2 shares support title updates (v1 titles are set at create).
+    title: z.string().min(1).max(200).optional(),
   })
   .strict();
 

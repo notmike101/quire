@@ -9,6 +9,7 @@ import { hashPassword } from '../security/password.js';
 import { prepareContent } from '../redact/prepare.js';
 import { chunkBodySchema, createBodySchema, patchBodySchema, previewBodySchema } from './schema.js';
 import { MAX_SHARE_BYTES, wouldExceedCap } from './headers.js';
+import { getV2OwnerShare, isUniqueViolation, listV2, mergeRedactionSummary, revokeV2, updateV2 } from '../share-v2/store.js';
 
 export interface OwnerDeps {
   db: Db;
@@ -36,29 +37,6 @@ export function apiKeyOk(c: Context, config: Config): boolean {
 // check and the write). Caught outside and mapped to the same 413 as the
 // fast path so the response is uniform.
 class ShareCapExceeded extends Error {}
-
-/** True when `e` is a Postgres unique-violation (SQLSTATE 23505). */
-export function isUniqueViolation(e: unknown): boolean {
-  const err = e as { code?: string; cause?: { code?: string } };
-  return err?.code === '23505' || err?.cause?.code === '23505';
-}
-
-// Round 10 (I2): sum per-rule redaction counts across chunks. The old chunk
-// UPDATE used `jsonb ||`, a SHALLOW merge where the right operand wins on a key
-// conflict — so a multi-chunk share's `redactions` showed the LAST chunk's count
-// per rule, not the sum (e.g. aws:1 in chunk 0 + aws:2 in chunk 1 → 2, not 3).
-// `share.redactions` (read before the transaction) is the stable accumulated
-// state to add this chunk to: chunks are contiguous (chunkSeq = maxSeq+1), so at
-// most one chunk is in flight at a time and no other request can commit a
-// redactions update in the window between the read and this write.
-export function mergeRedactionSummary(
-  prev: Record<string, number> | null | undefined,
-  next: Record<string, number>,
-): Record<string, number> {
-  const out: Record<string, number> = { ...(prev ?? {}) };
-  for (const [k, v] of Object.entries(next)) out[k] = (out[k] ?? 0) + v;
-  return out;
-}
 
 // Round 9 (B-F1): Postgres caps a single statement at 65535 bind parameters.
 // Each share_messages row binds 6 (share_id, chunk_seq, seq, role, time, parts —
@@ -296,9 +274,12 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
   });
 
   app.get('/api/chats', async (c) => {
-    const rows = await db.select().from(shares).orderBy(desc(shares.createdAt)).limit(200);
-    return c.json({
-      shares: rows.map((s) => ({
+    // Task 7: merged owner list — v1 non-revoked shares + all v2 shares, each
+    // tagged with its format, sorted by createdAt desc.
+    const rows = await db.select().from(shares).where(sql`${shares.revokedAt} is null`).orderBy(desc(shares.createdAt)).limit(200);
+    const v2 = await listV2(db);
+    const merged = [
+      ...rows.map((s) => ({
         token: s.token,
         title: s.title,
         createdAt: s.createdAt,
@@ -307,28 +288,39 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
         revoked: s.revokedAt !== null,
         messageCount: s.messageCount,
         preset: s.preset,
+        format: 'v1' as const,
       })),
-    });
+      ...v2,
+    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return c.json({ shares: merged });
   });
 
   app.get('/api/chats/:token', async (c) => {
-    const rows = await db.select().from(shares).where(eq(shares.token, c.req.param('token') ?? '')).limit(1);
+    const id = c.req.param('token') ?? '';
+    const rows = await db.select().from(shares).where(eq(shares.token, id)).limit(1);
     const s = rows[0];
-    if (!s) return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
-    return c.json({
-      token: s.token,
-      title: s.title,
-      model: s.model,
-      provider: s.provider,
-      createdAt: s.createdAt,
-      expiresAt: s.expiresAt,
-      hasPassword: s.passwordHash !== null,
-      revokedAt: s.revokedAt,
-      preset: s.preset,
-      messageCount: s.messageCount,
-      redactions: s.redactions,
-      bytes: s.bytes,
-    });
+    // Task 7: v1 by token (non-revoked) first; a revoked v1 row falls through
+    // to the v2 lookup (a 128-bit id collision is negligible) and then 404s.
+    if (s && s.revokedAt === null) {
+      return c.json({
+        token: s.token,
+        title: s.title,
+        model: s.model,
+        provider: s.provider,
+        createdAt: s.createdAt,
+        expiresAt: s.expiresAt,
+        hasPassword: s.passwordHash !== null,
+        revokedAt: s.revokedAt,
+        preset: s.preset,
+        messageCount: s.messageCount,
+        redactions: s.redactions,
+        bytes: s.bytes,
+        format: 'v1',
+      });
+    }
+    const v2 = await getV2OwnerShare(db, id);
+    if (!v2) return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
+    return c.json(v2);
   });
 
   app.patch('/api/chats/:token', async (c) => {
@@ -337,20 +329,33 @@ export function ownerRoutes({ db, config }: OwnerDeps): Hono {
     if (!parsed.success) {
       return c.json({ error: { code: 'validation', message: 'invalid body' } }, 400);
     }
-    const { password, expiresAt, revoke } = parsed.data;
+    const { password, expiresAt, revoke, title } = parsed.data;
     const set: Partial<typeof shares.$inferInsert> = {};
     if (password !== undefined) set.passwordHash = password === null ? null : await hashPassword(password);
     if (expiresAt !== undefined) set.expiresAt = expiresAt === null ? null : new Date(expiresAt);
     if (revoke === true) set.revokedAt = new Date();
-    if (Object.keys(set).length === 0) return c.json({ error: { code: 'validation', message: 'invalid body' } }, 400);
-    const rows = await db.update(shares).set(set).where(eq(shares.token, c.req.param('token') ?? '')).returning();
-    if (rows.length === 0) return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
+    if (Object.keys(set).length > 0) {
+      const rows = await db.update(shares).set(set).where(eq(shares.token, c.req.param('token') ?? '')).returning();
+      if (rows.length > 0) return c.json({ ok: true });
+    }
+    // Task 7: v1 not found (or no v1-applicable fields) — try v2 by publicId.
+    // v2 patches support title + expiresAt (updateV2); password/revoke are
+    // v1-only fields, so a body with only those 404s a v2 id.
+    const patch: { title?: string; expiresAt?: string | null } = {};
+    if (title !== undefined) patch.title = title;
+    if (expiresAt !== undefined) patch.expiresAt = expiresAt;
+    if (Object.keys(patch).length === 0) return c.json({ error: { code: 'validation', message: 'invalid body' } }, 400);
+    const updated = await updateV2(db, c.req.param('token') ?? '', patch);
+    if (!updated) return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
     return c.json({ ok: true });
   });
 
   app.delete('/api/chats/:token', async (c) => {
     const rows = await db.update(shares).set({ revokedAt: new Date() }).where(eq(shares.token, c.req.param('token') ?? '')).returning();
-    if (rows.length === 0) return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
+    if (rows.length > 0) return c.json({ ok: true });
+    // Task 7: not a v1 token — hard-delete a v2 share by publicId.
+    const revoked = await revokeV2(db, c.req.param('token') ?? '');
+    if (!revoked) return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
     return c.json({ ok: true });
   });
 

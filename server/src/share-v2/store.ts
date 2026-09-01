@@ -1,5 +1,5 @@
 import { createHash, createHmac } from 'node:crypto';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import {
   MAX_RAIL_USER_ENTRIES,
   SHARE_PROTOCOL,
@@ -15,7 +15,6 @@ import type { Config } from '../config.js';
 import { prepareContent, type PreparedContent, type ShapedSession } from '../redact/prepare.js';
 import type { Preset } from '../redact/rules.js';
 import { generateShareToken } from '../security/token.js';
-import { isUniqueViolation, mergeRedactionSummary } from '../api/owner.js';
 import { wouldExceedCap } from '../api/headers.js';
 import { openBlob, sealBlob } from './crypto.js';
 import { buildRailEntries, buildViewerPages } from './pages.js';
@@ -45,6 +44,29 @@ export function deriveUploadToken(config: Config, publicId: string, uploadReques
 }
 
 const sha256Hex = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex');
+
+/** True when `e` is a Postgres unique-violation (SQLSTATE 23505). */
+export function isUniqueViolation(e: unknown): boolean {
+  const err = e as { code?: string; cause?: { code?: string } };
+  return err?.code === '23505' || err?.cause?.code === '23505';
+}
+
+// Round 10 (I2): sum per-rule redaction counts across chunks. The old chunk
+// UPDATE used `jsonb ||`, a SHALLOW merge where the right operand wins on a key
+// conflict — so a multi-chunk share's `redactions` showed the LAST chunk's count
+// per rule, not the sum (e.g. aws:1 in chunk 0 + aws:2 in chunk 1 → 2, not 3).
+// `share.redactions` (read before the transaction) is the stable accumulated
+// state to add this chunk to: chunks are contiguous (chunkSeq = maxSeq+1), so at
+// most one chunk is in flight at a time and no other request can commit a
+// redactions update in the window between the read and this write.
+export function mergeRedactionSummary(
+  prev: Record<string, number> | null | undefined,
+  next: Record<string, number>,
+): Record<string, number> {
+  const out: Record<string, number> = { ...(prev ?? {}) };
+  for (const [k, v] of Object.entries(next)) out[k] = (out[k] ?? 0) + v;
+  return out;
+}
 
 export interface CreateV2UploadInput {
   uploadRequestId: string;
@@ -354,6 +376,49 @@ export async function getV2PublicShareState(db: Db, publicId: string): Promise<V
     pageCount: row.pageCount,
     redactions: row.redactions as Record<string, number>,
   };
+}
+
+/** Owner-facing shape for a v2 share (no content key, no upload token). */
+export interface V2OwnerShare {
+  id: string;
+  publicId: string;
+  title: string | null;
+  preset: string;
+  expiresAt: string | null;
+  messageCount: number;
+  bytes: number;
+  redactions: Record<string, number>;
+  createdAt: string;
+  state: string;
+  format: 'v2';
+}
+
+function toV2OwnerShare(row: typeof sharesV2.$inferSelect): V2OwnerShare {
+  return {
+    id: row.id,
+    publicId: row.publicId,
+    title: row.title,
+    preset: row.preset,
+    expiresAt: row.expiresAt === null ? null : row.expiresAt.toISOString(),
+    messageCount: row.messageCount,
+    bytes: row.bytes,
+    redactions: row.redactions as Record<string, number>,
+    createdAt: row.createdAt.toISOString(),
+    state: row.state,
+    format: 'v2',
+  };
+}
+
+/** All v2 shares (any state) in the owner-facing shape, newest first. */
+export async function listV2(db: Db): Promise<V2OwnerShare[]> {
+  const rows = await db.select().from(sharesV2).orderBy(desc(sharesV2.createdAt)).limit(200);
+  return rows.map(toV2OwnerShare);
+}
+
+/** Owner-facing shape for one v2 share by publicId; null when unknown. */
+export async function getV2OwnerShare(db: Db, publicId: string): Promise<V2OwnerShare | null> {
+  const [row] = await db.select().from(sharesV2).where(eq(sharesV2.publicId, publicId)).limit(1);
+  return row ? toV2OwnerShare(row) : null;
 }
 
 /** The stored ciphertext for one blob, or null when absent. */

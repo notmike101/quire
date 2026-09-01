@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 import { makeDb, migrateDb, type Db } from '../src/db/client.js';
 import { createApp } from '../src/app.js';
-import { shares, shareMessages } from '../src/db/schema.js';
+import { shares, shareMessages, sharesV2 } from '../src/db/schema.js';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { MAX_SHARE_BYTES, wouldExceedCap } from '../src/api/headers.js';
 import { cleanupStaleUploads } from '../src/db/cleanup.js';
@@ -41,11 +42,13 @@ beforeAll(async () => {
     console.log = origLog;
   }
   await db.execute(sql`delete from shares`);
+  await db.execute(sql`delete from share_blobs_v2; delete from share_source_chunks_v2; delete from shares_v2`);
   app = createApp({ db, config });
 });
 
 afterAll(async () => {
   await db.execute(sql`delete from shares`);
+  await db.execute(sql`delete from share_blobs_v2; delete from share_source_chunks_v2; delete from shares_v2`);
   await (db as unknown as { $client?: { end(): Promise<void> } }).$client?.end();
 });
 
@@ -521,5 +524,104 @@ describe('stale incomplete-upload cleanup (Round 9 B-F6)', () => {
     const kept = await db.select().from(shares).where(inArray(shares.token, [stale.token, fresh.token, done.token, rev.token]));
     expect(kept.map((s) => s.token).sort()).toEqual([done.token, fresh.token, rev.token].sort());
     await db.execute(sql`delete from shares where token in (${done.token}, ${fresh.token}, ${rev.token})`);
+  });
+});
+
+describe('unified owner lifecycle (v1 + v2)', () => {
+  // Test-only content key (never persisted or logged by the server).
+  const v2ContentKey = randomBytes(32).toString('base64url');
+  let v1Token: string;
+  let v2PublicId: string;
+
+  it('seeds a fresh v1 share and a finalized v2 share', async () => {
+    const v1Res = await app.request('/api/chats', {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ session: { ...session, sessionId: 'sess_t7_v1' }, preset: 'strict' }),
+    });
+    expect(v1Res.status).toBe(201);
+    v1Token = (await json(v1Res)).token;
+
+    const createRes = await app.request('/api/v2/shares', {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({
+        protocol: 'quire-share-v1',
+        uploadRequestId: 'req-t7',
+        preset: 'strict',
+        sourceChunkCount: 1,
+        contentKey: v2ContentKey,
+        session: {
+          sessionId: 'sess_t7_v2',
+          title: 't7 v2 share',
+          messages: [
+            { role: 'user', parts: [{ type: 'text', text: 'use AKIAABCDEFGHIJKLMNOP please' }] },
+            { role: 'assistant', parts: [{ type: 'text', text: 'done' }] },
+          ],
+        },
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = await json(createRes);
+    v2PublicId = created.shareId;
+    const finRes = await app.request(`/api/v2/shares/${v2PublicId}/finalize`, {
+      method: 'POST',
+      headers: { ...auth, 'x-upload-token': created.uploadToken },
+      body: JSON.stringify({ protocol: 'quire-share-v1', contentKey: v2ContentKey }),
+    });
+    expect(finRes.status).toBe(200);
+  });
+
+  it('merged list contains both, each with a format, sorted by createdAt desc', async () => {
+    const res = await app.request('/api/chats', { headers: auth });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    const v1 = body.shares.find((s: { token?: string }) => s.token === v1Token);
+    expect(v1).toBeDefined();
+    expect(v1.format).toBe('v1');
+    const v2 = body.shares.find((s: { publicId?: string }) => s.publicId === v2PublicId);
+    expect(v2).toBeDefined();
+    expect(v2.format).toBe('v2');
+    for (let i = 1; i < body.shares.length; i++) {
+      expect(new Date(body.shares[i - 1].createdAt).getTime()).toBeGreaterThanOrEqual(new Date(body.shares[i].createdAt).getTime());
+    }
+  });
+
+  it('GET on a v2 id returns the v2 owner shape with format v2', async () => {
+    const res = await app.request(`/api/chats/${v2PublicId}`, { headers: auth });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.format).toBe('v2');
+    expect(body.publicId).toBe(v2PublicId);
+    expect(body.title).toBe('t7 v2 share');
+    expect(body.state).toBe('ready');
+    expect(body.messageCount).toBe(2);
+  });
+
+  it('PATCH on a v2 id updates title and expiresAt', async () => {
+    const res = await app.request(`/api/chats/${v2PublicId}`, {
+      method: 'PATCH', headers: auth,
+      body: JSON.stringify({ title: 'renamed t7', expiresAt: new Date(Date.now() + 3600_000).toISOString() }),
+    });
+    expect(res.status).toBe(200);
+    const row = (await db.select().from(sharesV2).where(eq(sharesV2.publicId, v2PublicId)))[0]!;
+    expect(row.title).toBe('renamed t7');
+    expect(row.expiresAt).not.toBeNull();
+  });
+
+  it('DELETE on a v2 id hard-deletes it; subsequent GET is 404', async () => {
+    const res = await app.request(`/api/chats/${v2PublicId}`, { method: 'DELETE', headers: auth });
+    expect(res.status).toBe(200);
+    const rows = await db.select().from(sharesV2).where(eq(sharesV2.publicId, v2PublicId));
+    expect(rows).toHaveLength(0);
+    const get = await app.request(`/api/chats/${v2PublicId}`, { headers: auth });
+    expect(get.status).toBe(404);
+  });
+
+  it('DELETE on a v1 id soft-revokes; subsequent GET is 404 but the row persists', async () => {
+    const res = await app.request(`/api/chats/${v1Token}`, { method: 'DELETE', headers: auth });
+    expect(res.status).toBe(200);
+    const row = (await db.select().from(shares).where(eq(shares.token, v1Token)))[0]!;
+    expect(row.revokedAt).not.toBeNull();
+    const get = await app.request(`/api/chats/${v1Token}`, { headers: auth });
+    expect(get.status).toBe(404);
   });
 });
