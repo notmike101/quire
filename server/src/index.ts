@@ -1,7 +1,7 @@
 import { loadConfig } from './config.js';
 import { createApp } from './app.js';
 import { makeDb, migrateDb } from './db/client.js';
-import { cleanupStaleUploads } from './db/cleanup.js';
+import { cleanupStaleUploads, cleanupExpiredV2 } from './db/cleanup.js';
 import { serve } from '@hono/node-server';
 
 // Round 6: bound the number of concurrent connections. The bodyLimit middleware
@@ -20,13 +20,17 @@ const db = makeDb(config.databaseUrl);
 await migrateDb(db);
 // Round 9 (B-F6): reclaim rows from chunked uploads that died mid-flight
 // (incomplete uploads older than 24h; expired/revoked/complete shares are
-// left alone). Run once at startup and then hourly; a cleanup failure must
-// not take the server down. The SQL is static (no bound parameters), so an
-// error message cannot carry user content.
-await cleanupStaleUploads(db).catch((e) => console.error('startup upload cleanup failed:', e instanceof Error ? e.message : e));
-const cleanupTimer = setInterval(() => {
-  cleanupStaleUploads(db).catch((e) => console.error('upload cleanup failed:', e instanceof Error ? e.message : e));
-}, 60 * 60 * 1000);
+// left alone). Canary (Task 15): also hard-delete expired v2 shares (the
+// public route 410s them from expiry; this reclaims the rows). Run once at
+// startup and then hourly; a cleanup failure must not take the server down.
+// The SQL is static (no bound parameters), so an error message cannot carry
+// user content.
+const runCleanup = () =>
+  Promise.all([cleanupStaleUploads(db), cleanupExpiredV2(db)]).catch((e) =>
+    console.error('cleanup failed:', e instanceof Error ? e.message : e),
+  );
+await runCleanup();
+const cleanupTimer = setInterval(runCleanup, 60 * 60 * 1000);
 cleanupTimer.unref?.();
 const app = createApp({ db, config });
 const server = serve({ fetch: app.fetch, port: config.port });

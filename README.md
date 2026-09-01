@@ -57,6 +57,20 @@ Shares live under `/chats/<token>` (viewer) and `/api/public/chats/:token`
 - See `docs/superpowers/specs/2026-08-23-zcode-session-sharing-design.md` for
   the full design and threat reasoning.
 
+## Sealed shares (v2)
+
+Sealed shares encrypt the redacted content with AES-256-GCM in the browser:
+the content key appears only in the authenticated upload HTTP and then in the
+final share URL's fragment (`#<key>`), never in the server's storage, logs, or
+public HTTP. The server stores ciphertext envelopes in plain Postgres and
+serves them; only the browser holding the key can decrypt. v2 is behind a
+canary: v2 writes are off by default (`QUIRE_V2_WRITE_ENABLED`), v1 reads stay
+on until retired (`QUIRE_V1_READS_ENABLED`), and `GET /metrics` exposes the
+safe v2 pipeline counters (counts/bytes/latency/status only).
+
+Operational runbook — deploy order, canary metrics, rollback, backup/restore:
+`docs/operations/sealed-shares.md`.
+
 ## Quick start (local dev)
 
 ```bash

@@ -9,6 +9,7 @@ import { securityHeaders, bodyLimit } from './api/headers.js';
 import { errorHandler } from './api/errors.js';
 import { mountStatic } from './api/static.js';
 import { RateLimiter, IpWindow, PostgresLockoutStore } from './security/rate-limit.js';
+import { v2Metrics } from './metrics.js';
 
 export interface AppDeps {
   db: Db;
@@ -29,6 +30,11 @@ export function createApp(deps: AppDeps): Hono {
   app.use('*', securityHeaders());
   app.use('*', bodyLimit());
   app.get('/healthz', (c) => c.json({ ok: true }));
+  // Canary (Task 15): safe v2 pipeline metrics — counts/bytes/latency/status
+  // only, never share IDs, titles, keys, URLs, tokens, or content.
+  // Unauthenticated like /healthz (operator scraping; the values carry no
+  // share data).
+  app.get('/metrics', (c) => c.json(v2Metrics.snapshot()));
   // The unlock lockout limiters and the per-IP volume window are shared
   // between the v1 and v2 public routes: lockout keys are namespaced by share
   // identifier (v1 token / v2 publicId), so one instance means a brute-forcer's

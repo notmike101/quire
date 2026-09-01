@@ -13,6 +13,7 @@ import type { Preset } from '../redact/rules.js';
 import { apiKeyOk } from './owner.js';
 import { messageSchema, shapedSessionSchema } from './schema.js';
 import { acceptV2SourceChunk, createV2Upload, finalizeV2Upload, ShareV2Error } from '../share-v2/store.js';
+import { v2Metrics } from '../metrics.js';
 
 export interface OwnerV2Deps {
   db: Db;
@@ -113,14 +114,18 @@ export function ownerV2Routes({ db, config }: OwnerV2Deps): Hono {
   });
 
   app.post('/shares', async (c) => {
+    const t0 = Date.now();
+    const note = (status: number, bytes?: number) => v2Metrics.record('v2_create', status, { bytes, latencyMs: Date.now() - t0 });
     const { body, digest } = await rawBody(c);
     const parsed = createShareV2BodySchema.safeParse(body);
     if (!parsed.success) {
+      note(400);
       return c.json({ error: { code: 'validation', message: parsed.error.issues[0]?.message ?? 'invalid body' } }, 400);
     }
     // Same uniform rejection as v1 (see owner.ts create): 'none' would store
     // unredacted content.
     if (parsed.data.preset === 'none') {
+      note(400);
       return c.json({ error: { code: 'validation', message: 'preset "none" (no redaction) is not accepted by the API' } }, 400);
     }
     const { uploadRequestId, preset, password, expiresAt, sourceChunkCount, contentKey, session } = parsed.data;
@@ -137,6 +142,7 @@ export function ownerV2Routes({ db, config }: OwnerV2Deps): Hono {
         sourceChunkCount,
         requestDigest: digest,
       });
+      note(201, created.bytes);
       return c.json(
         {
           shareId: created.publicId,
@@ -150,25 +156,37 @@ export function ownerV2Routes({ db, config }: OwnerV2Deps): Hono {
       );
     } catch (e) {
       if (e instanceof ShareV2Error) {
+        note(e.status);
         return fail(c, e.status, e.code);
       }
+      note(500);
       throw e;
     }
   });
 
   app.put('/shares/:shareId/source-chunks/:seq', async (c) => {
+    const t0 = Date.now();
+    const note = (status: number, bytes?: number) => v2Metrics.record('v2_chunk', status, { bytes, latencyMs: Date.now() - t0 });
     const seq = Number(c.req.param('seq'));
     if (!Number.isInteger(seq) || seq < 0) {
+      note(400);
       return c.json({ error: { code: 'validation', message: 'invalid chunk seq' } }, 400);
     }
     const { body, digest } = await rawBody(c);
     const parsed = chunkV2BodySchema.safeParse(body);
     if (!parsed.success) {
+      note(400);
       return c.json({ error: { code: 'validation', message: parsed.error.issues[0]?.message ?? 'invalid body' } }, 400);
     }
     const [row] = await db.select().from(sharesV2).where(eq(sharesV2.publicId, c.req.param('shareId') ?? '')).limit(1);
-    if (!row) return notFound(c);
-    if (!(await uploadTokenOk(row.uploadTokenHash, c))) return notFound(c);
+    if (!row) {
+      note(404);
+      return notFound(c);
+    }
+    if (!(await uploadTokenOk(row.uploadTokenHash, c))) {
+      note(404);
+      return notFound(c);
+    }
     // Chunks carry only messages. Wrap them in a synthetic session carrying the
     // STORED (already-redacted) meta fields so prepareContent's meta pass is an
     // idempotent no-op on the counts — the store never redacts; this is the
@@ -197,17 +215,24 @@ export function ownerV2Routes({ db, config }: OwnerV2Deps): Hono {
       // The row can be deleted (revoke) between the existence check above and
       // the store's FOR UPDATE lock: same uniform 404, no oracle.
       if (e instanceof ShareV2Error) {
+        note(e.status);
         return fail(c, e.status, e.code);
       }
+      note(500);
       throw e;
     }
     if (result.ok === false) {
+      note(result.status);
       return fail(c, result.status, result.code);
     }
     // Re-read after the store's transaction commits so the response carries
     // the accumulated (not stale) counters.
     const [after] = await db.select().from(sharesV2).where(eq(sharesV2.id, row.id)).limit(1);
-    if (!after) return notFound(c);
+    if (!after) {
+      note(404);
+      return notFound(c);
+    }
+    note(200, after.bytes);
     return c.json({
       acceptedSourceChunk: seq,
       redactions: after.redactions,
@@ -217,14 +242,23 @@ export function ownerV2Routes({ db, config }: OwnerV2Deps): Hono {
   });
 
   app.post('/shares/:shareId/finalize', async (c) => {
+    const t0 = Date.now();
+    const note = (status: number, bytes?: number) => v2Metrics.record('v2_finalize', status, { bytes, latencyMs: Date.now() - t0 });
     const { body } = await rawBody(c);
     const parsed = finalizeV2BodySchema.safeParse(body);
     if (!parsed.success) {
+      note(400);
       return c.json({ error: { code: 'validation', message: parsed.error.issues[0]?.message ?? 'invalid body' } }, 400);
     }
     const [row] = await db.select().from(sharesV2).where(eq(sharesV2.publicId, c.req.param('shareId') ?? '')).limit(1);
-    if (!row) return notFound(c);
-    if (!(await uploadTokenOk(row.uploadTokenHash, c))) return notFound(c);
+    if (!row) {
+      note(404);
+      return notFound(c);
+    }
+    if (!(await uploadTokenOk(row.uploadTokenHash, c))) {
+      note(404);
+      return notFound(c);
+    }
     try {
       const result = await finalizeV2Upload(db, config, {
         id: row.id,
@@ -232,15 +266,19 @@ export function ownerV2Routes({ db, config }: OwnerV2Deps): Hono {
         contentKey: decodeContentKey(parsed.data.contentKey),
       });
       if ('ok' in result) {
+        note(result.status);
         return fail(c, result.status, result.code);
       }
       // Key-free by construction: the store's summary carries no content key
       // and no upload token.
+      note(200, result.bytes);
       return c.json(result);
     } catch (e) {
       if (e instanceof ShareV2Error) {
+        note(e.status);
         return fail(c, e.status, e.code);
       }
+      note(500);
       throw e;
     }
   });

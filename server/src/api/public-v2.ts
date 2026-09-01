@@ -5,6 +5,7 @@ import type { Config } from '../config.js';
 import { unlockCookieName, verifyUnlockCookie } from '../security/unlock.js';
 import { RateLimiter, IpWindow } from '../security/rate-limit.js';
 import { getV2Blob, getV2PublicShareState, type V2PublicShareState } from '../share-v2/store.js';
+import { v2Metrics } from '../metrics.js';
 import { checkUnlock, clientIp, parseCookie } from './public.js';
 
 export interface PublicV2Deps {
@@ -54,16 +55,32 @@ function parseSeq(raw: string | undefined): number {
 // corrupt row must not reach the viewer as an undecryptable blob); on
 // mismatch the row is broken server-side, so 500, never the corrupt bytes.
 async function serveBlob(c: Context, db: Db, config: Config, kind: 'manifest' | 'index' | 'page', seq: number): Promise<Response> {
+  const t0 = Date.now();
+  const note = (status: number, bytes?: number) => v2Metrics.record('v2_blob_serve', status, { bytes, latencyMs: Date.now() - t0 });
   const gated = await gate(c, db, config);
-  if (gated instanceof Response) return gated;
-  if (seq < 0) return notFound(c);
+  if (gated instanceof Response) {
+    note(gated.status);
+    return gated;
+  }
+  if (seq < 0) {
+    note(404);
+    return notFound(c);
+  }
   const blob = await getV2Blob(db, gated.id, kind, seq);
-  if (!blob) return notFound(c);
+  if (!blob) {
+    note(404);
+    return notFound(c);
+  }
   const actual = createHash('sha256').update(blob.ciphertext).digest();
   const expected = Buffer.from(blob.digest, 'hex');
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    note(500);
+    // Canary (Task 15): a row whose digest no longer matches its ciphertext
+    // can never decrypt — the only decrypt failure the server can observe.
+    v2Metrics.record('v2_client_decrypt_error', 500, { latencyMs: Date.now() - t0 });
     return c.json({ error: { code: 'internal', message: 'Internal server error' } }, 500);
   }
+  note(200, blob.ciphertext.byteLength);
   // Buffer.from: Hono's body wants an ArrayBuffer-backed view; the driver
   // value is already ArrayBuffer-backed, so this is a bounded (≤4 MiB) copy.
   return c.body(Buffer.from(blob.ciphertext), 200, { 'content-type': 'application/octet-stream' });

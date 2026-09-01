@@ -1,5 +1,7 @@
 import { sql } from 'drizzle-orm';
 import type { Db } from './client.js';
+import { deleteExpiredV2 } from '../share-v2/store.js';
+import { v2Metrics } from '../metrics.js';
 
 // Round 9 (B-F6): a chunked upload that dies mid-flight (the publisher is
 // killed after create but before the last chunk) leaves a shares row + its
@@ -22,4 +24,16 @@ export async function cleanupStaleUploads(db: Db): Promise<number> {
   );
   const first = (res as Array<{ n?: number }>)[0];
   return first?.n ?? 0;
+}
+
+// Canary (Task 15): expired v2 shares are hard-deleted — the FK cascade
+// reclaims their source chunks and ciphertext blobs. The public route 410s
+// an expired share from the moment it expires; this reclaims the rows within
+// an hour. Recorded under v2_stale_cleanup (status 0 = non-HTTP job run; the
+// deleted share count rides in `count`).
+export async function cleanupExpiredV2(db: Db): Promise<number> {
+  const t0 = Date.now();
+  const n = await deleteExpiredV2(db);
+  v2Metrics.record('v2_stale_cleanup', 0, { count: n, latencyMs: Date.now() - t0 });
+  return n;
 }
