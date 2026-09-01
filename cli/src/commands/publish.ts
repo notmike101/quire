@@ -6,6 +6,7 @@ import { chunkMessages, PREVIEW_MAX_BYTES } from '../chunk.js';
 import { confirm } from '../prompt.js';
 import { parseExpiry } from '../expires.js';
 import { stripControlChars } from '../shape.js';
+import { publishV2 } from '../share-v2/upload.js';
 
 // --password values that mean "generate one for me" rather than a literal secret.
 export const RANDOM_PASSWORD_WORDS = new Set(['random', 'generate', 'auto']);
@@ -27,6 +28,7 @@ export interface PublishValues {
   preset?: string;
   yes?: boolean;
   noChunk?: boolean;
+  format?: string;
 }
 
 export interface PublishDeps {
@@ -87,6 +89,9 @@ export async function runPublish(values: PublishValues, positionals: string[], d
   if (values.harness !== undefined && values.harness !== 'zcode' && values.harness !== 'claude-code' && values.harness !== 'codex' && values.harness !== 'omp') {
     throw new Error(`unknown --harness "${values.harness}" (use zcode, claude-code, codex, or omp)`);
   }
+  if (values.format !== undefined && values.format !== 'v1' && values.format !== 'v2') {
+    throw new Error(`unknown --format "${values.format}" (use v1 or v2)`);
+  }
   const adapter = deps.adapter ?? makeAdapter((values.harness as HarnessName | undefined) ?? detectHarness());
   const api = deps.api ?? new QuireApi();
   const chunker = deps.chunker ?? chunkMessages;
@@ -118,6 +123,26 @@ export async function runPublish(values: PublishValues, positionals: string[], d
   const isRandomPassword = values.password !== undefined && RANDOM_PASSWORD_WORDS.has(values.password.trim().toLowerCase());
   const password = resolvePassword(values.password);
   if (isRandomPassword) out(`Password: ${password}`);
+
+  if (values.format === 'v2') {
+    // v2 sealed shares: the server redacts and seals each chunk on ingest, so
+    // there is no v1 preview step — the redaction summary comes from finalize.
+    // The content key is generated inside publishV2 and held in memory only;
+    // it travels in the authenticated request bodies and is appended to the
+    // returned URL as a fragment locally. Nothing key-shaped is ever written
+    // to stderr or any log: on failure the error carries the server's message
+    // (or a generic one), and the fragment URL is printed only on success.
+    const ok = await confirm('Publish this session?', values.yes === true);
+    if (!ok) {
+      out('Aborted. Nothing was published.');
+      return;
+    }
+    const result = await publishV2(api, shaped, { preset, password, expiresAt, baseUrl: api.origin });
+    const counts = Object.entries(result.redactions);
+    out(`\nPublished: ${result.url}`);
+    out(`Messages: ${result.messageCount} · Stored: ${result.bytes} bytes · Redactions: ${counts.length === 0 ? 'none' : counts.map(([k, v]) => `${v} ${k}`).join(', ')}`);
+    return;
+  }
 
   // E1: the preview endpoint takes the whole session in ONE request and is
   // subject to the server's 20 MB per-request cap. A session over the cap would

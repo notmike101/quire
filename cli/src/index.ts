@@ -7,7 +7,7 @@ const USAGE = `quire — share AI coding sessions as expiring, password-protecte
 Usage:
   quire publish [sessionId] [--current] [--harness zcode|claude-code|codex|omp]
                 [--password <pw|random>] [--expires <dur|ISO|tomorrow|today|week|month|year>]
-                [--preset strict|normal] [--no-chunk] [--yes]
+                [--preset strict|normal] [--format v1|v2] [--no-chunk] [--yes]
   quire list
   quire revoke <token> [--yes]
   quire update <token> [--password <pw|random>] [--expires <dur|ISO|tomorrow|today|week|month|year>]
@@ -15,6 +15,7 @@ Usage:
 
   publish requires --current or a session id (no interactive picker).
   --password random generates a random secret and prints it once.
+  --format v2 publishes a sealed share (key in the URL fragment); v1 is the default.
   --yes skips the confirmation prompt (for agents/scripts).
 
 Config: QUIRE_SERVER_URL + QUIRE_API_KEY (env) or ~/.quire/config.json
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
           password: { type: 'string' },
           expires: { type: 'string' },
           preset: { type: 'string' },
+          format: { type: 'string' },
           yes: { type: 'boolean', default: false },
           // Node's parseArgs does not map kebab-case flags to camelCase option
           // keys, so each multi-word flag needs BOTH spellings. Without the
@@ -65,7 +67,20 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
+main().catch(async (err: unknown) => {
   process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-  process.exit(1);
+  // Known Node bug on Windows (nodejs/node#56645): process.exit() while
+  // undici keep-alive connections are still closing triggers a libuv
+  // assertion crash (access violation) — any publish that made 2+ HTTP
+  // requests (v2 create+finalize, v1 chunked uploads) hit this. Close the
+  // global fetch pool and let the event loop drain instead of force-exiting.
+  try {
+    const undici = process.getBuiltinModule('undici') as
+      | { getGlobalDispatcher?: () => { close(): Promise<void> } }
+      | undefined; // built-in module (Node 22.3+); shape is undici's, unchecked here
+    await undici?.getGlobalDispatcher?.().close();
+  } catch {
+    // best effort: a failed cleanup must not mask the original error
+  }
+  process.exitCode = 1;
 });
