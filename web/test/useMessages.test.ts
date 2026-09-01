@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { useMessages } from '../src/composables/useMessages';
+import { createDataSource } from '../src/share-data-source';
 import type { PageResponse, ShareMessage, ShareMeta } from '../src/api';
 
 const META: ShareMeta = {
@@ -48,7 +49,7 @@ describe('useMessages', () => {
       { status: 200, body: makePage(50, 50, '0:100') },
       { status: 200, body: makePage(20, 100, null) },
     ]);
-    const m = useMessages('tok');
+    const m = useMessages(createDataSource('tok', ''));
     await m.loadFirst();
     expect(m.state.value).toBe('ready');
     expect(m.meta.value?.title).toBe('Test Session');
@@ -64,14 +65,14 @@ describe('useMessages', () => {
 
   it('surfaces needs_password without entering the error state', async () => {
     mockSequence([{ status: 401, body: { error: { code: 'needs_password', message: 'This share is password protected' } } }]);
-    const m = useMessages('tok');
+    const m = useMessages(createDataSource('tok', ''));
     await m.loadFirst();
     expect(m.state.value).toBe('needs_password');
   });
 
   it('surfaces expired', async () => {
     mockSequence([{ status: 410, body: { error: { code: 'expired', message: 'This share has expired' } } }]);
-    const m = useMessages('tok');
+    const m = useMessages(createDataSource('tok', ''));
     await m.loadFirst();
     expect(m.state.value).toBe('expired');
   });
@@ -83,7 +84,7 @@ describe('useMessages', () => {
       { status: 200, body: { ok: true } },
       { status: 200, body: makePage(1, 0, null) },
     ]);
-    const m = useMessages('tok');
+    const m = useMessages(createDataSource('tok', ''));
     await m.loadFirst();
     expect(m.state.value).toBe('needs_password');
     await m.submitPassword('wrong');
@@ -98,7 +99,7 @@ describe('useMessages', () => {
     const body = makePage(2, 0, null);
     body.userIndex = [{ chunkSeq: 0, seq: 1, preview: 'm1' }];
     mockSequence([{ status: 200, body }]);
-    const m = useMessages('tok');
+    const m = useMessages(createDataSource('tok', ''));
     await m.loadFirst();
     expect(m.userIndex.value).toEqual([{ chunkSeq: 0, seq: 1, preview: 'm1' }]);
   });
@@ -109,7 +110,7 @@ describe('useMessages', () => {
       { status: 200, body: makePage(50, 50, '0:100') },
       { status: 200, body: makePage(20, 100, null) },
     ]);
-    const m = useMessages('tok');
+    const m = useMessages(createDataSource('tok', ''));
     await m.loadFirst(); // 50 messages, seq 1..50
     // Target seq 75 is in the second page (seq 51..100).
     await m.ensureLoadedThrough({ chunkSeq: 0, seq: 75 });
@@ -134,7 +135,7 @@ describe('useMessages', () => {
       { status: 200, body: second },
       { status: 200, body: third },
     ]);
-    const m = useMessages('tok');
+    const m = useMessages(createDataSource('tok', ''));
     await m.loadFirst();
     await m.ensureLoadedThrough({ chunkSeq: 1, seq: 1 });
     expect(m.messages.value).toHaveLength(2);

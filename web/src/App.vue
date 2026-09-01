@@ -2,6 +2,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useMessages } from './composables/useMessages';
 import { messageAnchorId, type ShareMessage, type SharePart } from './api';
+import { createDataSource } from './share-data-source';
 import UserMessage from './components/UserMessage.vue';
 import AssistantMessage from './components/AssistantMessage.vue';
 import PasswordGate from './components/PasswordGate.vue';
@@ -11,9 +12,10 @@ import ErrorPage from './components/ErrorPage.vue';
 import LoadingSkeleton from './components/LoadingSkeleton.vue';
 import MessageRail from './components/MessageRail.vue';
 
-const token = window.location.pathname.split('/').filter(Boolean).pop() ?? '';
+const shareId = window.location.pathname.split('/').filter(Boolean).pop() ?? '';
+const fragment = window.location.hash.replace(/^#/, '');
 const { state, meta, messages, userIndex, loadingMore, errorMessage, passwordError, loadFirst, loadMore, ensureLoadedThrough, submitPassword } =
-  useMessages(token);
+  useMessages(createDataSource(shareId, fragment));
 
 const sentinel = ref<HTMLElement | null>(null);
 const observer = new IntersectionObserver(

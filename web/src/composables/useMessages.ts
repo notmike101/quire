@@ -1,12 +1,10 @@
 import { ref } from 'vue';
-import { shareApi, ShareError, type MessageIdentity, type ShareMeta, type ShareMessage, type RailUserEntry } from '../api';
+import { ShareError, type MessageIdentity, type ShareMeta, type ShareMessage, type RailUserEntry } from '../api';
+import type { ShareDataSource } from '../share-data-source';
 
 export type LoadState = 'loading' | 'ready' | 'needs_password' | 'expired' | 'not_found' | 'error';
 
-const PAGE_SIZE = 50;
-
-export function useMessages(token: string) {
-  const api = shareApi(token);
+export function useMessages(source: ShareDataSource) {
   const state = ref<LoadState>('loading');
   const meta = ref<ShareMeta | null>(null);
   const messages = ref<ShareMessage[]>([]);
@@ -24,41 +22,36 @@ export function useMessages(token: string) {
   async function loadFirst(): Promise<void> {
     state.value = 'loading';
     passwordError.value = '';
-    try {
-      const page = await api.page(PAGE_SIZE);
-      meta.value = page.meta;
-      messages.value = page.messages;
-      userIndex.value = page.userIndex ?? [];
-      nextCursor = page.nextCursor;
-      exhausted = page.nextCursor === null;
-      state.value = 'ready';
-    } catch (err) {
-      if (err instanceof ShareError) {
-        if (err.code === 'needs_password') { state.value = 'needs_password'; return; }
-        if (err.code === 'expired') { state.value = 'expired'; return; }
-        if (err.code === 'not_found') { state.value = 'not_found'; return; }
-        errorMessage.value =
-          err.code === 'rate_limited' ? 'Too many requests. Wait a minute and reload.' : err.message;
-      } else {
-        errorMessage.value = 'Something went wrong loading this share.';
-      }
+    const page = await source.loadFirst();
+    if (page instanceof ShareError) {
+      if (page.code === 'needs_password') { state.value = 'needs_password'; return; }
+      if (page.code === 'expired') { state.value = 'expired'; return; }
+      if (page.code === 'not_found') { state.value = 'not_found'; return; }
+      errorMessage.value =
+        page.code === 'rate_limited' ? 'Too many requests. Wait a minute and reload.' : page.message;
       state.value = 'error';
+      return;
     }
+    meta.value = page.meta;
+    messages.value = page.messages;
+    userIndex.value = page.userIndex ?? [];
+    nextCursor = page.nextCursor;
+    exhausted = page.nextCursor === null;
+    state.value = 'ready';
   }
 
   async function loadMore(): Promise<void> {
     if (exhausted || loadingMore.value || nextCursor === null) return;
     loadingMore.value = true;
-    try {
-      const page = await api.page(PAGE_SIZE, nextCursor);
+    const page = await source.loadNext(nextCursor);
+    if (page instanceof ShareError) {
+      errorMessage.value = page.message;
+    } else {
       messages.value = [...messages.value, ...page.messages];
       nextCursor = page.nextCursor;
       exhausted = page.nextCursor === null;
-    } catch (err) {
-      errorMessage.value = err instanceof ShareError ? err.message : 'Failed to load more messages.';
-    } finally {
-      loadingMore.value = false;
     }
+    loadingMore.value = false;
   }
 
   // Load pages until the message with the given identity is present (or the share is
@@ -70,7 +63,8 @@ export function useMessages(token: string) {
       nextCursor !== null &&
       !exhausted
     ) {
-      const page = await api.page(PAGE_SIZE, nextCursor);
+      const page = await source.loadNext(nextCursor);
+      if (page instanceof ShareError) break;
       messages.value = [...messages.value, ...page.messages];
       nextCursor = page.nextCursor;
       exhausted = page.nextCursor === null;
@@ -80,7 +74,7 @@ export function useMessages(token: string) {
   async function submitPassword(password: string): Promise<void> {
     passwordError.value = '';
     try {
-      await api.unlock(password);
+      await source.unlock(password);
       await loadFirst();
     } catch (err) {
       if (err instanceof ShareError && err.code === 'bad_password') {
