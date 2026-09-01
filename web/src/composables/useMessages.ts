@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { shareApi, ShareError, type ShareMeta, type ShareMessage, type RailUserEntry } from '../api';
+import { shareApi, ShareError, type MessageIdentity, type ShareMeta, type ShareMessage, type RailUserEntry } from '../api';
 
 export type LoadState = 'loading' | 'ready' | 'needs_password' | 'expired' | 'not_found' | 'error';
 
@@ -10,7 +10,7 @@ export function useMessages(token: string) {
   const state = ref<LoadState>('loading');
   const meta = ref<ShareMeta | null>(null);
   const messages = ref<ShareMessage[]>([]);
-  // Full-share user-message index for the rail (seq + preview), fetched once on
+  // Full-share user-message index for the rail (identity + preview), fetched once on
   // the first page. The rail renders one tick per entry, so all ticks are
   // present even though the messages themselves lazy-load.
   const userIndex = ref<RailUserEntry[]>([]);
@@ -61,12 +61,12 @@ export function useMessages(token: string) {
     }
   }
 
-  // Load pages until the message with the given seq is present (or the share is
+  // Load pages until the message with the given identity is present (or the share is
   // exhausted). Used by the rail: clicking a tick whose message hasn't loaded
   // yet fetches the intervening pages first, then the caller scrolls to it.
-  async function ensureLoadedThrough(seq: number): Promise<void> {
+  async function ensureLoadedThrough(target: MessageIdentity): Promise<void> {
     while (
-      !messages.value.some((m) => m.seq === seq) &&
+      !messages.value.some((m) => m.chunkSeq === target.chunkSeq && m.seq === target.seq) &&
       nextCursor !== null &&
       !exhausted
     ) {

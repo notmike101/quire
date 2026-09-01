@@ -26,9 +26,16 @@ export interface SharePart {
   tooLarge?: boolean;
 }
 
-export interface ShareMessage {
+export interface MessageIdentity {
   chunkSeq: number;
   seq: number;
+}
+
+export function messageAnchorId({ chunkSeq, seq }: MessageIdentity): string {
+  return `msg-${chunkSeq}-${seq}`;
+}
+
+export interface ShareMessage extends MessageIdentity {
   role: 'user' | 'assistant';
   time: string | null;
   parts: SharePart[];
@@ -44,10 +51,9 @@ export interface ShareMeta {
   redactions: Record<string, number>;
 }
 
-/** A user message in the full-share rail index: its seq (jump target) and a
+/** A user message in the full-share rail index: its composite jump target and
  * short preview for the hover tooltip. Present only on the first page. */
-export interface RailUserEntry {
-  seq: number;
+export interface RailUserEntry extends MessageIdentity {
   preview: string;
 }
 

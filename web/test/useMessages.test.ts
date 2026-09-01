@@ -96,11 +96,11 @@ describe('useMessages', () => {
 
   it('captures the user index from the first page', async () => {
     const body = makePage(2, 0, null);
-    body.userIndex = [{ seq: 1, preview: 'm1' }];
+    body.userIndex = [{ chunkSeq: 0, seq: 1, preview: 'm1' }];
     mockSequence([{ status: 200, body }]);
     const m = useMessages('tok');
     await m.loadFirst();
-    expect(m.userIndex.value).toEqual([{ seq: 1, preview: 'm1' }]);
+    expect(m.userIndex.value).toEqual([{ chunkSeq: 0, seq: 1, preview: 'm1' }]);
   });
 
   it('ensureLoadedThrough loads pages until the target seq is present', async () => {
@@ -112,14 +112,32 @@ describe('useMessages', () => {
     const m = useMessages('tok');
     await m.loadFirst(); // 50 messages, seq 1..50
     // Target seq 75 is in the second page (seq 51..100).
-    await m.ensureLoadedThrough(75);
-    expect(m.messages.value.some((x) => x.seq === 75)).toBe(true);
+    await m.ensureLoadedThrough({ chunkSeq: 0, seq: 75 });
+    expect(m.messages.value.some((x) => x.chunkSeq === 0 && x.seq === 75)).toBe(true);
     // It stops as soon as the target is present (100 messages, not all 120).
     expect(m.messages.value).toHaveLength(100);
     // Already present -> no further fetch.
     const fetchMock = vi.mocked(fetch);
     const callsBefore2 = fetchMock.mock.calls.length;
-    await m.ensureLoadedThrough(75);
+    await m.ensureLoadedThrough({ chunkSeq: 0, seq: 75 });
     expect(fetchMock.mock.calls.length).toBe(callsBefore2);
+  });
+
+  it('ensureLoadedThrough distinguishes the same seq in different chunks', async () => {
+    const first = makePage(1, 0, '0:1');
+    const second = makePage(1, 0, '1:1');
+    second.messages[0] = { ...second.messages[0]!, chunkSeq: 1, parts: [{ type: 'text', text: 'chunk 1' }] };
+    const third = makePage(1, 1, null);
+    third.messages[0] = { ...third.messages[0]!, chunkSeq: 1, parts: [{ type: 'text', text: 'after target' }] };
+    mockSequence([
+      { status: 200, body: first },
+      { status: 200, body: second },
+      { status: 200, body: third },
+    ]);
+    const m = useMessages('tok');
+    await m.loadFirst();
+    await m.ensureLoadedThrough({ chunkSeq: 1, seq: 1 });
+    expect(m.messages.value).toHaveLength(2);
+    expect(m.messages.value).toContainEqual(expect.objectContaining({ chunkSeq: 1, seq: 1 }));
   });
 });

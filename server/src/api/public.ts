@@ -189,6 +189,7 @@ export function publicRoutes(deps: PublicDeps): Hono {
       rawCursor === undefined
         ? db
             .select({
+              chunkSeq: shareMessages.chunkSeq,
               seq: shareMessages.seq,
               preview: sql<string>`left(
                 coalesce(
@@ -202,7 +203,7 @@ export function publicRoutes(deps: PublicDeps): Hono {
             .where(and(eq(shareMessages.shareId, share.id), eq(shareMessages.role, 'user')))
             .orderBy(asc(shareMessages.chunkSeq), asc(shareMessages.seq))
             .limit(MAX_RAIL_USER_ENTRIES)
-        : Promise.resolve([] as { seq: number; preview: string }[]),
+        : Promise.resolve([] as { chunkSeq: number; seq: number; preview: string }[]),
     ]);
     const last = rows[rows.length - 1];
     const nextCursor = rows.length === limit && last ? `${last.chunkSeq}:${last.seq}` : null;
@@ -217,7 +218,7 @@ export function publicRoutes(deps: PublicDeps): Hono {
         redactions: share.redactions,
       },
       messages: rows.map((r) => ({ chunkSeq: r.chunkSeq, seq: r.seq, role: r.role, time: r.time, parts: r.parts })),
-      userIndex: rawCursor === undefined ? (userRows as { seq: number; preview: string }[]).map((r) => ({ seq: r.seq, preview: (r.preview ?? '').replace(/\s+/g, ' ').trim() })) : undefined,
+      userIndex: rawCursor === undefined ? userRows.map((r) => ({ chunkSeq: r.chunkSeq, seq: r.seq, preview: (r.preview ?? '').replace(/\s+/g, ' ').trim() })) : undefined,
       nextCursor,
     });
   });

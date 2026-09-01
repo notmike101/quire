@@ -471,7 +471,7 @@ function railFixture(userTexts: string[], loadedCount = userTexts.length) {
   const messages: ShareMessage[] = [];
   let seq = 1;
   for (const text of userTexts) {
-    userIndex.push({ seq, preview: text.replace(/\s+/g, ' ').trim().slice(0, 80) });
+    userIndex.push({ chunkSeq: 0, seq, preview: text.replace(/\s+/g, ' ').trim().slice(0, 80) });
     messages.push({ chunkSeq: 0, seq: seq++, role: 'user', time: null, parts: [{ type: 'text', text }] });
     messages.push({ chunkSeq: 0, seq: seq++, role: 'assistant', time: null, parts: [{ type: 'text', text: 'assistant reply' }] });
   }
@@ -481,7 +481,7 @@ function railFixture(userTexts: string[], loadedCount = userTexts.length) {
   return { userIndex, messages: loaded };
 }
 
-function railProps(fixture: ReturnType<typeof railFixture>, ensure?: (seq: number) => Promise<void>) {
+function railProps(fixture: ReturnType<typeof railFixture>, ensure?: (target: { chunkSeq: number; seq: number }) => Promise<void>) {
   return {
     userIndex: fixture.userIndex,
     messages: fixture.messages,
@@ -500,6 +500,38 @@ describe('MessageRail', () => {
     const fixture = railFixture(['a', 'b', 'c'], 1); // only the first is loaded
     const w = mount(MessageRail, { props: railProps(fixture) });
     expect(w.findAll('.rail-tick')).toHaveLength(3);
+  });
+
+  it('targets the later chunk when rail entries share a seq', async () => {
+    const userIndex = [
+      { chunkSeq: 0, seq: 1, preview: 'first chunk' },
+      { chunkSeq: 1, seq: 1, preview: 'later chunk' },
+    ];
+    const messages: ShareMessage[] = [
+      { chunkSeq: 0, seq: 1, role: 'user', time: null, parts: [{ type: 'text', text: 'first chunk' }] },
+    ];
+    document.body.insertAdjacentHTML('beforeend', '<div id="msg-0-1"></div>');
+    const ensure = vi.fn(async (target: { chunkSeq: number; seq: number }) => {
+      document.body.insertAdjacentHTML('beforeend', `<div id="msg-${target.chunkSeq}-${target.seq}"></div>`);
+    });
+    let scrolled: Element | null = null;
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled = this; };
+    const w = mount(MessageRail, {
+      props: {
+        userIndex,
+        messages,
+        ensureLoadedThrough: ensure,
+      },
+    });
+    await (w.findAll('.rail-tick')[1] as any).trigger('click');
+    await flushPromises();
+    expect(ensure).toHaveBeenCalledWith({ chunkSeq: 1, seq: 1 });
+    expect((scrolled as unknown as Element).id).toBe('msg-1-1');
+    Element.prototype.scrollIntoView = orig;
+    w.unmount();
+    document.getElementById('msg-0-1')?.remove();
+    document.getElementById('msg-1-1')?.remove();
   });
 
   it('shows the server-provided preview in the tooltip on hover', async () => {
@@ -526,9 +558,9 @@ describe('MessageRail', () => {
 
   it('clicking a loaded tick scrolls to the matching user message', async () => {
     const fixture = railFixture(['first', 'second', 'third']);
-    const userSeqs = fixture.userIndex.map((e) => e.seq);
-    for (const seq of userSeqs) {
-      document.body.insertAdjacentHTML('beforeend', `<div id="msg-${seq}"></div>`);
+    const userIds = fixture.userIndex.map((e) => `msg-${e.chunkSeq}-${e.seq}`);
+    for (const id of userIds) {
+      document.body.insertAdjacentHTML('beforeend', `<div id="${id}"></div>`);
     }
     let scrolled: Element | null = null;
     let opts: ScrollToOptions | undefined;
@@ -541,23 +573,23 @@ describe('MessageRail', () => {
     const tick2 = w.findAll('.rail-tick')[1] as any;
     await tick2.trigger('click');
     const scrolledEl = scrolled as unknown as Element;
-    expect(scrolledEl.id).toBe(`msg-${userSeqs[1]}`);
+    expect(scrolledEl.id).toBe(userIds[1]);
     expect(opts).toEqual({ behavior: 'smooth', block: 'start' });
     Element.prototype.scrollIntoView = orig;
     w.unmount();
-    for (const seq of userSeqs) document.getElementById(`msg-${seq}`)?.remove();
+    for (const id of userIds) document.getElementById(id)?.remove();
   });
 
   it('clicking an unloaded tick loads up to it before scrolling', async () => {
     const fixture = railFixture(['first', 'second', 'third'], 1); // only #1 loaded
-    const userSeqs = fixture.userIndex.map((e) => e.seq);
+    const userIds = fixture.userIndex.map((e) => `msg-${e.chunkSeq}-${e.seq}`);
     // Only the first message's anchor exists initially.
-    document.body.insertAdjacentHTML('beforeend', `<div id="msg-${userSeqs[0]}"></div>`);
-    const ensureCalls: number[] = [];
-    const ensure = vi.fn(async (seq: number) => {
-      ensureCalls.push(seq);
+    document.body.insertAdjacentHTML('beforeend', `<div id="${userIds[0]}"></div>`);
+    const ensureCalls: Array<{ chunkSeq: number; seq: number }> = [];
+    const ensure = vi.fn(async (target: { chunkSeq: number; seq: number }) => {
+      ensureCalls.push(target);
       // Simulate the page loading: add the anchor for the target message.
-      document.body.insertAdjacentHTML('beforeend', `<div id="msg-${seq}"></div>`);
+      document.body.insertAdjacentHTML('beforeend', `<div id="msg-${target.chunkSeq}-${target.seq}"></div>`);
     });
     let scrolled: Element | null = null;
     const orig = Element.prototype.scrollIntoView;
@@ -568,19 +600,19 @@ describe('MessageRail', () => {
     const tick3 = w.findAll('.rail-tick')[2] as any;
     await tick3.trigger('click');
     await flushPromises();
-    expect(ensure).toHaveBeenCalledWith(userSeqs[2]);
-    expect(ensureCalls).toEqual([userSeqs[2]]);
-    expect((scrolled as unknown as Element).id).toBe(`msg-${userSeqs[2]}`);
+    expect(ensure).toHaveBeenCalledWith({ chunkSeq: 0, seq: 5 });
+    expect(ensureCalls).toEqual([{ chunkSeq: 0, seq: 5 }]);
+    expect((scrolled as unknown as Element).id).toBe(userIds[2]);
     Element.prototype.scrollIntoView = orig;
     w.unmount();
-    for (const seq of userSeqs) document.getElementById(`msg-${seq}`)?.remove();
+    for (const id of userIds) document.getElementById(id)?.remove();
   });
 
   it('marks the tick active when its message enters the observer band', async () => {
     const fixture = railFixture(['first', 'second', 'third']);
-    const userSeqs = fixture.userIndex.map((e) => e.seq);
-    for (const seq of userSeqs) {
-      document.body.insertAdjacentHTML('beforeend', `<div id="msg-${seq}"></div>`);
+    const userIds = fixture.userIndex.map((e) => `msg-${e.chunkSeq}-${e.seq}`);
+    for (const id of userIds) {
+      document.body.insertAdjacentHTML('beforeend', `<div id="${id}"></div>`);
     }
     const w = mount(MessageRail, { props: railProps(fixture) });
     await flushPromises();
@@ -588,7 +620,7 @@ describe('MessageRail', () => {
     expect(ioCapture.length).toBeGreaterThan(0);
     const entry = {
       isIntersecting: true,
-      target: document.getElementById(`msg-${userSeqs[2]}`),
+      target: document.getElementById(userIds[2]!),
     } as unknown as IntersectionObserverEntry;
     const io = ioCapture[ioCapture.length - 1] as { cb: IntersectionObserverCallback };
     io.cb([entry], {} as unknown as IntersectionObserver);
@@ -596,7 +628,7 @@ describe('MessageRail', () => {
     expect((ticks[2] as any).classes()).toContain('active');
     expect((ticks[0] as any).classes()).not.toContain('active');
     w.unmount();
-    for (const seq of userSeqs) document.getElementById(`msg-${seq}`)?.remove();
+    for (const id of userIds) document.getElementById(id)?.remove();
   });
 
   it('renders nothing when the user index is empty', () => {

@@ -19,10 +19,10 @@ const PAGE = {
     redactions: { "api-key": 1 },
   },
   messages: [
-    { seq: 1, role: 'user', time: null, parts: [{ type: 'text', text: 'hello from user' }] },
-    { seq: 2, role: 'assistant', time: null, parts: [{ type: 'text', text: 'hi there' }] },
+    { chunkSeq: 0, seq: 1, role: 'user', time: null, parts: [{ type: 'text', text: 'hello from user' }] },
+    { chunkSeq: 0, seq: 2, role: 'assistant', time: null, parts: [{ type: 'text', text: 'hi there' }] },
   ],
-  userIndex: [{ seq: 1, preview: 'hello from user' }],
+  userIndex: [{ chunkSeq: 0, seq: 1, preview: 'hello from user' }],
   nextCursor: null,
 };
 
@@ -66,12 +66,35 @@ describe('App', () => {
     expect(w.find('.rail-col').exists()).toBe(true);
     expect(w.findAll('.rail-tick')).toHaveLength(1);
     // The user message is wrapped in a jump target the rail can resolve.
-    expect(w.find('#msg-1').exists()).toBe(true);
+    expect(w.find('#msg-0-1').exists()).toBe(true);
+  });
+
+  it('renders distinct anchors for duplicate seq values across chunks', async () => {
+    const chunked = {
+      ...PAGE,
+      messages: [
+        { chunkSeq: 0, seq: 1, role: 'user', time: null, parts: [{ type: 'text', text: 'first chunk' }] },
+        { chunkSeq: 1, seq: 1, role: 'user', time: null, parts: [{ type: 'text', text: 'later chunk' }] },
+      ],
+      userIndex: [
+        { chunkSeq: 0, seq: 1, preview: 'first chunk' },
+        { chunkSeq: 1, seq: 1, preview: 'later chunk' },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200, text: async () => JSON.stringify(chunked),
+    })));
+    const w = mount(App);
+    await flushPromises();
+    expect(w.findAll('.msg-target')).toHaveLength(2);
+    expect(w.find('#msg-0-1').exists()).toBe(true);
+    expect(w.find('#msg-1-1').exists()).toBe(true);
+    expect(w.findAll('.rail-tick')).toHaveLength(2);
   });
 
   it('omits the rail when the share has no user messages', async () => {
     const assistantOnly = { ...PAGE, messages: [
-      { seq: 1, role: 'assistant', time: null, parts: [{ type: 'text', text: 'hi there' }] },
+      { chunkSeq: 0, seq: 1, role: 'assistant', time: null, parts: [{ type: 'text', text: 'hi there' }] },
     ], userIndex: [] };
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true, status: 200, text: async () => JSON.stringify(assistantOnly),

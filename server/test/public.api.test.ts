@@ -126,7 +126,7 @@ describe('public content endpoint', () => {
     // The first page returns the full-share user index (60 user messages, odd
     // seqs 1..119); continuation pages omit it.
     expect(p1.userIndex).toHaveLength(60);
-    expect(p1.userIndex[0]).toEqual({ seq: 1, preview: 'message 1' });
+    expect(p1.userIndex[0]).toEqual({ chunkSeq: 0, seq: 1, preview: 'message 1' });
     expect(p2.userIndex).toBeUndefined();
   });
 
@@ -164,8 +164,8 @@ describe('public content endpoint', () => {
     await db.insert(shareMessages).values(rows);
     const res = await json(await app.request('/api/public/chats/railcap'));
     expect(res.userIndex).toHaveLength(2000);
-    expect(res.userIndex[0]).toEqual({ seq: 1, preview: 'u1' });
-    expect(res.userIndex[1999]).toEqual({ seq: 2000, preview: 'u2000' });
+    expect(res.userIndex[0]).toEqual({ chunkSeq: 0, seq: 1, preview: 'u1' });
+    expect(res.userIndex[1999]).toEqual({ chunkSeq: 0, seq: 2000, preview: 'u2000' });
     await db.execute(sql`delete from shares where token = 'railcap'`);
   });
 
@@ -425,8 +425,8 @@ describe('rail preview (Chain B)', () => {
     // Only the two user messages appear in the index, in order.
     expect(res.userIndex).toHaveLength(2);
     // Whitespace collapsed to single spaces and trimmed; capped at 80.
-    expect(res.userIndex[0]).toEqual({ seq: 1, preview: 'hello world again' });
-    expect(res.userIndex[1]).toEqual({ seq: 3, preview: 'x'.repeat(80) });
+    expect(res.userIndex[0]).toEqual({ chunkSeq: 0, seq: 1, preview: 'hello world again' });
+    expect(res.userIndex[1]).toEqual({ chunkSeq: 0, seq: 3, preview: 'x'.repeat(80) });
     await db.execute(sql`delete from shares where token = 'railprev'`);
   });
 });
@@ -472,6 +472,8 @@ describe('chunked pagination', () => {
     expect(p1.messages).toHaveLength(20);
     expect(p1.messages[0]).toMatchObject({ chunkSeq: 0, seq: 1 });
     expect(p1.messages[19]).toMatchObject({ chunkSeq: 0, seq: 20 });
+    expect(p1.userIndex).toContainEqual({ chunkSeq: 0, seq: 1, preview: 'c0m1' });
+    expect(p1.userIndex).toContainEqual({ chunkSeq: 1, seq: 1, preview: 'c1m1' });
     expect(p1.nextCursor).toBe('0:20');
     // next page: chunk0 seq21..25 (5 rows) + chunk1 seq1..15 (15 rows) = 20
     const p2 = await json(await app.request('/api/public/chats/chunks1?limit=20&cursor=0:20'));

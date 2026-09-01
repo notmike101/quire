@@ -11,10 +11,12 @@ server before anything is stored or sent.
   stateless, per-share unlock cookie (`HttpOnly`, `Secure`, `SameSite=Strict`,
   30-minute TTL).
 - **Expiration.** An expired share returns `410` and can never be read again.
-- **Server-side redaction.** Ten ordered rules (private keys, JWTs, cloud API
-  keys, connection strings, bearer tokens, generic `key = value` secrets,
-  private IPs, local paths) run at ingestion. Only redacted content is
-  persisted — the viewer's browser never receives a secret.
+- **Server-side redaction.** Ordered rules cover private keys, JWTs, provider
+  API keys, authorization credentials, connection strings, secret assignments
+  and CLI arguments, bare tokens, private IPs, local paths, and encoded or
+  embedded secret-bearing content. Redaction is authoritative at ingestion:
+  only redacted content is persisted, and the viewer's browser never receives
+  a secret.
 - **Long-session friendly viewer.** Vue 3 + Tailwind CSS v4, markdown + Shiki
   syntax highlighting, infinite-scroll lazy loading (50 messages per page),
   and automatic dark mode via `prefers-color-scheme`.
@@ -35,10 +37,11 @@ pnpm workspace monorepo:
 | `web/`          | Vue 3 + Vite + Tailwind v4 read-only viewer                      |
 | `e2e/`          | Playwright full-stack tests (drives the Docker stack)            |
 
-Data flow: harness session → adapter shapes it → CLI previews the redacted
-result (mandatory) → owner confirms (or the agent passes `--yes`) →
-`POST /api/chats` persists only the redacted content → viewer fetches pages by
-cursor from `/api/public/chats/:token`.
+Data flow: harness session → adapter and CLI shape it → the server returns a
+redacted preview when the payload fits the preview request cap → owner confirms
+(or the agent passes `--yes`) → `POST /api/chats` performs authoritative
+redaction in memory and persists only the redacted content → viewer fetches
+pages by cursor from `/api/public/chats/:token`.
 
 Shares live under `/chats/<token>` (viewer) and `/api/public/chats/:token`
 (API). Tokens are 128-bit crypto-random; session ids never appear in URLs.
@@ -67,8 +70,15 @@ Run the server against a local Postgres:
 
 ```bash
 cp .env.example .env       # fill in QUIRE_API_KEY / UNLOCK_SECRET
-pnpm --filter @quire/server dev
+pnpm --filter @quire/web build
+pnpm --filter @quire/server build
+cd server
+node --env-file=../.env dist/index.js
 ```
+
+Run the built server from `server/` so its `./drizzle` migrations directory
+resolves correctly. `DATABASE_URL`, `QUIRE_API_KEY`, and `UNLOCK_SECRET` are
+required; `PORT` defaults to `8787`.
 
 ## CLI
 

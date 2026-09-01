@@ -1,28 +1,28 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { ShareMessage, RailUserEntry } from '../api';
+import { messageAnchorId, type MessageIdentity, type ShareMessage, type RailUserEntry } from '../api';
 
 const props = defineProps<{
-  // Full-share user-message index (seq + preview) — one tick per entry, all
+  // Full-share user-message index (identity + preview) — one tick per entry, all
   // present from the first page even though the messages lazy-load.
   userIndex: RailUserEntry[];
   // The messages loaded so far (used to know which ticks are jumpable and to
   // locate the active one).
   messages: ShareMessage[];
-  // Load pages up to (and including) the message with this seq. Called when a
+  // Load pages up to (and including) the message with this identity. Called when a
   // tick whose message hasn't loaded yet is clicked.
-  ensureLoadedThrough: (seq: number) => Promise<void>;
+  ensureLoadedThrough: (target: MessageIdentity) => Promise<void>;
 }>();
 
 // One tick per user message in the full-share index, in transcript order.
 // Assistant messages are not navigable — the rail is a map of the user's turns.
 const entries = computed(() => props.userIndex);
 
-// The seqs of user messages that have loaded into the DOM (have a #msg-<seq>
+// The identities of user messages that have loaded into the DOM.
 // anchor). Active tracking and the IntersectionObserver only consider these —
 // a tick whose message isn't loaded yet can't be "the one on screen".
-const loadedSeqs = computed(() =>
-  props.messages.filter((m) => m.role === 'user').map((m) => m.seq),
+const loadedIds = computed(() =>
+  props.messages.filter((m) => m.role === 'user').map(messageAnchorId),
 );
 
 const activeIdx = ref(0);
@@ -104,18 +104,19 @@ async function jumpTo(i: number) {
   if (!entry) return;
   // If the message for this tick hasn't loaded yet, load the pages up to it
   // first so the anchor exists.
-  if (!loadedSeqs.value.includes(entry.seq)) {
-    await props.ensureLoadedThrough(entry.seq);
+  const id = messageAnchorId(entry);
+  if (!loadedIds.value.includes(id)) {
+    await props.ensureLoadedThrough({ chunkSeq: entry.chunkSeq, seq: entry.seq });
     // The anchor is added by Vue's patch of the newly loaded messages. A single
     // nextTick can resolve before that patch has landed (especially with many
     // heavy markdown/code messages), so poll briefly until the element exists.
     for (let n = 0; n < 50; n++) {
       await nextTick();
-      if (document.getElementById('msg-' + entry.seq)) break;
+      if (document.getElementById(id)) break;
       await new Promise((r) => setTimeout(r, 16));
     }
   }
-  const target = document.getElementById('msg-' + entry.seq);
+  const target = document.getElementById(id);
   if (!target) return;
   if (settleTimer) {
     window.clearTimeout(settleTimer);
@@ -143,7 +144,7 @@ async function jumpTo(i: number) {
   // Re-target after the smooth scroll settles, in case the document shifted.
   window.setTimeout(() => {
     if (Date.now() < suppressActiveUntil) {
-      const t = document.getElementById('msg-' + entry.seq);
+      const t = document.getElementById(id);
       if (t && t.getBoundingClientRect().top > 40) {
         t.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
@@ -169,13 +170,13 @@ let inObserve = false;
 // for the active tick; the IntersectionObserver is only a trigger to recompute
 // it, not the decider.
 function activeUserMsgIdx(): number {
-  if (!loadedSeqs.value.length) return 0;
+  if (!loadedIds.value.length) return 0;
   const line = window.innerHeight * 0.28;
   let best = 0;
-  for (let i = 0; i < loadedSeqs.value.length; i++) {
-    const seq = loadedSeqs.value[i];
-    if (seq === undefined) continue;
-    const el = document.getElementById('msg-' + seq);
+  for (let i = 0; i < loadedIds.value.length; i++) {
+    const id = loadedIds.value[i];
+    if (id === undefined) continue;
+    const el = document.getElementById(id);
     if (!el) continue;
     if (el.getBoundingClientRect().top <= line) best = i;
   }
@@ -184,9 +185,9 @@ function activeUserMsgIdx(): number {
 
 function observeTargets() {
   observer?.disconnect();
-  if (!loadedSeqs.value.length) return;
-  const targets = loadedSeqs.value
-    .map((seq) => document.getElementById('msg-' + seq))
+  if (!loadedIds.value.length) return;
+  const targets = loadedIds.value
+    .map((id) => document.getElementById(id))
     .filter((el): el is HTMLElement => el !== null);
   if (!targets.length) return;
   // A wide band so the observer fires whenever any message is near the
@@ -226,7 +227,7 @@ function onWindowScroll() {
 // immediate watch only needs to run once for the observer + overflow.
 let firstWatch = true;
 watch(
-  () => loadedSeqs.value.length,
+  () => loadedIds.value.length,
   async (len) => {
     if (len === 0) return;
     // Keep the active index valid if the loaded set ever shrinks (it doesn't in
@@ -335,7 +336,7 @@ function onResize() {
     >
       <button
         v-for="(entry, i) in entries"
-        :key="entry.seq"
+        :key="messageAnchorId(entry)"
         :ref="(el) => setTickEl(el as HTMLElement | null, i)"
         type="button"
         class="rail-tick"

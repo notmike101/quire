@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useMessages } from './composables/useMessages';
-import type { ShareMessage, SharePart } from './api';
+import { messageAnchorId, type ShareMessage, type SharePart } from './api';
 import UserMessage from './components/UserMessage.vue';
 import AssistantMessage from './components/AssistantMessage.vue';
 import PasswordGate from './components/PasswordGate.vue';
@@ -83,8 +83,8 @@ function userParts(message: ShareMessage): SharePart[] {
       <div class="mx-auto flex w-full max-w-[800px] items-stretch">
         <MessageRail :user-index="userIndex" :messages="messages" :ensure-loaded-through="ensureLoadedThrough" />
         <main class="min-w-0 flex-1 px-4 pb-16">
-          <template v-for="message in messages" :key="message.seq">
-            <div v-if="message.role === 'user'" :id="`msg-${message.seq}`" class="msg-target">
+          <template v-for="message in messages" :key="messageAnchorId(message)">
+            <div v-if="message.role === 'user'" :id="messageAnchorId(message)" class="msg-target">
               <UserMessage :parts="userParts(message)" />
             </div>
             <AssistantMessage v-else :message="message" />

@@ -115,6 +115,20 @@ test.describe('share viewer', () => {
     await expect(page.getByText('Message 119', { exact: true })).toBeVisible({ timeout: 15000 });
   });
 
+  test('chunked messages with duplicate seq values keep distinct rail targets', async ({ page, request }) => {
+    const { token } = await createChunkedShare(request);
+    await page.goto(`/chats/${token}`);
+    const earlier = page.locator('#msg-0-1');
+    const later = page.locator('#msg-1-1');
+    await expect(earlier).toHaveCount(1);
+    await expect(later).toHaveCount(1);
+    const ticks = page.locator('.rail-tick');
+    await expect(ticks).toHaveCount(4);
+    await ticks.nth(2).click();
+    await expect(later).toHaveClass(/msg-flash/);
+    await expect(earlier).not.toHaveClass(/msg-flash/);
+  });
+
   test('password gate: wrong password is rejected, correct one unlocks', async ({ page, request }) => {
     const { token } = await createShare(request, { password: 'correct-horse' });
     await page.goto(`/chats/${token}`);
@@ -409,7 +423,7 @@ test.describe('share viewer', () => {
     const ticks = page.locator('.rail-tick');
     await expect(ticks).toHaveCount(60, { timeout: 15000 });
     // Tick 40 = turn 40 = user seq 79, which is past the first 50 messages.
-    const target = page.locator('#msg-79');
+    const target = page.locator('#msg-0-79');
     expect(await target.count()).toBe(0);
     await ticks.nth(39).click();
     // The click must load pages until seq 79 exists, then scroll it into view.
@@ -439,7 +453,7 @@ test.describe('share viewer', () => {
     // top third of the viewport and its tick becomes active.
     await ticks.nth(4).click();
     await page.waitForTimeout(600);
-    const target = page.locator('#msg-9'); // turn 5 = user seq 9 (user msgs at odd seqs 1,3,5,7,9)
+    const target = page.locator('#msg-0-9'); // turn 5 = user seq 9 (user msgs at odd seqs 1,3,5,7,9)
     const box = await target.boundingBox();
     expect(box, 'target message not found').not.toBeNull();
     const vh = page.viewportSize()!.height;
