@@ -15,7 +15,7 @@ export interface OwnerDeps {
   config: Config;
 }
 
-function apiKeyOk(c: Context, config: Config): boolean {
+export function apiKeyOk(c: Context, config: Config): boolean {
   const [scheme, value] = (c.req.header('authorization') ?? '').split(' ');
   if (scheme !== 'Bearer' || !value) return false;
   // Round 7: compare SHA-256 DIGESTS, not raw bytes. The old

@@ -3,6 +3,7 @@ import type { Db } from './db/client.js';
 import type { Config } from './config.js';
 import { publicRoutes } from './api/public.js';
 import { ownerRoutes } from './api/owner.js';
+import { ownerV2Routes } from './api/owner-v2.js';
 import { securityHeaders, bodyLimit } from './api/headers.js';
 import { errorHandler } from './api/errors.js';
 import { mountStatic } from './api/static.js';
@@ -52,6 +53,7 @@ export function createApp(deps: AppDeps): Hono {
     }),
   );
   app.route('/', ownerRoutes({ db: deps.db, config: deps.config }));
+  app.route('/api/v2', ownerV2Routes({ db: deps.db, config: deps.config }));
   mountStatic(app, deps.config.webDist);
   return app;
 }
