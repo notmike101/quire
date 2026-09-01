@@ -5,11 +5,13 @@ const DAY = 86_400_000;
 
 describe('parseExpiry', () => {
   it('passes an ISO datetime through as ISO', () => {
-    expect(parseExpiry('2026-09-01T00:00:00Z')).toBe('2026-09-01T00:00:00.000Z');
+    const iso = new Date(Date.now() + 7 * DAY).toISOString();
+    expect(parseExpiry(iso)).toBe(iso);
   });
 
   it('accepts a bare date as ISO (Date.parse)', () => {
-    expect(parseExpiry('2026-09-01')).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    const bare = new Date(Date.now() + 7 * DAY).toISOString().slice(0, 10);
+    expect(parseExpiry(bare)).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it('accepts a duration in minutes/hours/days', () => {
