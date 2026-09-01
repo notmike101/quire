@@ -4,8 +4,10 @@
 FROM node:22-alpine AS web-build
 WORKDIR /app
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+COPY protocol/package.json protocol/
 COPY web/package.json web/
 RUN corepack enable && pnpm install --frozen-lockfile --filter @quire/web...
+COPY protocol/ protocol/
 COPY web/ web/
 RUN pnpm --filter @quire/web build
 
@@ -13,8 +15,10 @@ RUN pnpm --filter @quire/web build
 FROM node:22-alpine AS server-build
 WORKDIR /app
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+COPY protocol/package.json protocol/
 COPY server/package.json server/
 RUN corepack enable && pnpm install --frozen-lockfile --filter @quire/server...
+COPY protocol/ protocol/
 COPY server/ server/
 RUN pnpm --filter @quire/server build \
  && pnpm --filter @quire/server deploy --prod /prod
