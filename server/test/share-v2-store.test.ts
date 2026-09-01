@@ -371,7 +371,7 @@ describe('finalizeV2Upload', () => {
 
     const blob = await getV2Blob(db, created.id, 'index', 0);
     expect(blob).not.toBeNull();
-    const segment = parseShareIndexSegment(await openBlob(contentKey, blob!, created.publicId, 'index', 0));
+    const segment = parseShareIndexSegment(await openBlob(contentKey, blob!.ciphertext, created.publicId, 'index', 0));
     expect(segment.shareId).toBe(created.publicId);
     expect(segment.seq).toBe(0);
     expect(segment.entries).toHaveLength(MAX_RAIL_USER_ENTRIES);
@@ -430,13 +430,15 @@ describe('public reads', () => {
     expect(first?.title).toBe('v2 share');
   });
 
-  it('getV2Blob returns the stored ciphertext or null', async () => {
+  it('getV2Blob returns the stored ciphertext + digest or null', async () => {
     const { created } = await makeShare('req-blob', {});
     expect(await getV2Blob(db, created.id, 'page', 99)).toBeNull();
     expect(await getV2Blob(db, created.id, 'manifest', 0)).toBeNull();
     const blob = await getV2Blob(db, created.id, 'page', 0);
-    expect(blob).toBeInstanceOf(Uint8Array);
-    expect(blob!.byteLength).toBeGreaterThan(0);
+    expect(blob).not.toBeNull();
+    expect(blob!.ciphertext).toBeInstanceOf(Uint8Array);
+    expect(blob!.ciphertext.byteLength).toBeGreaterThan(0);
+    expect(blob!.digest).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 

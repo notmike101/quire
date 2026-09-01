@@ -79,7 +79,7 @@ export function clientIp(c: Context, trustProxy = false): string {
   }
 }
 
-function parseCookie(header: string | undefined, name: string): string | undefined {
+export function parseCookie(header: string | undefined, name: string): string | undefined {
   if (!header) return undefined;
   for (const part of header.split(';')) {
     const eqIdx = part.indexOf('=');
@@ -247,35 +247,53 @@ export function publicRoutes(deps: PublicDeps): Hono {
     if (!share.passwordHash) {
       return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
     }
-    // Two lockout dimensions (Round 6): per-(token, IP) for the normal case,
-    // plus a per-token (IP-independent) dimension so an IP-rotating brute-forcer
-    // cannot evade the lock by cycling source addresses. Either tripping it
-    // locks the share for the window; a successful unlock clears both.
-    const ipKey = `${share.token}:${clientIp(c, config.trustProxy)}`;
-    const tokenKey = share.token;
-    if ((await deps.unlockLimiter.isLocked(ipKey)) || (await deps.tokenLimiter.isLocked(tokenKey))) {
-      return c.json({ error: { code: 'rate_limited', message: 'Too many failed attempts. Try again in 15 minutes.' } }, 429);
-    }
-    const body = await c.req.json().catch(() => null);
-    const parsed = unlockBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: { code: 'validation', message: 'password is required' } }, 400);
-    }
-    const ok = await verifyPassword(share.passwordHash, parsed.data.password);
-    if (!ok) {
-      await deps.unlockLimiter.recordFailure(ipKey);
-      await deps.tokenLimiter.recordFailure(tokenKey);
-      return c.json({ error: { code: 'bad_password', message: 'Incorrect password' } }, 401);
-    }
-    await deps.unlockLimiter.reset(ipKey);
-    await deps.tokenLimiter.reset(tokenKey);
-    const value = signUnlockCookie(config.unlockSecret, share.token, Date.now() + UNLOCK_TTL_MS);
-    c.header(
-      'Set-Cookie',
-      `${unlockCookieName(share.token)}=${value}; HttpOnly; Secure; SameSite=Strict; Max-Age=1800; Path=/`,
-    );
-    return c.json({ ok: true });
+    return checkUnlock(c, { unlockLimiter: deps.unlockLimiter, tokenLimiter: deps.tokenLimiter, config }, share.token, share.passwordHash);
   });
 
   return app;
+}
+
+/**
+ * Shared v1/v2 unlock core, called after the route's own gating (404 unknown,
+ * 410 expired, 404 no-password). `shareId` is the share identifier (v1 token /
+ * v2 publicId): it drives the cookie name and both lockout keys. Two lockout
+ * dimensions (Round 6): per-(shareId, IP) for the normal case, plus a
+ * per-shareId (IP-independent) dimension so an IP-rotating brute-forcer cannot
+ * evade the lock by cycling source addresses. Either tripping it locks the
+ * share for the window; a successful unlock clears both. Returns a Response
+ * for every terminal outcome: 429 locked, 400 malformed body, 401 wrong
+ * password (failure recorded), 200 (cookie set).
+ */
+export async function checkUnlock(
+  c: Context,
+  deps: { unlockLimiter: RateLimiter; tokenLimiter: RateLimiter; config: Config },
+  shareId: string,
+  passwordHash: string,
+): Promise<Response> {
+  const ipKey = `${shareId}:${clientIp(c, deps.config.trustProxy)}`;
+  const tokenKey = shareId;
+  if ((await deps.unlockLimiter.isLocked(ipKey)) || (await deps.tokenLimiter.isLocked(tokenKey))) {
+    return c.json({ error: { code: 'rate_limited', message: 'Too many failed attempts. Try again in 15 minutes.' } }, 429);
+  }
+  const body = await c.req.json().catch(() => null);
+  const parsed = unlockBodySchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: { code: 'validation', message: 'password is required' } }, 400);
+  }
+  const ok = await verifyPassword(passwordHash, parsed.data.password);
+  if (!ok) {
+    await deps.unlockLimiter.recordFailure(ipKey);
+    await deps.tokenLimiter.recordFailure(tokenKey);
+    return c.json({ error: { code: 'bad_password', message: 'Incorrect password' } }, 401);
+  }
+  await deps.unlockLimiter.reset(ipKey);
+  await deps.tokenLimiter.reset(tokenKey);
+  setUnlockCookie(c, deps.config, shareId);
+  return c.json({ ok: true });
+}
+
+/** Sets the stateless unlock cookie for a share (v1 and v2 share the shape). */
+export function setUnlockCookie(c: Context, config: Config, shareId: string): void {
+  const value = signUnlockCookie(config.unlockSecret, shareId, Date.now() + UNLOCK_TTL_MS);
+  c.header('Set-Cookie', `${unlockCookieName(shareId)}=${value}; HttpOnly; Secure; SameSite=Strict; Max-Age=1800; Path=/`);
 }

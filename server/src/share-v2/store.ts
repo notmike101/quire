@@ -348,6 +348,8 @@ export async function finalizeV2Upload(db: Db, config: Config, input: FinalizeV2
 }
 
 export interface V2PublicShareState {
+  /** Internal uuid PK — the blob storage key (not part of the public wire shape). */
+  id: string;
   state: string;
   expiresAt: string | null;
   passwordHash: string | null;
@@ -365,6 +367,7 @@ export async function getV2PublicShareState(db: Db, publicId: string): Promise<V
   const [row] = await db.select().from(sharesV2).where(eq(sharesV2.publicId, publicId)).limit(1);
   if (!row) return null;
   return {
+    id: row.id,
     state: row.state,
     expiresAt: row.expiresAt === null ? null : row.expiresAt.toISOString(),
     passwordHash: row.passwordHash,
@@ -421,13 +424,13 @@ export async function getV2OwnerShare(db: Db, publicId: string): Promise<V2Owner
   return row ? toV2OwnerShare(row) : null;
 }
 
-/** The stored ciphertext for one blob, or null when absent. */
-export async function getV2Blob(db: Db, id: string, kind: BlobKind, seq: number): Promise<Uint8Array | null> {
+/** The stored ciphertext + its digest for one blob, or null when absent. */
+export async function getV2Blob(db: Db, id: string, kind: BlobKind, seq: number): Promise<{ ciphertext: Uint8Array; digest: string } | null> {
   const [row] = await db
-    .select({ ciphertext: shareBlobsV2.ciphertext })
+    .select({ ciphertext: shareBlobsV2.ciphertext, digest: shareBlobsV2.digest })
     .from(shareBlobsV2)
     .where(and(eq(shareBlobsV2.shareId, id), eq(shareBlobsV2.kind, kind), eq(shareBlobsV2.seq, seq)));
-  return row?.ciphertext ?? null;
+  return row ?? null;
 }
 
 /** Hard-deletes a share by publicId; FK cascade removes its chunks + blobs. */
