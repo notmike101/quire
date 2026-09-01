@@ -8,6 +8,10 @@ services:
       DATABASE_URL: postgres://quire:e2e@postgres:5432/quire
       QUIRE_API_KEY: e2e-test-key-0000000000000000000000
       UNLOCK_SECRET: e2e-unlock-secret-0000000000000000
+      # Task 14: the E2E lifecycle exercises v2 ingestion, so v2 writes are on
+      # in the E2E stack; v1 reads stay on (the suite covers both formats).
+      QUIRE_V2_WRITE_ENABLED: "true"
+      QUIRE_V1_READS_ENABLED: "true"
 
   postgres:
     environment:

@@ -9,7 +9,7 @@ import { MAX_SHARE_BYTES, wouldExceedCap } from '../src/api/headers.js';
 import { cleanupStaleUploads } from '../src/db/cleanup.js';
 
 const url = process.env.DATABASE_URL ?? 'postgres://quire:quire@localhost:54329/quire_test';
-const config = { databaseUrl: url, apiKey: 'a'.repeat(64), unlockSecret: 'b'.repeat(64), port: 8787, webDist: '' };
+const config = { databaseUrl: url, apiKey: 'a'.repeat(64), unlockSecret: 'b'.repeat(64), port: 8787, webDist: '', v2WriteEnabled: true };
 const auth = { authorization: `Bearer ${'a'.repeat(64)}`, 'content-type': 'application/json' };
 
 const session = {

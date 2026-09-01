@@ -9,6 +9,12 @@ services:
       UNLOCK_SECRET: ${UNLOCK_SECRET:?UNLOCK_SECRET is required (see .env.example)}
       PORT: "8787"
       WEB_DIST: /app/web-dist
+      # Canary (Task 14): v2 writes are OFF by default during the canary
+      # window; flip to true once v2 is verified. Never disables v2 reads.
+      QUIRE_V2_WRITE_ENABLED: ${QUIRE_V2_WRITE_ENABLED:-false}
+      # v1 public reads are ON by default; flip to false immediately once v2
+      # is verified (no grace window) to retire v1 links.
+      QUIRE_V1_READS_ENABLED: ${QUIRE_V1_READS_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy

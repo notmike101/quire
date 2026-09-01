@@ -441,14 +441,14 @@ describe('runPublish (process)', () => {
   });
 
   it('requires confirmation: declining publishes nothing', { timeout: 30000 }, async () => {
-    const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode'], 'n\n');
+    const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode', '--format', 'v1'], 'n\n');
     expect(code, `stderr: ${stderr}`).toBe(0);
     expect(stdout).toContain('Aborted. Nothing was published.');
     expect(createCalls).toHaveLength(0);
   });
 
   it('confirming publishes and prints the URL', { timeout: 30000 }, async () => {
-    const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode'], 'y\n');
+    const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode', '--format', 'v1'], 'y\n');
     expect(code, `stderr: ${stderr}`).toBe(0);
     expect(stdout).toContain('/chats/');
     expect(createCalls).toHaveLength(1);
@@ -460,7 +460,7 @@ describe('runPublish (process)', () => {
   it('--yes publishes with no prompt (the agent path)', { timeout: 30000 }, async () => {
     // The agent always passes --yes, so the CLI must publish without reading stdin.
     // stdin is ended immediately (no input) to prove nothing is awaited.
-    const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode', '--yes'], '');
+    const { code, stdout, stderr } = await runCli(['publish', '--current', '--harness', 'zcode', '--format', 'v1', '--yes'], '');
     expect(code, `stderr: ${stderr}`).toBe(0);
     expect(stdout).toContain('/chats/');
     expect(createCalls).toHaveLength(2);
@@ -470,7 +470,7 @@ describe('runPublish (process)', () => {
 
   it('--password random + --expires tomorrow + --yes: non-interactive, prints Password and sends both', { timeout: 30000 }, async () => {
     const { code, stdout, stderr } = await runCli(
-      ['publish', '--current', '--harness', 'zcode', '--password', 'random', '--expires', 'tomorrow', '--yes'],
+      ['publish', '--current', '--harness', 'zcode', '--format', 'v1', '--password', 'random', '--expires', 'tomorrow', '--yes'],
       '',
     );
     expect(code, `stderr: ${stderr}`).toBe(0);
@@ -592,7 +592,7 @@ describe('runPublish (process)', () => {
     };
     writeFileSync(path, `<!doctype html><script id="session-data" type="application/json">${Buffer.from(JSON.stringify(data), 'utf8').toString('base64')}</script>`);
     const before = createCalls.length;
-    const { code, stdout, stderr } = await runCli(['publish', path, '--harness', 'omp', '--preset', 'strict', '--yes'], '');
+    const { code, stdout, stderr } = await runCli(['publish', path, '--harness', 'omp', '--preset', 'strict', '--format', 'v1', '--yes'], '');
     rmSync(dir, { recursive: true, force: true });
 
     expect(code, `stderr: ${stderr}`).toBe(0);

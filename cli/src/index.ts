@@ -15,7 +15,7 @@ Usage:
 
   publish requires --current or a session id (no interactive picker).
   --password random generates a random secret and prints it once.
-  --format v2 publishes a sealed share (key in the URL fragment); v1 is the default.
+  --format defaults to v2 (sealed share, key in the URL fragment); pass --format v1 for the legacy format.
   --yes skips the confirmation prompt (for agents/scripts).
 
 Config: QUIRE_SERVER_URL + QUIRE_API_KEY (env) or ~/.quire/config.json
@@ -44,7 +44,7 @@ async function main(): Promise<void> {
           password: { type: 'string' },
           expires: { type: 'string' },
           preset: { type: 'string' },
-          format: { type: 'string' },
+          format: { type: 'string', default: 'v2' },
           yes: { type: 'boolean', default: false },
           // Node's parseArgs does not map kebab-case flags to camelCase option
           // keys, so each multi-word flag needs BOTH spellings. Without the

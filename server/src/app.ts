@@ -50,6 +50,27 @@ export function createApp(deps: AppDeps): Hono {
   // per-token attack accumulates to 25 instead of being reset by a prune).
   const tokenLimiter = deps.tokenLimiter ?? new RateLimiter(25, 15 * 60 * 1000, undefined, new PostgresLockoutStore(deps.db, 25, 15 * 60 * 1000, 'tok:', false));
   const ipWindow = deps.ipWindow ?? new IpWindow();
+  // Canary (Task 14): v2 write gate. When QUIRE_V2_WRITE_ENABLED is not
+  // explicitly true (the deployment default), the v2 ingestion routes
+  // (create / chunk / finalize) return the uniform 404 — byte-identical to an
+  // unknown path, so a disabled endpoint is indistinguishable from a missing
+  // one (no existence oracle). v2 public reads are never gated.
+  if (deps.config.v2WriteEnabled !== true) {
+    app.use('/api/v2/*', async (c, next) => {
+      const p = c.req.path;
+      if (p === '/api/v2/shares' || p.startsWith('/api/v2/shares/')) {
+        return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
+      }
+      return next();
+    });
+  }
+  // Canary (Task 14): v1 public read retirement. When QUIRE_V1_READS_ENABLED
+  // is explicitly false, the v1 public read routes (content + unlock) return
+  // the uniform 404. The SPA shell (/chats/:token) is shared with v2 and
+  // stays up; v1 owner reads and the v1 table are untouched.
+  if (deps.config.v1ReadsEnabled === false) {
+    app.use('/api/public/*', async (c) => c.json({ error: { code: 'not_found', message: 'Not found' } }, 404));
+  }
   app.route('/', publicRoutes({ db: deps.db, config: deps.config, unlockLimiter, tokenLimiter, ipWindow }));
   app.route('/api/v2/public', publicV2Routes({ db: deps.db, config: deps.config, unlockLimiter, tokenLimiter, ipWindow }));
   app.route('/', ownerRoutes({ db: deps.db, config: deps.config }));

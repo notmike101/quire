@@ -255,6 +255,20 @@ describe('runPublish --format v2 (process)', () => {
     expect(createBody.session.sessionId).toBe('omp-v2-1');
   });
 
+  it('no --format defaults to v2 (the canary default)', { timeout: 30000 }, async () => {
+    const path = ompExport();
+    const before = v2Calls.length;
+    const { code, stdout, stderr } = await runCli(['publish', path, '--harness', 'omp', '--yes']);
+    expect(code, `stderr: ${stderr}`).toBe(0);
+
+    const published = stdout.split(/\r?\n/).find((l) => l.startsWith('Published: '));
+    expect(published).toBeDefined();
+    const url = published!.slice('Published: '.length).trim();
+    expect(url.startsWith(`${baseUrl}/chats/v2share1#`)).toBe(true);
+    // Only v2 endpoints were hit — the v1 flow (preview/create) was not.
+    expect(v2Calls.slice(before).map((c) => c.method)).toEqual(['create', 'finalize']);
+  });
+
   it('a failed v2 publish leaves no content key or fragment in stdout/stderr (the debug log input)', { timeout: 30000 }, async () => {
     const path = ompExport();
     const createsBefore = v2Calls.filter((c) => c.method === 'create').length;
