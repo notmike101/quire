@@ -442,3 +442,57 @@ export async function createChunkedShare(
   expect(second.status()).toBe(200);
   return { token: firstBody.token, uploadId: firstBody.uploadId };
 }
+
+// ---- v2 (sealed shares) ----
+
+/** The wire protocol string the v2 owner API requires on every body. */
+export const V2_PROTOCOL = 'quire-share-v1';
+
+export interface CreateV2ShareOptions {
+  password?: string;
+  expiresAt?: string;
+  messageCount?: number;
+  secret?: boolean;
+}
+
+/**
+ * Publishes a synthetic v2 sealed share directly through the owner v2 API
+ * (create with chunk 0 -> finalize) using a freshly generated 32-byte content
+ * key that the test keeps. The key is appended to the returned URL only as a
+ * fragment — fragments are never transmitted, so the public endpoints never
+ * see it.
+ */
+export async function createV2Share(
+  request: APIRequestContext,
+  options: CreateV2ShareOptions = {},
+): Promise<{ shareId: string; url: string; contentKey: string; messageCount: number }> {
+  const { password, expiresAt, messageCount = 2, secret = false } = options;
+  const contentKey = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
+  const created = await request.post('/api/v2/shares', {
+    headers: { authorization: `Bearer ${API_KEY}` },
+    data: {
+      protocol: V2_PROTOCOL,
+      uploadRequestId: crypto.randomUUID(),
+      preset: 'strict',
+      ...(password !== undefined ? { password } : {}),
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+      sourceChunkCount: 1,
+      contentKey,
+      session: smallSession(messageCount, { secret }),
+    },
+  });
+  expect(created.status()).toBe(201);
+  const createBody = await created.json();
+  const finalized = await request.post(`/api/v2/shares/${createBody.shareId}/finalize`, {
+    headers: { authorization: `Bearer ${API_KEY}`, 'x-upload-token': createBody.uploadToken },
+    data: { protocol: V2_PROTOCOL, contentKey },
+  });
+  expect(finalized.status()).toBe(200);
+  const finalBody = await finalized.json();
+  return {
+    shareId: createBody.shareId,
+    url: `/chats/${createBody.shareId}#${contentKey}`,
+    contentKey,
+    messageCount: finalBody.messageCount,
+  };
+}
