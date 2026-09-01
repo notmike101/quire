@@ -50,6 +50,13 @@
       "when": 1788066251747,
       "tag": "0006_round7_lockout_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788283074706,
+      "tag": "0007_grey_sally_floyd",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, integer, jsonb, primaryKey, bigint, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, integer, jsonb, primaryKey, bigint, index, customType } from 'drizzle-orm/pg-core';
 
 export const shares = pgTable('shares', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -59,3 +59,54 @@ export const unlockLockouts = pgTable('unlock_lockouts', {
   index('unlock_lockouts_locked_until_idx').on(t.lockedUntil),
   index('unlock_lockouts_last_seen_idx').on(t.lastSeen),
 ]);
+
+// drizzle-orm's pg-core has no built-in bytea column builder; this is the
+// standard customType pattern from the drizzle docs. postgres.js returns
+// bytea as a Buffer, so driverData is Buffer and app code sees Uint8Array.
+const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
+  dataType() {
+    return 'bytea';
+  },
+  fromDriver: (value) => new Uint8Array(value),
+  toDriver: (value) => Buffer.from(value),
+});
+
+// v2 sealed shares (OMP-inspired sharing migration). Additive: v1 tables are
+// untouched. `id` is the internal uuid PK (blob storage key); `publicId` is
+// the 128-bit base64url public identifier used in the public path, the AAD,
+// and the protocol's `shareId`.
+export const sharesV2 = pgTable('shares_v2', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  publicId: text('public_id').notNull().unique(),
+  uploadRequestId: text('upload_request_id').notNull().unique(),
+  uploadTokenHash: text('upload_token_hash').notNull(),
+  state: text('state').notNull().default('uploading'), // 'uploading' | 'ready'
+  preset: text('preset').notNull().default('strict'),
+  passwordHash: text('password_hash'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  sourceChunkCount: integer('source_chunk_count').notNull(),
+  receivedChunkCount: integer('received_chunk_count').notNull().default(0),
+  pageCount: integer('page_count').notNull().default(0),
+  messageCount: integer('message_count').notNull().default(0),
+  bytes: bigint('bytes', { mode: 'number' }).notNull().default(0),
+  redactions: jsonb('redactions').notNull().default({}),
+  title: text('title'),
+  model: text('model'),
+  provider: text('provider'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('shares_v2_created_at_idx').on(t.createdAt)]);
+
+export const shareSourceChunksV2 = pgTable('share_source_chunks_v2', {
+  shareId: uuid('share_id').notNull().references(() => sharesV2.id, { onDelete: 'cascade' }),
+  sourceSeq: integer('source_seq').notNull(),
+  requestDigest: text('request_digest').notNull(),
+}, (t) => [primaryKey({ columns: [t.shareId, t.sourceSeq] })]);
+
+export const shareBlobsV2 = pgTable('share_blobs_v2', {
+  shareId: uuid('share_id').notNull().references(() => sharesV2.id, { onDelete: 'cascade' }),
+  kind: text('kind').notNull(), // 'manifest' | 'index' | 'page'
+  seq: integer('seq').notNull(),
+  ciphertext: bytea('ciphertext').notNull(),
+  ciphertextBytes: integer('ciphertext_bytes').notNull(),
+  digest: text('digest').notNull(), // SHA-256 hex of the stored envelope bytes
+}, (t) => [primaryKey({ columns: [t.shareId, t.kind, t.seq] })]);

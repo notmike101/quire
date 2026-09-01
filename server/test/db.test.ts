@@ -10,7 +10,7 @@ describe('schema + migrations', () => {
     await migrateDb(db);
     // Drop the tracking table then the now-empty drizzle schema so the
     // second migrateDb recreates everything without emitting NOTICEs.
-    await db.execute(sql`drop table if exists share_messages; drop table if exists shares; drop table if exists unlock_lockouts; drop table if exists drizzle.__drizzle_migrations; drop schema if exists drizzle;`);
+    await db.execute(sql`drop table if exists share_blobs_v2; drop table if exists share_source_chunks_v2; drop table if exists shares_v2; drop table if exists share_messages; drop table if exists shares; drop table if exists unlock_lockouts; drop table if exists drizzle.__drizzle_migrations; drop schema if exists drizzle;`);
     await migrateDb(db);
   });
 
