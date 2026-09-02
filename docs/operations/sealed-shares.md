@@ -51,7 +51,7 @@ Redeploy the previous commit. There are no gate env vars to flip: v2 reads
 were never disabled, so shares published before the rollback keep working
 under the previous build. v1 links are dead either way — the v1 tables are
 dropped by 0008 and stay dropped after the redeploy, so the previous
-build's v1 reads find no rows.
+build's v1 routes error on the missing tables.
 
 ## Backup / restore
 
