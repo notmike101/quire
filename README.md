@@ -37,14 +37,18 @@ pnpm workspace monorepo:
 | `web/`          | Vue 3 + Vite + Tailwind v4 read-only viewer                      |
 | `e2e/`          | Playwright full-stack tests (drives the Docker stack)            |
 
-Data flow: harness session → adapter and CLI shape it → the server returns a
-redacted preview when the payload fits the preview request cap → owner confirms
-(or the agent passes `--yes`) → `POST /api/chats` performs authoritative
-redaction in memory and persists only the redacted content → viewer fetches
-pages by cursor from `/api/public/chats/:token`.
+Data flow: harness session → adapter and CLI shape it → owner confirms (or
+the agent passes `--yes`) → the CLI generates an in-memory content key and
+uploads the raw shaped chunks over authenticated HTTPS → the server performs
+authoritative redaction and seals each chunk as an AES-256-GCM ciphertext
+envelope → the viewer's browser fetches the envelopes and decrypts them
+locally. The content key never reaches the server: it rides in the
+authenticated upload HTTP, then in the share URL's fragment (`#<key>`), which
+the CLI appends locally.
 
-Shares live under `/chats/<token>` (viewer) and `/api/public/chats/:token`
-(API). Tokens are 128-bit crypto-random; session ids never appear in URLs.
+Shares live under `/chats/<shareId>#<key>` (viewer) and
+`/api/v2/public/shares/:shareId/*` (API). Share ids are 128-bit
+crypto-random; session ids never appear in URLs.
 
 ## Security model
 
@@ -57,18 +61,18 @@ Shares live under `/chats/<token>` (viewer) and `/api/public/chats/:token`
 - See `docs/superpowers/specs/2026-08-23-zcode-session-sharing-design.md` for
   the full design and threat reasoning.
 
-## Sealed shares (v2)
+## Sealed shares
 
 Sealed shares encrypt the redacted content with AES-256-GCM in the browser:
 the content key appears only in the authenticated upload HTTP and then in the
-final share URL's fragment (`#<key>`), never in the server's storage, logs, or
+share URL's fragment (`#<key>`), never in the server's storage, logs, or
 public HTTP. The server stores ciphertext envelopes in plain Postgres and
-serves them; only the browser holding the key can decrypt. v2 is behind a
-canary: v2 writes are off by default (`QUIRE_V2_WRITE_ENABLED`), v1 reads stay
-on until retired (`QUIRE_V1_READS_ENABLED`), and `GET /metrics` exposes the
-safe v2 pipeline counters (counts/bytes/latency/status only).
+serves them; only the browser holding the key can decrypt. The fragment is
+required — a link without it shows a missing-key error page and makes no
+network call. `GET /metrics` exposes the safe pipeline counters
+(counts/bytes/latency/status only).
 
-Operational runbook — deploy order, canary metrics, rollback, backup/restore:
+Operational runbook — migration, metrics, rollback, backup/restore:
 `docs/operations/sealed-shares.md`.
 
 ## Quick start (local dev)
@@ -102,8 +106,8 @@ quire publish --current    # preview redacted session, confirm, publish
 quire publish --current --password random --expires tomorrow --yes
                            # agent path: random password (printed once),
                            # expires at next midnight, no confirmation prompt
-quire list                 # list active shares
-quire revoke <token> --yes # soft-revoke (share becomes a 404), no prompt
+quire list                 # list shares (id, title, created, expires, state)
+quire revoke <token> --yes # hard delete (rows gone immediately), no prompt
 quire update <token> --expires 2026-09-01
 quire setup omp            # installs the OMP /share handler (interactive TUI only)
 ```
@@ -111,7 +115,9 @@ quire setup omp            # installs the OMP /share handler (interactive TUI on
 `--password random` (or `generate`/`auto`) generates a random secret and prints
 it once. `--expires` accepts an ISO datetime, a duration (`30m`/`24h`/`7d`), or
 a keyword (`tomorrow`, `today`, `week`, `month`, `year`, or `in <duration>`).
-`publish` requires `--current` or a session id (there is no interactive picker).
+`publish` requires `--current` or a session id (there is no interactive
+picker). `update` only changes the expiry — a share's password is fixed at
+publish time (there is no `update --password`).
 
 Environment: `QUIRE_SERVER_URL`, `QUIRE_API_KEY` (override the config file).
 Harness detection: `--harness zcode|claude-code|codex|omp` flag, else the active
