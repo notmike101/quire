@@ -1,7 +1,7 @@
 // Canary (Task 15): safe in-process metrics for the v2 sealed-share pipeline.
 // The counters hold counts, bytes, latency, and status only — never share
 // IDs, titles, content keys, URLs, tokens, or content. /metrics (app.ts)
-// exposes the snapshot so an operator can monitor the canary window. No
+// exposes the snapshot so an operator can monitor the v2 pipeline. No
 // observability dependency: a plain in-memory registry for the process
 // lifetime (the server is single-process).
 export type V2MetricCategory =

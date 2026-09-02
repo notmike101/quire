@@ -102,7 +102,7 @@ required; `PORT` defaults to `8787`.
 
 ```bash
 quire setup                # prints the server .env block + a config example
-quire publish --current    # preview redacted session, confirm, publish
+quire publish --current    # shape session, confirm, publish
 quire publish --current --password random --expires tomorrow --yes
                            # agent path: random password (printed once),
                            # expires at next midnight, no confirmation prompt

@@ -69,8 +69,8 @@ export function buildViewerPages(input: {
 
 /**
  * Builds the user-message rail index from the full set of decrypted pages in
- * page order. The preview matches v1's SQL projection (api/public.ts): the
- * first non-empty text part, left(80), then whitespace-normalized. Entries
+ * page order. The preview matches v1's SQL projection: the first non-empty
+ * text part, left(80), then whitespace-normalized. Entries
  * beyond `cap` are dropped.
  */
 export function buildRailEntries(pages: SharePageV1[], cap: number): RailUserEntryV1[] {
