@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { makeDb, migrateDb, type Db } from '../src/db/client.js';
 import { createApp } from '../src/app.js';
-import { sharesV2, shareBlobsV2 } from '../src/db/schema.js';
+import { sharesV2, shareBlobsV2, unlockLockouts } from '../src/db/schema.js';
 import { eq, sql } from 'drizzle-orm';
 import { hashPassword } from '../src/security/password.js';
 import { RateLimiter, IpWindow } from '../src/security/rate-limit.js';
+import { clientIp } from '../src/api/public.js';
 
 const url = process.env.DATABASE_URL ?? 'postgres://quire:quire@localhost:54329/quire_test';
 const config = { databaseUrl: url, apiKey: 'a'.repeat(64), unlockSecret: 'b'.repeat(64), port: 8787, webDist: '' };
@@ -124,6 +125,15 @@ describe('v2 public bootstrap', () => {
     const res = await app.request('/api/v2/public/shares/v2pw/bootstrap');
     expect(res.status).toBe(401);
     expect((await json(res)).error.code).toBe('needs_password');
+  });
+
+  it('429 when the per-IP window is exhausted', async () => {
+    const tiny = createApp({ db, config, ipWindow: new IpWindow(3, 60_000) });
+    await seedV2Share('v2ratelimited');
+    for (let i = 0; i < 3; i++) expect((await tiny.request('/api/v2/public/shares/v2ratelimited/bootstrap')).status).toBe(200);
+    const res = await tiny.request('/api/v2/public/shares/v2ratelimited/bootstrap');
+    expect(res.status).toBe(429);
+    expect((await json(res)).error.code).toBe('rate_limited');
   });
 });
 
@@ -259,5 +269,83 @@ describe('v2 public unlock', () => {
     });
     expect(res.status).toBe(400);
     expect((await json(res)).error.code).toBe('validation');
+  });
+
+  it('production wiring: per-token lockout trips at 25 total failures, not the store default of 5', async () => {
+    // Round 6 regression: when a Postgres store is wired into the limiter, the
+    // limiter delegates isLocked/recordFailure/reset entirely to the store, so
+    // the STORE's maxFails is the source of truth — the threshold passed to the
+    // RateLimiter constructor alone is silently ignored. app.ts must therefore
+    // pass the threshold to the store. This test exercises the REAL production
+    // wiring (no injected limiters) with XFF-simulated distinct IPs. Under the
+    // old bug (store default 5), failures 6-20 would return 429 and the 401
+    // assertions below fail; under the fix, 25 total failures are required.
+    // Round 7: lockout keys are namespaced (tok: / ip:) so the per-token row
+    // is 'tok:v2pw5' and the per-IP rows are 'ip:v2pw5:<ip>'.
+    await db.execute(sql`delete from unlock_lockouts where key = 'tok:v2pw5' or key like 'ip:v2pw5:%'`);
+    const wired = createApp({ db, config: { ...config, trustProxy: true } });
+    await seedV2Share('v2pw5', { password: 'right' });
+    const post = (ip: string, password: string) =>
+      wired.request('/api/v2/public/shares/v2pw5/unlock', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+        body: JSON.stringify({ password }),
+      });
+    // 4 IPs x 5 failures: each per-IP key locks at 5 (intended), but the
+    // per-token key must accumulate all 20 without locking.
+    for (let ip = 1; ip <= 4; ip++) {
+      for (let f = 0; f < 5; f++) {
+        const res = await post(`10.0.0.${ip}`, 'wrong');
+        expect(res.status).toBe(401);
+      }
+    }
+    const [mid] = await db.select().from(unlockLockouts).where(eq(unlockLockouts.key, 'tok:v2pw5')).limit(1);
+    expect(mid?.count).toBe(20);
+    expect(mid?.lockedUntil).toBeNull();
+    // The 5th IP pushes the token counter to 25 -> the token locks.
+    for (let f = 0; f < 5; f++) {
+      const res = await post('10.0.0.5', 'wrong');
+      expect(res.status).toBe(401);
+    }
+    // Even the right password is refused while the token is locked.
+    const res = await post('10.0.0.6', 'right');
+    expect(res.status).toBe(429);
+    await db.execute(sql`delete from unlock_lockouts where key = 'tok:v2pw5' or key like 'ip:v2pw5:%'`);
+  }, 30_000);
+});
+
+describe('clientIp (Chain C + Round 9 B-F2)', () => {
+  // getConnInfo reads c.env.incoming.socket.remoteAddress; stub that shape so
+  // the socket fallback is exercised without a real socket.
+  function fakeCtx(headers: Record<string, string>, socketAddr = '203.0.113.7'): Context {
+    // The stub exposes only what clientIp reads (req.header + socket address);
+    // unchecked cast at the library boundary — a full Context cannot be built
+    // outside a request.
+    return {
+      req: { header: (n: string) => headers[n.toLowerCase()] },
+      env: { incoming: { socket: { remoteAddress: socketAddr, remotePort: 1234, remoteFamily: 'IPv4' } } },
+    } as unknown as Context;
+  }
+  it('uses the RIGHTMOST XFF hop when trustProxy — the entry the immediate proxy wrote, which the client cannot control', () => {
+    // Append-style proxy (Cloudflare): the client may prepend spoofed entries,
+    // but the rightmost one is what the trusted proxy appended.
+    const c = fakeCtx({ 'x-forwarded-for': '6.6.6.6, 7.7.7.7' }, '127.0.0.1');
+    expect(clientIp(c, true)).toBe('7.7.7.7');
+  });
+  it('a single-entry XFF (overwrite-style proxy) is used as-is', () => {
+    const c = fakeCtx({ 'x-forwarded-for': '203.0.113.9' }, '127.0.0.1');
+    expect(clientIp(c, true)).toBe('203.0.113.9');
+  });
+  it('falls back to the socket address when the rightmost XFF hop is malformed', () => {
+    const c = fakeCtx({ 'x-forwarded-for': '10.0.0.1, not-an-ip' }, '198.51.100.4');
+    expect(clientIp(c, true)).toBe('198.51.100.4');
+  });
+  it('falls back to x-real-ip when XFF is absent but x-real-ip is well-formed', () => {
+    const c = fakeCtx({ 'x-real-ip': '198.51.100.9' }, '127.0.0.1');
+    expect(clientIp(c, true)).toBe('198.51.100.9');
+  });
+  it('ignores XFF and x-real-ip entirely when trustProxy is false', () => {
+    const c = fakeCtx({ 'x-forwarded-for': '203.0.113.9', 'x-real-ip': '203.0.113.8' }, '198.51.100.4');
+    expect(clientIp(c, false)).toBe('198.51.100.4');
   });
 });

@@ -62,7 +62,7 @@ describe('security headers', () => {
     expect(res.headers.get('strict-transport-security')).toContain('max-age=31536000');
   });
   it('sends X-Robots-Tag: noindex, nofollow on every response', async () => {
-    for (const path of ['/healthz', '/chats/sometoken', '/api/public/chats/doesnotexist', '/robots.txt']) {
+    for (const path of ['/healthz', '/chats/sometoken', '/api/v2/public/shares/doesnotexist/bootstrap', '/robots.txt']) {
       const res = await app.request(path);
       expect(res.headers.get('x-robots-tag'), `x-robots-tag on ${path}`).toBe('noindex, nofollow');
     }
@@ -71,7 +71,7 @@ describe('security headers', () => {
 
 describe('body limit', () => {
   it('413 too_large above 20 MB', async () => {
-    const res = await app.request('/api/chats', {
+    const res = await app.request('/api/v2/shares', {
       method: 'POST',
       headers: { 'content-length': String(21 * 1024 * 1024), authorization: `Bearer ${'a'.repeat(64)}` },
     });
