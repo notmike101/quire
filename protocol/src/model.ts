@@ -6,7 +6,6 @@ export const MAX_MESSAGES_PER_PAGE = 50;
 export const MAX_PAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_RAIL_USER_ENTRIES = 2000;
 export const MAX_DECOMPRESSED_BLOB_BYTES = 32 * 1024 * 1024;
-export const MAX_SHARE_BYTES = 1024 * 1024 * 1024;
 
 export interface ShareImageV1 {
   src?: string;

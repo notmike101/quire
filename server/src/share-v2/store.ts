@@ -15,7 +15,6 @@ import type { Config } from '../config.js';
 import { prepareContent, type PreparedContent, type ShapedSession } from '../redact/prepare.js';
 import type { Preset } from '../redact/rules.js';
 import { generateShareToken } from '../security/token.js';
-import { wouldExceedCap } from '../api/headers.js';
 import { openBlob, sealBlob } from './crypto.js';
 import { buildRailEntries, buildViewerPages } from './pages.js';
 
@@ -128,12 +127,10 @@ async function storedUpload(
  *
  * Idempotent by (uploadRequestId, requestDigest): a replay with the same
  * digest returns the stored result; a different digest is 409
- * `upload_conflict`. The 1 GiB cap is enforced on chunk 0's serialized
- * redacted bytes BEFORE inserting (400 `share_too_large`, share not created).
+ * `upload_conflict`.
  */
 export async function createV2Upload(db: Db, config: Config, input: CreateV2UploadInput): Promise<CreateV2UploadResult> {
   const prepared = prepareContent(input.session, input.preset);
-  if (wouldExceedCap(0, prepared.bytes)) throw new ShareV2Error(400, 'share_too_large');
 
   const existing = await storedUpload(db, config, input.uploadRequestId, input.requestDigest);
   if (existing) return existing;
@@ -220,11 +217,10 @@ export type AcceptV2SourceChunkResult = { ok: true } | { ok: false; status: 409 
  * already accepted is idempotent on a requestDigest match (409
  * `chunk_conflict` on mismatch) — checked before the in-order gate so a
  * re-send of an older chunk is not mistaken for out-of-order; a chunkSeq
- * other than receivedChunkCount is 400 `chunk_seq`; a chunk that would push
- * the share over the 1 GiB cap is 400 `share_too_large` and is not
- * persisted. Otherwise the chunk's pages are built (continuing the global
- * page/message seqs), sealed, and inserted with the chunk marker + share
- * counter update in the same transaction.
+ * other than receivedChunkCount is 400 `chunk_seq`. Otherwise the chunk's
+ * pages are built (continuing the global page/message seqs), sealed, and
+ * inserted with the chunk marker + share counter update in the same
+ * transaction.
  */
 export async function acceptV2SourceChunk(
   db: Db,
@@ -244,7 +240,6 @@ export async function acceptV2SourceChunk(
       return { ok: false, status: 409, code: 'chunk_conflict' };
     }
     if (input.chunkSeq !== row.receivedChunkCount) return { ok: false, status: 400, code: 'chunk_seq' };
-    if (wouldExceedCap(row.bytes, input.prepared.bytes)) return { ok: false, status: 400, code: 'share_too_large' };
     const { pages, nextPageSeq } = buildViewerPages({
       shareId: input.publicId,
       chunkSeq: input.chunkSeq,

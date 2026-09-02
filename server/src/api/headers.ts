@@ -3,10 +3,6 @@ import type { MiddlewareHandler } from 'hono';
 
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
-// Chain B: cumulative per-share cap (1 GB). `MAX_UPLOAD_BYTES` caps a single
-// request; this caps the TOTAL a share may grow to across create + chunks.
-export const MAX_SHARE_BYTES = 1_073_741_824;
-
 // Round 11: how much of an over-cap body to consume before answering the 413.
 // Bounded so a huge (1 GB) or slow body can't hang the reject. Mirrors the
 // @hono/node-server's own post-response drain (64 MB / 500 ms).
@@ -50,11 +46,6 @@ async function drainReader(
   } catch {
     // The drain must never throw — a reject path is already in flight.
   }
-}
-
-/** Pure cap comparison (Chain B): would `added` bytes push `current` over `cap`? */
-export function wouldExceedCap(currentBytes: number, addedBytes: number, cap: number = MAX_SHARE_BYTES): boolean {
-  return currentBytes + addedBytes > cap;
 }
 
 export function securityHeaders(): MiddlewareHandler {

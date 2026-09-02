@@ -16,7 +16,7 @@ import {
 } from '../src/share-v2/store.js';
 import { openBlob } from '../src/share-v2/crypto.js';
 import { prepareContent, type ShapedMessage, type ShapedSession } from '../src/redact/prepare.js';
-import { MAX_RAIL_USER_ENTRIES, MAX_SHARE_BYTES, parseShareIndexSegment, parseShareManifest } from '@quire/protocol';
+import { MAX_RAIL_USER_ENTRIES, parseShareIndexSegment, parseShareManifest } from '@quire/protocol';
 import type { Config } from '../src/config.js';
 
 const url = process.env.DATABASE_URL ?? 'postgres://quire:quire@localhost:54329/quire_test';
@@ -297,30 +297,6 @@ describe('acceptV2SourceChunk', () => {
       requestDigest: 'digest-1-CHANGED',
     });
     expect(res).toEqual({ ok: false, status: 409, code: 'chunk_conflict' });
-  });
-
-  it('a chunk that would push bytes over 1 GiB is 400 share_too_large and is not persisted', async () => {
-    const { created, contentKey } = await makeShare('req-cap', { sourceChunkCount: 2 });
-    // Push the row's running total to the cap edge without uploading 1 GiB.
-    await db.update(sharesV2).set({ bytes: MAX_SHARE_BYTES - 100 }).where(eq(sharesV2.id, created.id));
-    // A plain-phrase repeat (a 500-char single-char run would trip the
-    // long-token redaction rule and shrink below the cap margin).
-    const p1 = prepareContent(sessionOf([textMsg('user', 'hello world '.repeat(20))]), 'strict');
-    expect(p1.bytes).toBeGreaterThan(100);
-    const res = await acceptV2SourceChunk(db, config, {
-      id: created.id,
-      publicId: created.publicId,
-      contentKey,
-      chunkSeq: 1,
-      prepared: p1,
-      requestDigest: 'digest-1',
-    });
-    expect(res).toEqual({ ok: false, status: 400, code: 'share_too_large' });
-    const chunks = await db.select().from(shareSourceChunksV2).where(eq(shareSourceChunksV2.shareId, created.id));
-    expect(chunks).toHaveLength(1); // chunk 1 not persisted
-    const row = (await db.select().from(sharesV2).where(eq(sharesV2.id, created.id)))[0]!;
-    expect(row.bytes).toBe(MAX_SHARE_BYTES - 100);
-    expect(row.receivedChunkCount).toBe(1);
   });
 
   it('a chunk after finalize is 400 share_ready', async () => {
