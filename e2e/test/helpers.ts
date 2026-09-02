@@ -453,6 +453,7 @@ export interface CreateV2ShareOptions {
   expiresAt?: string;
   messageCount?: number;
   secret?: boolean;
+  session?: object;
 }
 
 /**
@@ -466,7 +467,7 @@ export async function createV2Share(
   request: APIRequestContext,
   options: CreateV2ShareOptions = {},
 ): Promise<{ shareId: string; url: string; contentKey: string; messageCount: number }> {
-  const { password, expiresAt, messageCount = 2, secret = false } = options;
+  const { password, expiresAt, messageCount = 2, secret = false, session } = options;
   const contentKey = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
   const created = await request.post('/api/v2/shares', {
     headers: { authorization: `Bearer ${API_KEY}` },
@@ -478,7 +479,7 @@ export async function createV2Share(
       ...(expiresAt !== undefined ? { expiresAt } : {}),
       sourceChunkCount: 1,
       contentKey,
-      session: smallSession(messageCount, { secret }),
+      session: session ?? smallSession(messageCount, { secret }),
     },
   });
   expect(created.status()).toBe(201);
@@ -495,4 +496,59 @@ export async function createV2Share(
     contentKey,
     messageCount: finalBody.messageCount,
   };
+}
+
+/** A v2 sealed share with a long session (for rail + lazy-load tests). */
+export async function createV2LongShare(
+  request: APIRequestContext,
+  userTurns: number,
+): Promise<{ shareId: string; url: string; contentKey: string; messageCount: number }> {
+  return createV2Share(request, { session: longSession(userTurns) });
+}
+
+/**
+ * A v2 sealed share with two source chunks (chunk 0 in the create body, chunk 1
+ * via the source-chunks PUT). Exercises the multi-chunk upload path.
+ */
+export async function createV2ChunkedShare(
+  request: APIRequestContext,
+  opts: { perChunk?: number } = {},
+): Promise<{ shareId: string; url: string; contentKey: string }> {
+  const perChunk = opts.perChunk ?? 3;
+  const mkChunk = (chunkSeq: number): object[] => {
+    const messages: object[] = [];
+    for (let i = 0; i < perChunk; i++) {
+      messages.push({
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        time: new Date(Date.UTC(2026, 0, 1, 12, i)).toISOString(),
+        parts: [{ type: 'text', text: `chunk${chunkSeq} message ${i + 1}` }],
+      });
+    }
+    return messages;
+  };
+  const contentKey = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
+  const created = await request.post('/api/v2/shares', {
+    headers: { authorization: `Bearer ${API_KEY}` },
+    data: {
+      protocol: V2_PROTOCOL,
+      uploadRequestId: crypto.randomUUID(),
+      preset: 'strict',
+      sourceChunkCount: 2,
+      contentKey,
+      session: { sessionId: 'sess_chunked', title: 'Chunked E2E', model: 'test-model', provider: 'test-provider', messages: mkChunk(0) },
+    },
+  });
+  expect(created.status()).toBe(201);
+  const createBody = await created.json();
+  const second = await request.put(`/api/v2/shares/${createBody.shareId}/source-chunks/1`, {
+    headers: { authorization: `Bearer ${API_KEY}`, 'x-upload-token': createBody.uploadToken },
+    data: { protocol: V2_PROTOCOL, contentKey, messages: mkChunk(1) },
+  });
+  expect(second.status()).toBe(200);
+  const finalized = await request.post(`/api/v2/shares/${createBody.shareId}/finalize`, {
+    headers: { authorization: `Bearer ${API_KEY}`, 'x-upload-token': createBody.uploadToken },
+    data: { protocol: V2_PROTOCOL, contentKey },
+  });
+  expect(finalized.status()).toBe(200);
+  return { shareId: createBody.shareId, url: `/chats/${createBody.shareId}#${contentKey}`, contentKey };
 }
