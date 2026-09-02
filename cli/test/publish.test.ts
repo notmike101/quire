@@ -251,6 +251,33 @@ describe('runPublish (unit)', () => {
     expect(sharing).toContain('sess_a'); // the id still identifies the share
     expect(sharing).toContain('1 messages');
   });
+
+  it('clamps oversized title/model/provider/sessionId to the server wire bounds before upload', async () => {
+    // Codex generates long task titles; the server zod schema caps title at
+    // 500 and sessionId/model/provider at 200. The CLI clamps at the shape
+    // boundary instead of failing the whole publish with a server 400.
+    const { runPublish } = await import('../src/commands/publish.js');
+    const longAdapter = {
+      ...fakeAdapter,
+      resolveCurrent: vi.fn(async () => ({ id: 'x'.repeat(250), title: 'T'.repeat(600), updatedAt: '', isSubagent: false })),
+      loadSession: vi.fn(async (id: string) => ({
+        sessionId: id,
+        title: 'T'.repeat(600),
+        model: 'm'.repeat(300),
+        provider: 'p'.repeat(300),
+        messages: [{ role: 'user', parts: [{ type: 'text', text: 'hi' }] }],
+      })),
+    };
+    await runPublish({ current: true, yes: true }, [], { adapter: longAdapter as never, api: fakeApi as never, out: () => {} });
+    expect(fakeApi.createV2Share).toHaveBeenCalledWith(expect.objectContaining({
+      session: expect.objectContaining({
+        sessionId: 'x'.repeat(200),
+        title: 'T'.repeat(500),
+        model: 'm'.repeat(200),
+        provider: 'p'.repeat(200),
+      }),
+    }));
+  });
 });
 
 // ---------- process-level tests (real CLI, mock v2 server, temp home) ----------

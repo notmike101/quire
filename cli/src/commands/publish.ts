@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { HarnessAdapter, HarnessSessionInfo } from '../harness/types.js';
+import type { HarnessAdapter, HarnessSessionInfo, ShapedSession } from '../harness/types.js';
 import { detectHarness, makeAdapter, type HarnessName } from '../harness/detect.js';
 import { QuireApi } from '../api.js';
 import { confirm } from '../prompt.js';
@@ -70,7 +70,19 @@ export async function runPublish(values: PublishValues, positionals: string[], d
   const api = deps.api ?? new QuireApi();
 
   const session = await resolveSession(adapter, values, positionals);
-  const shaped = await adapter.loadSession(session.id);
+  const loaded = await adapter.loadSession(session.id);
+  // Wire bounds (server/src/api/schema.ts): sessionId <=200, title <=500,
+  // model/provider <=200. Harnesses can exceed them (Codex generates long
+  // task titles), so clamp at the shape boundary instead of failing the
+  // whole publish with a server zod 400. Adapters always fall back to the
+  // session id for the title, so the title min(1) bound holds.
+  const shaped: ShapedSession = {
+    ...loaded,
+    sessionId: loaded.sessionId.slice(0, 200),
+    title: loaded.title.slice(0, 500),
+    model: loaded.model?.slice(0, 200),
+    provider: loaded.provider?.slice(0, 200),
+  };
   // Round 11: the title is session content the server redacts before storing
   // (a title like "Debugging AWS key AKIA…" is a leak — see prepareContent).
   // The CLI must not echo the RAW title to stdout (the agent captures stdout),
