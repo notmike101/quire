@@ -34,18 +34,39 @@ async function main(): Promise<void> {
       const { runList } = await import('./commands/list.js');
       const { runRevoke } = await import('./commands/revoke.js');
       const { runUpdate } = await import('./commands/update.js');
-      const { values, positionals } = parseArgs({
-        args: rest,
-        allowPositionals: true,
-        options: {
-          current: { type: 'boolean', default: false },
-          harness: { type: 'string' },
-          password: { type: 'string' },
-          expires: { type: 'string' },
-          preset: { type: 'string' },
-          yes: { type: 'boolean', default: false },
-        },
-      });
+      let values: {
+        current: boolean;
+        harness?: string;
+        password?: string;
+        expires?: string;
+        preset?: string;
+        yes: boolean;
+      };
+      let positionals: string[];
+      try {
+        const parsed = parseArgs({
+          args: rest,
+          allowPositionals: true,
+          options: {
+            current: { type: 'boolean', default: false },
+            harness: { type: 'string' },
+            // --password is publish-only: the v2 update body has no password,
+            // so `update --password` must be an unknown option, not a no-op.
+            ...(command === 'publish' ? { password: { type: 'string' } } : {}),
+            expires: { type: 'string' },
+            preset: { type: 'string' },
+            yes: { type: 'boolean', default: false },
+          },
+        });
+        values = parsed.values as typeof values;
+        positionals = parsed.positionals;
+      } catch (err) {
+        // Unknown option (e.g. the removed v1 flags --format/--no-chunk):
+        // print the reason plus the usage and exit 2.
+        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        process.stderr.write(USAGE);
+        process.exit(2);
+      }
       if (command === 'publish') await runPublish(values, positionals);
       if (command === 'list') await runList();
       if (command === 'revoke') await runRevoke(positionals[0], values);
