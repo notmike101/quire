@@ -1,6 +1,6 @@
 {
   "name": "quire",
   "description": "Share AI coding sessions as expiring, password-protected web links via the Quire CLI",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "commands": "./commands"
 }

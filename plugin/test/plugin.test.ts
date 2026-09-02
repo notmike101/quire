@@ -47,7 +47,7 @@ describe('plugin manifest', () => {
     const manifest = JSON.parse(readFileSync(join(root, '.codex-plugin', 'plugin.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: 'quire',
-      version: '0.1.0',
+      version: '0.3.0',
       skills: './skills/',
     });
     expect(typeof manifest.description).toBe('string');

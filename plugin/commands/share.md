@@ -19,7 +19,7 @@ Share the current session using the Quire CLI. You drive this end-to-end — **d
    ```
    quire publish --current --password random --expires tomorrow --yes
    ```
-   The command prints a redaction preview, then publishes and prints the share URL (and, for `--password random`, the generated `Password:` line). It does not wait for input.
+   The command publishes directly (the server redacts and seals on ingestion — there is no preview step) and prints the share URL, the generated `Password:` line (for `--password random`), and the redaction summary. It does not wait for input.
 
 3. **Report the result to the user:** the share URL, the generated password (if one was created), the expiration (if set), and the redaction summary. Do not ask for confirmation — the share is already live.
 
