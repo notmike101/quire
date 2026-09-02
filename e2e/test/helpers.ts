@@ -27,30 +27,6 @@ export function smallSession(messageCount: number, opts: { secret?: boolean } = 
   };
 }
 
-export interface CreateShareOptions {
-  password?: string;
-  expiresAt?: string;
-  messageCount?: number;
-  secret?: boolean;
-}
-
-export async function createShare(
-  request: APIRequestContext,
-  options: CreateShareOptions = {},
-): Promise<{ token: string; url: string; messageCount: number }> {
-  const { password, expiresAt, messageCount = 2, secret = false } = options;
-  const res = await request.post('/api/chats', {
-    headers: { authorization: `Bearer ${API_KEY}` },
-    data: {
-      session: smallSession(messageCount, { secret }),
-      ...(password !== undefined ? { password } : {}),
-      ...(expiresAt !== undefined ? { expiresAt } : {}),
-    },
-  });
-  expect(res.status()).toBe(201);
-  return await res.json();
-}
-
 /** A session whose user message is a `system` part (harness-injected reminder). */
 export function systemNoticeSession(): object {
   return {
@@ -70,15 +46,6 @@ export function systemNoticeSession(): object {
       },
     ],
   };
-}
-
-export async function createSystemNoticeShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
-  const res = await request.post('/api/chats', {
-    headers: { authorization: `Bearer ${API_KEY}` },
-    data: { session: systemNoticeSession() },
-  });
-  expect(res.status()).toBe(201);
-  return await res.json();
 }
 
 /** A session whose assistant message has a `reasoning` part (think block). */
@@ -103,15 +70,6 @@ export function reasoningSession(): object {
       },
     ],
   };
-}
-
-export async function createReasoningShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
-  const res = await request.post('/api/chats', {
-    headers: { authorization: `Bearer ${API_KEY}` },
-    data: { session: reasoningSession() },
-  });
-  expect(res.status()).toBe(201);
-  return await res.json();
 }
 
 /** A tiny 1×1 red-pixel PNG as a data URI (small enough to embed in a share). */
@@ -148,15 +106,6 @@ export function imageSession(): object {
   };
 }
 
-export async function createImageShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
-  const res = await request.post('/api/chats', {
-    headers: { authorization: `Bearer ${API_KEY}` },
-    data: { session: imageSession() },
-  });
-  expect(res.status()).toBe(201);
-  return await res.json();
-}
-
 /**
  * A session whose assistant message has a tool part with an attached image
  * (a Read-attachment image). The viewer must render the image inside the tool
@@ -190,15 +139,6 @@ export function toolImageSession(): object {
       },
     ],
   };
-}
-
-export async function createToolImageShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
-  const res = await request.post('/api/chats', {
-    headers: { authorization: `Bearer ${API_KEY}` },
-    data: { session: toolImageSession() },
-  });
-  expect(res.status()).toBe(201);
-  return await res.json();
 }
 
 /**
@@ -237,118 +177,6 @@ export function longSession(userTurns: number): object {
     provider: 'test-provider',
     messages,
   };
-}
-
-export async function createLongShare(
-  request: APIRequestContext,
-  userTurns: number,
-): Promise<{ token: string; url: string }> {
-  const res = await request.post('/api/chats', {
-    headers: { authorization: `Bearer ${API_KEY}` },
-    data: { session: longSession(userTurns) },
-  });
-  expect(res.status()).toBe(201);
-  return await res.json();
-}
-
-// Chain F: one secret per redaction rule. `raw` is the full secret that must
-// never reach the DOM; `text` wraps it in prose so the rule fires in context.
-// For `connection-string` the scheme+host legitimately survive (only the
-// credential is redacted), so the test asserts on `needle` (the credential)
-// rather than `raw`.
-export const RULE_SECRETS: { label: string; text: string; raw: string; needle?: string }[] = [
-  {
-    label: 'private-key',
-    raw: '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxF9zUlKb2fElpXQf7U00mJVKoHq7q\n-----END RSA PRIVATE KEY-----',
-    text: 'here: -----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxF9zUlKb2fElpXQf7U00mJVKoHq7q\n-----END RSA PRIVATE KEY-----',
-  },
-  {
-    label: 'jwt',
-    raw: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXw',
-    text: 'jwt: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXw',
-  },
-  {
-    label: 'aws-access-key',
-    raw: 'AKIAIOSFODNN7EXAMPLE',
-    text: 'aws: AKIAIOSFODNN7EXAMPLE',
-  },
-  {
-    // Round 2: the 40-char base64 secret access key (the credential half).
-    label: 'aws-secret-key',
-    raw: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
-    text: 'aws secret: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
-  },
-  {
-    // Round 2: Google API key (AIza + 33 base64url chars).
-    label: 'google-api-key',
-    raw: 'AIzaSyA1234567890abcdefghijklmnopqrst',
-    text: 'google: AIzaSyA1234567890abcdefghijklmnopqrst',
-  },
-  {
-    // Round 2: Anthropic key (sk-ant- prefix) — was only covered in unit tests.
-    label: 'anthropic-key',
-    raw: 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz123456',
-    text: 'anthropic: sk-ant-api03-abcdefghijklmnopqrstuvwxyz123456',
-  },
-  {
-    // Round 2: a keyword-less 32-hex token (bare-token's pure-hex branch).
-    label: 'bare-token',
-    raw: 'c8f5e0a1b2c3d4e5f60718293a4b5c6d',
-    text: 'use c8f5e0a1b2c3d4e5f60718293a4b5c6d here',
-  },
-  {
-    label: 'connection-string',
-    raw: 'postgres://user:secretpw@db.example.com/app',
-    text: 'dsn: postgres://user:secretpw@db.example.com/app',
-    needle: 'secretpw',
-  },
-  {
-    label: 'bearer-token',
-    raw: 'ghp_LIVESECRET0123456789ABCDEF',
-    text: 'auth: Bearer ghp_LIVESECRET0123456789ABCDEF',
-  },
-  {
-    label: 'generic-secret',
-    raw: 'abcd1234efgh5678',
-    text: 'cfg: api_key=abcd1234efgh5678',
-  },
-  {
-    label: 'private-ip',
-    raw: '10.0.0.5',
-    text: 'host 10.0.0.5 seen',
-  },
-  {
-    label: 'local-path',
-    raw: '/home/user/.ssh/id_rsa',
-    text: 'file /home/user/.ssh/id_rsa read',
-  },
-];
-
-export async function createRuleShare(
-  request: APIRequestContext,
-  entry: { label: string; text: string },
-): Promise<{ token: string }> {
-  const res = await request.post('/api/chats', {
-    headers: { authorization: `Bearer ${API_KEY}` },
-    data: {
-      session: {
-        sessionId: `sess_rule_${entry.label}`,
-        title: `Rule ${entry.label}`,
-        model: 'test-model',
-        messages: [
-          {
-            role: 'user',
-            time: new Date(Date.UTC(2026, 0, 1, 12, 0)).toISOString(),
-            parts: [{ type: 'text', text: entry.text }],
-          },
-        ],
-      },
-      preset: 'strict',
-    },
-  });
-  expect(res.status()).toBe(201);
-  const body = await res.json();
-  return { token: body.token };
 }
 
 /**
@@ -399,48 +227,6 @@ export function xssSession(): object {
       },
     ],
   };
-}
-
-export async function createXssShare(request: APIRequestContext): Promise<{ token: string; url: string }> {
-  const res = await request.post('/api/chats', {
-    headers: { authorization: `Bearer ${API_KEY}` },
-    data: { session: xssSession() },
-  });
-  expect(res.status()).toBe(201);
-  return await res.json();
-}
-
-export async function createChunkedShare(
-  request: APIRequestContext,
-  opts: { perChunk?: number } = {},
-): Promise<{ token: string; uploadId: string }> {
-  const perChunk = opts.perChunk ?? 3;
-  const mkChunk = (chunkSeq: number): object => {
-    const messages: object[] = [];
-    for (let i = 0; i < perChunk; i++) {
-      messages.push({
-        role: i % 2 === 0 ? 'user' : 'assistant',
-        time: new Date(Date.UTC(2026, 0, 1, 12, i)).toISOString(),
-        parts: [{ type: 'text', text: `chunk${chunkSeq} message ${i + 1}` }],
-      });
-    }
-    return messages;
-  };
-  const first = await request.post('/api/chats', {
-    headers: { authorization: `Bearer ${API_KEY}` },
-    // Round 7: the server bounds chunkSeq to the share's declared budget
-    // (owner.ts: `chunkSeq >= share.expectedChunks` → 400). A two-chunk share
-    // must declare expectedChunks: 2, or the chunkSeq: 1 POST below is rejected.
-    data: { session: { sessionId: 'sess_chunked', title: 'Chunked E2E', model: 'test-model', messages: mkChunk(0) }, preset: 'strict', expectedChunks: 2 },
-  });
-  expect(first.status()).toBe(201);
-  const firstBody = await first.json();
-  const second = await request.post(`/api/chats/${firstBody.token}/chunks`, {
-    headers: { authorization: `Bearer ${API_KEY}` },
-    data: { uploadId: firstBody.uploadId, chunkSeq: 1, messages: mkChunk(1) },
-  });
-  expect(second.status()).toBe(200);
-  return { token: firstBody.token, uploadId: firstBody.uploadId };
 }
 
 // ---- v2 (sealed shares) ----
