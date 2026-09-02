@@ -1,39 +1,10 @@
-import { Hono, type Context } from 'hono';
+import { type Context } from 'hono';
 import { getConnInfo } from '@hono/node-server/conninfo';
-import { and, asc, eq, gt, or, sql } from 'drizzle-orm';
-import { shares, shareMessages } from '../db/schema.js';
-import type { Db } from '../db/client.js';
 import type { Config } from '../config.js';
-import { UNLOCK_TTL_MS, signUnlockCookie, unlockCookieName, verifyUnlockCookie } from '../security/unlock.js';
+import { UNLOCK_TTL_MS, signUnlockCookie, unlockCookieName } from '../security/unlock.js';
 import { verifyPassword } from '../security/password.js';
-import { RateLimiter, IpWindow } from '../security/rate-limit.js';
+import type { RateLimiter } from '../security/rate-limit.js';
 import { unlockBodySchema } from './schema.js';
-
-// Round 6: the first-page response carries the full-share user-message index
-// (one rail tick per user message, so the viewer can render the whole rail
-// before the transcript lazy-loads). Without a bound, a share at the 1 GB cap
-// with a very large number of user messages makes this projection O(share-size)
-// Postgres work on EVERY first-page load AND ships an enormous userIndex array
-// that the viewer would render as thousands of rail ticks (a client-side DoS).
-// The rail is a convenience — a share with more user messages than this shows
-// the first MAX_RAIL_USER_ENTRIES ticks; the full transcript is still reachable
-// by scrolling. 2000 is far beyond any realistic share and bounds both the
-// query and the rendered DOM.
-const MAX_RAIL_USER_ENTRIES = 2000;
-
-export interface PublicDeps {
-  db: Db;
-  config: Config;
-  unlockLimiter: RateLimiter;
-  // Round 6: a SECOND lockout dimension keyed by token ALONE (no IP). The
-  // per-(token, IP) limiter above is evadable by rotating source IPs; this one
-  // accumulates failures across all IPs for a given token, so an IP-rotating
-  // brute-forcer eventually locks the token. It uses a higher threshold (wired
-  // in app.ts) so ordinary multi-user access (a few people each mistyping once)
-  // does not trip it.
-  tokenLimiter: RateLimiter;
-  ipWindow: IpWindow;
-}
 
 // Chain C: a well-formed IP is a 4-octet IPv4 (each <= 255) or a colon-grouped
 // IPv6. Anything else (a hostname, "not-an-ip", a port, garbage) is rejected so
@@ -89,174 +60,10 @@ export function parseCookie(header: string | undefined, name: string): string | 
   return undefined;
 }
 
-function clampLimit(raw: string | undefined): number {
-  const n = raw === undefined ? 50 : Number.parseInt(raw, 10);
-  return Number.isInteger(n) && n > 0 ? Math.min(n, 200) : 50;
-}
-
-interface Cursor { chunkSeq: number; seq: number }
-// Round 9 (B-F3): the seq columns are int4. Number.parseInt('99999999999999999999')
-// is 1e20 and Number.isInteger(1e20) is TRUE, so an oversized cursor sailed
-// through the old check into SQL, where the int4 cast overflowed and the
-// request 500'd. Clamp to the int32 max so a crafted cursor is just an empty
-// page, never an error.
-const INT32_MAX = 2_147_483_647;
-function parseCursor(raw: string | undefined): Cursor {
-  if (raw === undefined) return { chunkSeq: 0, seq: 0 };
-  const idx = raw.indexOf(':');
-  if (idx < 0) return { chunkSeq: 0, seq: 0 };
-  const chunkSeq = Number.parseInt(raw.slice(0, idx), 10);
-  const seq = Number.parseInt(raw.slice(idx + 1), 10);
-  const clamp = (n: number) => (Number.isInteger(n) && n >= 0 ? Math.min(n, INT32_MAX) : 0);
-  return { chunkSeq: clamp(chunkSeq), seq: clamp(seq) };
-}
-
-/** Unknown and revoked tokens both return null -> identical 404 bodies (no existence oracle). */
-async function activeShareByToken(c: Context, db: Db) {
-  const token = c.req.param('token') ?? '';
-  const rows = await db.select().from(shares).where(eq(shares.token, token)).limit(1);
-  const share = rows[0];
-  if (!share || share.revokedAt) return null;
-  return share;
-}
-
-export function publicRoutes(deps: PublicDeps): Hono {
-  const { db, config } = deps;
-  const app = new Hono();
-
-  app.get('/api/public/chats/:token', async (c) => {
-    if (!deps.ipWindow.allow(clientIp(c, config.trustProxy))) {
-      return c.json({ error: { code: 'rate_limited', message: 'Too many requests' } }, 429);
-    }
-    const share = await activeShareByToken(c, db);
-    if (!share) return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
-    // Round 8: 410 (GONE) for an expired share is DELIBERATE, not an oracle.
-    // The no-existence-oracle invariant covers unknown-vs-revoked tokens (both
-    // return byte-identical 404s above). An expired token was once valid, and
-    // 410 is the semantically correct status for a resource that existed and is
-    // gone; tokens are high-entropy random, so an attacker cannot enumerate
-    // them to distinguish "expired" from "never existed".
-    if (share.expiresAt && share.expiresAt.getTime() <= Date.now()) {
-      return c.json({ error: { code: 'expired', message: 'This share has expired' } }, 410);
-    }
-    // Chain E: a chunked share is not ready until all expected chunks have
-    // arrived. Incomplete shares return the SAME 404 as not-found (no existence
-    // oracle) so a killed upload never serves a partial share as complete.
-    // Round 11 (S-3): completeness is a POINT LOOKUP, not an aggregate. Chunks
-    // arrive contiguously (a chunk is accepted only when chunkSeq = maxSeq + 1,
-    // owner.ts) and each is written atomically, so the present chunk set is
-    // always {0..M}; the share is complete iff the LAST expected chunk
-    // (chunk_seq = expectedChunks - 1) exists. Checking that one row is an O(1)
-    // PK seek on (share_id, chunk_seq) — the old count(distinct chunk_seq)
-    // scanned every message row of the share (O(share-size)) on EVERY page
-    // load. (A max(chunk_seq) aggregate was tried first but Postgres does not
-    // apply the backward min/max index optimization for this composite PK, so
-    // it still scanned all rows — the point lookup is the real O(1).)
-    const [lastChunk] = await db
-      .select({ one: sql<number>`1` })
-      .from(shareMessages)
-      .where(and(eq(shareMessages.shareId, share.id), eq(shareMessages.chunkSeq, (share.expectedChunks ?? 1) - 1)))
-      .limit(1);
-    if (!lastChunk) {
-      return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
-    }
-    if (share.passwordHash) {
-      const value = parseCookie(c.req.header('cookie'), unlockCookieName(share.token));
-      if (!verifyUnlockCookie(config.unlockSecret, share.token, value)) {
-        return c.json({ error: { code: 'needs_password', message: 'This share is password protected' } }, 401);
-      }
-    }
-    const limit = clampLimit(c.req.query('limit'));
-    const rawCursor = c.req.query('cursor');
-    const { chunkSeq, seq } = parseCursor(rawCursor);
-    const after = or(
-      gt(shareMessages.chunkSeq, chunkSeq),
-      and(eq(shareMessages.chunkSeq, chunkSeq), gt(shareMessages.seq, seq)),
-    );
-    const [rows, userRows] = await Promise.all([
-      db
-        .select()
-        .from(shareMessages)
-        .where(and(eq(shareMessages.shareId, share.id), after))
-        .orderBy(asc(shareMessages.chunkSeq), asc(shareMessages.seq))
-        .limit(limit),
-      // The rail renders one tick per user message for the WHOLE share, so the
-      // viewer needs the full user-message index up front (not just the loaded
-      // page). Chain B: the preview is computed SERVER-SIDE via jsonb extraction
-      // (first non-empty text part, left 80) instead of selecting the full
-      // `parts` jsonb for every user message — a long share would otherwise
-      // ship its entire transcript in this tiny projection.
-      rawCursor === undefined
-        ? db
-            .select({
-              chunkSeq: shareMessages.chunkSeq,
-              seq: shareMessages.seq,
-              preview: sql<string>`left(
-                coalesce(
-                  (select (elem->>'text') from jsonb_array_elements("parts") as elem
-                    where elem->>'type' = 'text' and coalesce((elem->>'text'),'') <> ''
-                    limit 1),
-                  ''
-                ), 80)`,
-            })
-            .from(shareMessages)
-            .where(and(eq(shareMessages.shareId, share.id), eq(shareMessages.role, 'user')))
-            .orderBy(asc(shareMessages.chunkSeq), asc(shareMessages.seq))
-            .limit(MAX_RAIL_USER_ENTRIES)
-        : Promise.resolve([] as { chunkSeq: number; seq: number; preview: string }[]),
-    ]);
-    const last = rows[rows.length - 1];
-    const nextCursor = rows.length === limit && last ? `${last.chunkSeq}:${last.seq}` : null;
-    return c.json({
-      meta: {
-        title: share.title,
-        model: share.model,
-        provider: share.provider,
-        createdAt: share.createdAt,
-        expiresAt: share.expiresAt,
-        messageCount: share.messageCount,
-        redactions: share.redactions,
-      },
-      messages: rows.map((r) => ({ chunkSeq: r.chunkSeq, seq: r.seq, role: r.role, time: r.time, parts: r.parts })),
-      userIndex: rawCursor === undefined ? userRows.map((r) => ({ chunkSeq: r.chunkSeq, seq: r.seq, preview: (r.preview ?? '').replace(/\s+/g, ' ').trim() })) : undefined,
-      nextCursor,
-    });
-  });
-
-  app.post('/api/public/chats/:token/unlock', async (c) => {
-    // Round 11 (S-1): the failure lockout below only fires on the 401
-    // wrong-password path. The 400 (malformed body), 404 (unknown token / no
-    // password) and 410 (expired) paths had NO volume bound — an attacker
-    // could fire unbounded unlock requests (each a full share DB lookup plus a
-    // full JSON parse of up to a 20 MB body) for CPU/DB DoS and unlimited
-    // token probing. The same per-IP volume window that gates the content GET
-    // now gates unlock too, so total per-IP volume on this endpoint is bounded
-    // regardless of which path each request hits.
-    if (!deps.ipWindow.allow(clientIp(c, config.trustProxy))) {
-      return c.json({ error: { code: 'rate_limited', message: 'Too many requests' } }, 429);
-    }
-    const share = await activeShareByToken(c, db);
-    if (!share) return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
-    // Round 8: same deliberate 410 for the expired case (see the GET handler).
-    if (share.expiresAt && share.expiresAt.getTime() <= Date.now()) {
-      return c.json({ error: { code: 'expired', message: 'This share has expired' } }, 410);
-    }
-    // A live share without a password returns the same 404 as an unknown token:
-    // a distinct no_password response would let an attacker separate live from
-    // dead tokens (a liveness oracle).
-    if (!share.passwordHash) {
-      return c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
-    }
-    return checkUnlock(c, { unlockLimiter: deps.unlockLimiter, tokenLimiter: deps.tokenLimiter, config }, share.token, share.passwordHash);
-  });
-
-  return app;
-}
-
 /**
- * Shared v1/v2 unlock core, called after the route's own gating (404 unknown,
- * 410 expired, 404 no-password). `shareId` is the share identifier (v1 token /
- * v2 publicId): it drives the cookie name and both lockout keys. Two lockout
+ * Shared unlock core for the v2 public routes, called after the route's own
+ * gating (404 unknown, 410 expired, 404 no-password). `shareId` is the share's
+ * publicId: it drives the cookie name and both lockout keys. Two lockout
  * dimensions (Round 6): per-(shareId, IP) for the normal case, plus a
  * per-shareId (IP-independent) dimension so an IP-rotating brute-forcer cannot
  * evade the lock by cycling source addresses. Either tripping it locks the
@@ -292,7 +99,7 @@ export async function checkUnlock(
   return c.json({ ok: true });
 }
 
-/** Sets the stateless unlock cookie for a share (v1 and v2 share the shape). */
+/** Sets the stateless unlock cookie for a share. */
 export function setUnlockCookie(c: Context, config: Config, shareId: string): void {
   const value = signUnlockCookie(config.unlockSecret, shareId, Date.now() + UNLOCK_TTL_MS);
   c.header('Set-Cookie', `${unlockCookieName(shareId)}=${value}; HttpOnly; Secure; SameSite=Strict; Max-Age=1800; Path=/`);

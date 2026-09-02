@@ -52,9 +52,8 @@ export const shapedSessionSchema = z
     title: z.string().min(1).max(500),
     model: z.string().max(200).optional(),
     provider: z.string().max(200).optional(),
-    // Round 10 (I1): .min(1) — a zero-message session would create a share whose
-    // chunk 0 has 0 rows, so the public endpoint's count(distinct chunk_seq) <
-    // expectedChunks check 404s it FOREVER. Matches chunkBodySchema's .min(1).
+// .min(1): a zero-message session would create a share whose first page
+// has 0 rows, so the public endpoint would 404 it forever.
     messages: z.array(messageSchema).min(1).max(100_000),
   })
   .strict();
@@ -63,48 +62,7 @@ export const unlockBodySchema = z.object({ password: z.string().min(1).max(200) 
 
 export const patchBodySchema = z
   .object({
-    password: z.string().min(1).max(200).nullable().optional(),
-    expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
-    revoke: z.boolean().optional(),
-    // Task 7: v2 shares support title updates (v1 titles are set at create).
     title: z.string().min(1).max(200).optional(),
+    expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
   })
   .strict();
-
-export type ShapedSession = z.infer<typeof shapedSessionSchema>;
-
-const presetSchema = z.enum(['strict', 'normal', 'none']);
-
-export const previewBodySchema = z
-  .object({ session: shapedSessionSchema, preset: presetSchema.default('strict') })
-  .strict();
-
-export const createBodySchema = z
-  .object({
-    session: shapedSessionSchema,
-    preset: presetSchema.default('strict'),
-    password: z.string().min(1).max(200).optional(),
-    expiresAt: z.string().datetime({ offset: true }).optional(),
-    // Chain E: how many chunks the publisher will send. The public endpoint
-    // returns 404 until this many distinct chunkSeqs have arrived, so a killed
-    // upload never serves a partial share as complete. Default 1 (single upload).
-    expectedChunks: z.number().int().positive().max(10_000).default(1),
-  })
-  .strict();
-
-export const chunkBodySchema = z
-  .object({
-    uploadId: z.string().min(1).max(64),
-    chunkSeq: z.number().int().nonnegative(),
-    // Round 9 (B-F7): an empty chunk is a no-op that used to be accepted, and
-    // a duplicate EMPTY chunk was not a 409 (the dup check counts rows, so 0
-    // rows looked like "not uploaded" and the same chunk could be re-sent
-    // forever). .min(1) makes both a 400.
-    messages: z.array(messageSchema).min(1),
-  })
-  .strict();
-
-export type ChunkBody = z.infer<typeof chunkBodySchema>;
-
-export type PreviewBody = z.infer<typeof previewBodySchema>;
-export type CreateBody = z.infer<typeof createBodySchema>;

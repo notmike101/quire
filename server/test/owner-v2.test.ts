@@ -7,7 +7,7 @@ import { sharesV2, shareSourceChunksV2, shareBlobsV2 } from '../src/db/schema.js
 import { sql } from 'drizzle-orm';
 
 const url = process.env.DATABASE_URL ?? 'postgres://quire:quire@localhost:54329/quire_test';
-const config = { databaseUrl: url, apiKey: 'a'.repeat(64), unlockSecret: 'b'.repeat(64), port: 8787, webDist: '', v2WriteEnabled: true };
+const config = { databaseUrl: url, apiKey: 'a'.repeat(64), unlockSecret: 'b'.repeat(64), port: 8787, webDist: '' };
 const auth = { authorization: `Bearer ${'a'.repeat(64)}`, 'content-type': 'application/json' };
 
 // Test-only material: one random content key for the whole file (never
