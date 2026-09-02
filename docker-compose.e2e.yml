@@ -12,6 +12,10 @@ services:
       # in the E2E stack; v1 reads stay on (the suite covers both formats).
       QUIRE_V2_WRITE_ENABLED: "true"
       QUIRE_V1_READS_ENABLED: "true"
+      # The E2E client is a single IP that legitimately exceeds the production
+      # 120 req/60s public volume window across the v1+v2 suites; raise it so
+      # the suite never trips the 429 (the 429 path stays unit-tested).
+      QUIRE_PUBLIC_RATE_LIMIT: "100000"
 
   postgres:
     environment:

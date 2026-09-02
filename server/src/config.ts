@@ -25,6 +25,11 @@ export interface Config {
   // public read routes return 404; v1 owner reads and the v1 table are
   // untouched.
   v1ReadsEnabled?: boolean;
+  // Public per-IP volume window: max public requests per IP per fixed 60s
+  // window. Defaults to 120 (the production security bound, see IpWindow);
+  // the E2E stack raises it because the single test client IP exceeds 120
+  // public requests/minute across the v1+v2 suites.
+  publicRateLimit?: number;
 }
 
 const schema = z.object({
@@ -47,6 +52,10 @@ const schema = z.object({
   // false makes the v1 public read routes return 404 (v1 owner reads and the
   // v1 table are untouched). Flipped immediately once v2 is verified.
   QUIRE_V1_READS_ENABLED: z.enum(['true', 'false']).default('true'),
+  // Public per-IP volume window limit (requests per fixed 60s window). 120
+  // is the production bound; the E2E stack raises it (single test client IP,
+  // v1+v2 suite volume). The 429 path itself stays unit-tested.
+  QUIRE_PUBLIC_RATE_LIMIT: z.coerce.number().int().positive().default(120),
 });
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = schema.safeParse(env);
@@ -63,5 +72,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy: parsed.data.TRUST_PROXY === 'true',
     v2WriteEnabled: parsed.data.QUIRE_V2_WRITE_ENABLED === 'true',
     v1ReadsEnabled: parsed.data.QUIRE_V1_READS_ENABLED === 'true',
+    publicRateLimit: parsed.data.QUIRE_PUBLIC_RATE_LIMIT,
   };
 }

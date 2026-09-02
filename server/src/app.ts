@@ -55,7 +55,7 @@ export function createApp(deps: AppDeps): Hono {
   // not attacker-cyclable), so its sub-threshold counters are kept (a slow
   // per-token attack accumulates to 25 instead of being reset by a prune).
   const tokenLimiter = deps.tokenLimiter ?? new RateLimiter(25, 15 * 60 * 1000, undefined, new PostgresLockoutStore(deps.db, 25, 15 * 60 * 1000, 'tok:', false));
-  const ipWindow = deps.ipWindow ?? new IpWindow();
+  const ipWindow = deps.ipWindow ?? new IpWindow(deps.config.publicRateLimit);
   // Canary (Task 14): v2 write gate. When QUIRE_V2_WRITE_ENABLED is not
   // explicitly true (the deployment default), the v2 ingestion routes
   // (create / chunk / finalize) return the uniform 404 — byte-identical to an
