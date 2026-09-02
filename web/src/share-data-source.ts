@@ -1,12 +1,12 @@
-import { shareApi, ShareError, type PageResponse } from './api';
+import { ShareError, type PageResponse } from './api';
 import { createV2DataSource } from './share-v2/data-source';
 import { parseContentKeyFragment } from './share-v2/crypto';
 
 /**
  * The data source behind useMessages. A URL whose fragment carries a 32-byte
  * content key is a sealed v2 share (blobs are fetched and decrypted in the
- * browser); anything else is a v1 share, served by the existing api.ts
- * functions with unchanged behavior.
+ * browser); anything else gets a local error source — the missing-key page —
+ * with zero network calls.
  */
 export interface ShareDataSource {
   loadFirst(): Promise<PageResponse | ShareError>;
@@ -17,31 +17,10 @@ export interface ShareDataSource {
 export function createDataSource(shareId: string, fragment: string): ShareDataSource {
   const key = parseContentKeyFragment(fragment);
   if (key) return createV2DataSource(shareId, key);
-  return createV1DataSource(shareId);
-}
-
-// Wraps the v1 API so the data source contract holds: loadFirst/loadNext
-// never throw (network failures become the same generic errors the
-// composable used to produce) and unlock rejects with a ShareError.
-function createV1DataSource(token: string): ShareDataSource {
-  const api = shareApi(token);
+  const err = new ShareError(0, 'error', 'This link is missing its content key. Ask the owner for the full share URL, including the part after the #.');
   return {
-    async loadFirst(): Promise<PageResponse | ShareError> {
-      try {
-        return await api.page(50);
-      } catch (err) {
-        return err instanceof ShareError ? err : new ShareError(0, 'http', 'Something went wrong loading this share.');
-      }
-    },
-    async loadNext(cursor: string): Promise<PageResponse | ShareError> {
-      try {
-        return await api.page(50, cursor);
-      } catch (err) {
-        return err instanceof ShareError ? err : new ShareError(0, 'http', 'Failed to load more messages.');
-      }
-    },
-    async unlock(password: string): Promise<void> {
-      await api.unlock(password);
-    },
+    loadFirst: async () => err,
+    loadNext: async () => err,
+    unlock: async () => { throw err; },
   };
 }

@@ -1,33 +1,13 @@
 // @vitest-environment node
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { randomBytes } from 'node:crypto';
-import { gzipSync } from 'node:zlib';
-import { blobAad, layoutBlob, SHARE_PROTOCOL, type BlobKind, type ShareMessageV1 } from '@quire/protocol';
+import { SHARE_PROTOCOL, type BlobKind, type ShareMessageV1 } from '@quire/protocol';
 import { createDataSource } from '../src/share-data-source';
 import { ShareError, type PageResponse } from '../src/api';
+import { mockFetch, seal, TEST_FRAGMENT, TEST_KEY, type V2Route } from './v2-helpers';
 
 const SHARE_ID = 'share-abc123';
-// Test key 0x00..0x1f — fixed, not a secret (same convention as share-v2-crypto.test.ts).
-const KEY = new Uint8Array(32).map((_, i) => i);
-const FRAGMENT = Buffer.from(KEY).toString('base64url');
-
-type View = Uint8Array<ArrayBuffer>;
-
-async function seal(key: Uint8Array, kind: BlobKind, seq: number, value: unknown): Promise<ArrayBuffer> {
-  const plain = gzipSync(Buffer.from(JSON.stringify(value), 'utf8'));
-  const nonce = randomBytes(12);
-  const subtle = globalThis.crypto.subtle;
-  const cryptoKey = await subtle.importKey('raw', key as View, { name: 'AES-GCM' }, false, ['encrypt']);
-  const cipher = await subtle.encrypt(
-    { name: 'AES-GCM', iv: nonce as View, additionalData: blobAad(SHARE_ID, kind, seq) as View },
-    cryptoKey,
-    plain,
-  );
-  const bytes = layoutBlob(nonce, new Uint8Array(cipher));
-  const out = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(out).set(bytes);
-  return out;
-}
+const KEY = TEST_KEY;
+const FRAGMENT = TEST_FRAGMENT;
 
 const msg = (seq: number, role: 'user' | 'assistant', text: string): ShareMessageV1 => ({
   chunkSeq: 0,
@@ -52,23 +32,7 @@ const PAGE0 = { protocol: SHARE_PROTOCOL, shareId: SHARE_ID, seq: 0, messages: [
 const PAGE1 = { protocol: SHARE_PROTOCOL, shareId: SHARE_ID, seq: 1, messages: [msg(3, 'user', 'second page')] };
 const PAGE2 = { protocol: SHARE_PROTOCOL, shareId: SHARE_ID, seq: 2, messages: [msg(4, 'assistant', 'last page')] };
 
-type Route = { status: number; body?: unknown; blob?: ArrayBuffer };
-
-function mockFetch(routes: Record<string, Route>) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    const route = routes[url];
-    if (!route) throw new Error(`unexpected fetch: ${url}`);
-    if (route.blob !== undefined) {
-      return { ok: route.status < 300, status: route.status, arrayBuffer: async () => route.blob };
-    }
-    return { ok: route.status < 300, status: route.status, json: async () => route.body, text: async () => JSON.stringify(route.body) };
-  });
-  vi.stubGlobal('fetch', fetchMock);
-  return fetchMock;
-}
-
-function v2Routes(overrides: Record<string, Route> = {}): Record<string, Route> {
+function v2Routes(overrides: Record<string, V2Route> = {}): Record<string, V2Route> {
   return {
     [`/api/v2/public/shares/${SHARE_ID}/bootstrap`]: {
       status: 200,
@@ -78,13 +42,13 @@ function v2Routes(overrides: Record<string, Route> = {}): Record<string, Route> 
   };
 }
 
-async function v2BlobRoutes(manifest: object = MANIFEST, pages: Record<number, object> = { 0: PAGE0, 1: PAGE1 }): Promise<Record<string, Route>> {
-  const routes: Record<string, Route> = {
-    [`/api/v2/public/shares/${SHARE_ID}/blobs/manifest/0`]: { status: 200, blob: await seal(KEY, 'manifest', 0, manifest) },
-    [`/api/v2/public/shares/${SHARE_ID}/blobs/index/0`]: { status: 200, blob: await seal(KEY, 'index', 0, INDEX) },
+async function v2BlobRoutes(manifest: object = MANIFEST, pages: Record<number, object> = { 0: PAGE0, 1: PAGE1 }): Promise<Record<string, V2Route>> {
+  const routes: Record<string, V2Route> = {
+    [`/api/v2/public/shares/${SHARE_ID}/blobs/manifest/0`]: { status: 200, blob: await seal(SHARE_ID, KEY, 'manifest', 0, manifest) },
+    [`/api/v2/public/shares/${SHARE_ID}/blobs/index/0`]: { status: 200, blob: await seal(SHARE_ID, KEY, 'index', 0, INDEX) },
   };
   for (const [seq, page] of Object.entries(pages)) {
-    routes[`/api/v2/public/shares/${SHARE_ID}/blobs/page/${seq}`] = { status: 200, blob: await seal(KEY, 'page', Number(seq), page) };
+    routes[`/api/v2/public/shares/${SHARE_ID}/blobs/page/${seq}`] = { status: 200, blob: await seal(SHARE_ID, KEY, 'page', Number(seq), page) };
   }
   return routes;
 }
@@ -105,13 +69,13 @@ describe('createDataSource routing', () => {
     expect(fetchMock.mock.calls[0]![0]).toBe(`/api/v2/public/shares/${SHARE_ID}/bootstrap`);
   });
 
-  it('returns the v1 source for an empty or invalid fragment', async () => {
-    const v1Page: PageResponse = { meta: META, messages: [msg(1, 'user', 'v1')], nextCursor: null };
+  it('returns an error source for an empty or invalid fragment', async () => {
     for (const fragment of ['', 'not-a-key', FRAGMENT.slice(0, 10)]) {
-      const fetchMock = mockFetch({ '/api/public/chats/tok?limit=50': { status: 200, body: v1Page } });
+      const fetchMock = mockFetch({});
       const res = await createDataSource('tok', fragment).loadFirst();
-      expect(res).not.toBeInstanceOf(ShareError);
-      expect(fetchMock.mock.calls[0]![0]).toBe('/api/public/chats/tok?limit=50');
+      expect(res).toBeInstanceOf(ShareError);
+      expect((res as ShareError).message).toBe('This link is missing its content key. Ask the owner for the full share URL, including the part after the #.');
+      expect(fetchMock).not.toHaveBeenCalled();
       vi.unstubAllGlobals();
     }
   });
@@ -167,7 +131,7 @@ describe('v2 data source', () => {
     const wrongKey = new Uint8Array(KEY);
     wrongKey[0]! ^= 0xff;
     const routes = { ...v2Routes(), ...(await v2BlobRoutes()) };
-    routes[`/api/v2/public/shares/${SHARE_ID}/blobs/page/0`] = { status: 200, blob: await seal(wrongKey, 'page', 0, PAGE0) };
+    routes[`/api/v2/public/shares/${SHARE_ID}/blobs/page/0`] = { status: 200, blob: await seal(SHARE_ID, wrongKey, 'page', 0, PAGE0) };
     mockFetch(routes);
     const res = await createDataSource(SHARE_ID, FRAGMENT).loadFirst();
     expect(res).toBeInstanceOf(ShareError);
@@ -178,7 +142,7 @@ describe('v2 data source', () => {
 
   it('returns a generic load error when a decrypted blob fails to parse', async () => {
     const routes = { ...v2Routes(), ...(await v2BlobRoutes()) };
-    routes[`/api/v2/public/shares/${SHARE_ID}/blobs/page/0`] = { status: 200, blob: await seal(KEY, 'page', 0, { junk: true }) };
+    routes[`/api/v2/public/shares/${SHARE_ID}/blobs/page/0`] = { status: 200, blob: await seal(SHARE_ID, KEY, 'page', 0, { junk: true }) };
     mockFetch(routes);
     const res = await createDataSource(SHARE_ID, FRAGMENT).loadFirst();
     expect(res).toBeInstanceOf(ShareError);
@@ -192,28 +156,5 @@ describe('v2 data source', () => {
     await expect(createDataSource(SHARE_ID, FRAGMENT).unlock('wrong')).rejects.toBeInstanceOf(ShareError);
     mockFetch({ [`/api/v2/public/shares/${SHARE_ID}/unlock`]: { status: 200, body: { ok: true } } });
     await expect(createDataSource(SHARE_ID, FRAGMENT).unlock('right')).resolves.toBeUndefined();
-  });
-});
-
-describe('v1 data source wrapper', () => {
-  it('delegates loadFirst/loadNext to the existing v1 API', async () => {
-    const first: PageResponse = { meta: META, messages: [msg(1, 'user', 'a')], nextCursor: 'c1' };
-    const second: PageResponse = { meta: META, messages: [msg(2, 'assistant', 'b')], nextCursor: null };
-    mockFetch({
-      '/api/public/chats/tok?limit=50': { status: 200, body: first },
-      '/api/public/chats/tok?limit=50&cursor=c1': { status: 200, body: second },
-    });
-    const src = createDataSource('tok', '');
-    expect(await src.loadFirst()).toEqual(first);
-    expect(await src.loadNext('c1')).toEqual(second);
-  });
-
-  it('maps a v1 401 to a needs_password ShareError', async () => {
-    mockFetch({
-      '/api/public/chats/tok?limit=50': { status: 401, body: { error: { code: 'needs_password', message: 'This share is password protected' } } },
-    });
-    const res = await createDataSource('tok', '').loadFirst();
-    expect(res).toBeInstanceOf(ShareError);
-    expect((res as ShareError).code).toBe('needs_password');
   });
 });
