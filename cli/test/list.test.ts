@@ -4,20 +4,23 @@ import type { ShareMeta } from '../src/api.js';
 
 function shareMeta(overrides: Partial<ShareMeta> = {}): ShareMeta {
   return {
-    token: 'abcdefgh1234567890',
+    id: '1',
+    publicId: 'abcdefgh1234567890',
     title: 'My session',
-    createdAt: '2026-08-20T00:00:00Z',
-    expiresAt: null,
-    hasPassword: false,
-    revoked: false,
-    messageCount: 1,
     preset: 'strict',
+    expiresAt: null,
+    messageCount: 1,
+    bytes: 0,
+    redactions: {},
+    createdAt: '2026-08-20T00:00:00Z',
+    state: 'ready',
+    format: 'v2',
     ...overrides,
   };
 }
 
 describe('runList', () => {
-  it('prints a table with the token prefix and title', async () => {
+  it('prints a table with the id prefix and title', async () => {
     const api = { list: vi.fn(async () => ({ shares: [shareMeta()] })) };
     const lines: string[] = [];
     await runList(api as never, (l) => lines.push(l));

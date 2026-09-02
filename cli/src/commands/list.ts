@@ -8,15 +8,14 @@ export async function runList(api: QuireApi = new QuireApi(), out: (line: string
     return;
   }
   const rows = shares.map((s) => [
-    s.token.slice(0, 8),
-    stripControlChars(s.title).slice(0, 40),
+    s.publicId.slice(0, 8),
+    stripControlChars(s.title ?? '—').slice(0, 40),
     new Date(s.createdAt).toISOString().slice(0, 10),
     s.expiresAt ? new Date(s.expiresAt).toISOString().slice(0, 10) : '—',
-    s.hasPassword ? 'yes' : 'no',
-    s.revoked ? 'REVOKED' : '',
+    s.state,
   ]);
   const widths = rows[0]!.map((_, i) => Math.max(rows[0]![i]!.length, ...rows.map((r) => r[i]!.length)));
   const line = (r: string[]) => r.map((cell, i) => cell.padEnd(widths[i]!)).join('  ');
-  out(line(['TOKEN', 'TITLE', 'CREATED', 'EXPIRES', 'PASSWORD', '']));
+  out(line(['ID', 'TITLE', 'CREATED', 'EXPIRES', 'STATE']));
   for (const r of rows) out(line(r));
 }

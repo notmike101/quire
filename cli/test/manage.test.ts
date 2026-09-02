@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -10,12 +10,12 @@ const cliRoot = join(dir, '..');
 const indexTs = join(cliRoot, 'src', 'index.ts');
 
 describe('runList (unit)', () => {
-  it('renders a table with a REVOKED marker', async () => {
+  it('renders the v2 owner table (id, title, dates, state)', async () => {
     const fakeApi = {
       list: vi.fn(async () => ({
         shares: [
-          { token: 'abcdefgh1234567890abcd', title: 'A'.repeat(60), createdAt: '2026-08-20T00:00:00Z', expiresAt: null, hasPassword: true, revoked: false, messageCount: 3, preset: 'strict' },
-          { token: 'ijklmnop1234567890ijkl', title: 'Dead', createdAt: '2026-08-21T00:00:00Z', expiresAt: '2026-08-22T00:00:00Z', hasPassword: false, revoked: true, messageCount: 1, preset: 'normal' },
+          { id: '1', publicId: 'abcdefgh1234567890abcd', title: 'A'.repeat(60), preset: 'strict', expiresAt: null, messageCount: 3, bytes: 0, redactions: {}, createdAt: '2026-08-20T00:00:00Z', state: 'ready', format: 'v2' },
+          { id: '2', publicId: 'ijklmnop1234567890ijkl', title: null, preset: 'normal', expiresAt: '2026-08-22T00:00:00Z', messageCount: 1, bytes: 0, redactions: {}, createdAt: '2026-08-21T00:00:00Z', state: 'uploading', format: 'v2' },
         ],
       })),
     };
@@ -24,41 +24,22 @@ describe('runList (unit)', () => {
     await runList(fakeApi as never, (l) => lines.push(l));
     const table = lines.join('\n');
     expect(table).toContain('abcdefgh');
-    expect(table).toContain('REVOKED');
-    expect(table).toContain('yes');
+    expect(table).toContain('ijklmnop');
+    expect(table).toContain('ready');
+    expect(table).toContain('uploading');
+    expect(table).toContain('ijklmnop  —'); // null title renders as an em dash
     expect(table).not.toContain('A'.repeat(41)); // title clipped to 40
+    expect(table).not.toContain('PASSWORD');
+    expect(table).not.toContain('REVOKED');
   });
 });
 
 describe('runUpdate (unit)', () => {
-  it('PATCHes parsed expiry and password', async () => {
+  it('PATCHes the parsed expiry', async () => {
     const fakeApi = { patch: vi.fn(async () => ({ ok: true })) };
     const { runUpdate } = await import('../src/commands/update.js');
-    await runUpdate('tok123', { password: 'pw', expires: '7d' }, fakeApi as never);
-    expect(fakeApi.patch).toHaveBeenCalledWith('tok123', expect.objectContaining({ password: 'pw', expiresAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) }));
-  });
-
-  it('--password random generates a secret for the PATCH and prints it once (Round 11)', async () => {
-    // A generated password is hashed server-side and never returned — if the
-    // update doesn't print it, the owner is locked out (mirrors publish.ts).
-    const fakeApi = { patch: vi.fn(async (_token: string, _body: { password?: string; expiresAt?: string }) => ({ ok: true })) };
-    const { runUpdate } = await import('../src/commands/update.js');
-    const lines: string[] = [];
-    await runUpdate('tok123', { password: 'random' }, fakeApi as never, (l) => lines.push(l));
-    const sent = (fakeApi.patch.mock.calls[0]![1] as { password: string }).password;
-    expect(sent).toMatch(/^[A-Za-z0-9_-]{22}$/);
-    const printed = lines.filter((l) => l.startsWith('Password: '));
-    expect(printed).toHaveLength(1);
-    expect(printed[0]).toBe(`Password: ${sent}`);
-  });
-
-  it('--password with a literal value is sent as-is and not printed (Round 11)', async () => {
-    const fakeApi = { patch: vi.fn(async () => ({ ok: true })) };
-    const { runUpdate } = await import('../src/commands/update.js');
-    const lines: string[] = [];
-    await runUpdate('tok123', { password: 'hunter2' }, fakeApi as never, (l) => lines.push(l));
-    expect(fakeApi.patch).toHaveBeenCalledWith('tok123', expect.objectContaining({ password: 'hunter2' }));
-    expect(lines.some((l) => l.startsWith('Password: '))).toBe(false);
+    await runUpdate('tok123', { expires: '7d' }, fakeApi as never);
+    expect(fakeApi.patch).toHaveBeenCalledWith('tok123', { expiresAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
   });
 
   it('refuses to run with nothing to update', async () => {

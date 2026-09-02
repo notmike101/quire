@@ -50,10 +50,6 @@ function makeV2Api() {
     api: {
       baseUrl: 'https://srv.example.com',
       origin: 'https://srv.example.com',
-      // v2 has no preview endpoint; if the v1 flow runs, this throws.
-      preview: vi.fn(async () => {
-        throw new Error('v2 must not call the v1 preview endpoint');
-      }),
       createV2Share: create,
       uploadV2Chunk: vi.fn(async (_shareId: string, seq: number) => ({
         acceptedSourceChunk: seq,
@@ -68,24 +64,12 @@ function makeV2Api() {
   };
 }
 
-function makeV1Api() {
-  return {
-    baseUrl: 'https://srv.example.com',
-    origin: 'https://srv.example.com',
-    preview: vi.fn(async () => ({ messages: [], summary: { 'aws-access-key': 1 }, bytes: 10, messageCount: 1 })),
-    create: vi.fn(async () => ({ token: 't'.repeat(22), url: `/chats/${'t'.repeat(22)}`, summary: { 'aws-access-key': 1 }, bytes: 10, messageCount: 1 })),
-    createV2Share: vi.fn(async () => {
-      throw new Error('v1 must not call the v2 create endpoint');
-    }),
-  };
-}
-
-describe('runPublish --format (unit)', () => {
-  it('--format v2 runs publishV2 and prints the fragment URL plus the v1-style summary', async () => {
+describe('runPublish (unit)', () => {
+  it('publishes v2 and prints the fragment URL plus the summary', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
     const { api, create, finalize } = makeV2Api();
     const lines: string[] = [];
-    await runPublish({ current: true, yes: true, format: 'v2' }, [], { adapter: fakeAdapter as never, api, out: (l) => lines.push(l) });
+    await runPublish({ current: true, yes: true }, [], { adapter: fakeAdapter as never, api, out: (l) => lines.push(l) });
 
     const text = lines.join('\n');
     const published = text.split('\n').find((l) => l.startsWith('Published: '));
@@ -103,11 +87,11 @@ describe('runPublish --format (unit)', () => {
     expect(body.session.sessionId).toBe('sess_a');
   });
 
-  it('--format v2 sends preset, password, and expiry to publishV2', async () => {
+  it('sends preset, password, and expiry to publishV2', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
     const { api, create } = makeV2Api();
     await runPublish(
-      { current: true, yes: true, format: 'v2', preset: 'normal', password: 'hunter2', expires: 'tomorrow' },
+      { current: true, yes: true, preset: 'normal', password: 'hunter2', expires: 'tomorrow' },
       [],
       { adapter: fakeAdapter as never, api, out: () => {} },
     );
@@ -116,41 +100,11 @@ describe('runPublish --format (unit)', () => {
     expect(body.password).toBe('hunter2');
     expect(body.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   });
-
-  it('default (no --format) keeps the v1 flow: preview + create, no v2 calls', async () => {
-    const { runPublish } = await import('../src/commands/publish.js');
-    const v1 = makeV1Api();
-    const lines: string[] = [];
-    await runPublish({ current: true, yes: true }, [], { adapter: fakeAdapter as never, api: v1 as never, out: (l) => lines.push(l) });
-    expect(v1.preview).toHaveBeenCalledTimes(1);
-    expect(v1.create).toHaveBeenCalledTimes(1);
-    expect(v1.createV2Share).not.toHaveBeenCalled();
-    const published = lines.join('\n').split('\n').find((l) => l.startsWith('Published: '));
-    expect(published).toBeDefined();
-    expect(published).not.toContain('#'); // v1 URLs carry no fragment
-  });
-
-  it('--format v1 explicitly keeps the v1 flow', async () => {
-    const { runPublish } = await import('../src/commands/publish.js');
-    const v1 = makeV1Api();
-    await runPublish({ current: true, yes: true, format: 'v1' }, [], { adapter: fakeAdapter as never, api: v1 as never, out: () => {} });
-    expect(v1.create).toHaveBeenCalledTimes(1);
-    expect(v1.createV2Share).not.toHaveBeenCalled();
-  });
-
-  it('rejects an unknown --format before publishing', async () => {
-    const { runPublish } = await import('../src/commands/publish.js');
-    const { api, create } = makeV2Api();
-    await expect(
-      runPublish({ current: true, yes: true, format: 'v3' }, [], { adapter: fakeAdapter as never, api, out: () => {} }),
-    ).rejects.toThrow(/unknown --format/);
-    expect(create).not.toHaveBeenCalled();
-  });
 });
 
 // ---------- process-level tests (real CLI, mock v2 server, temp home) ----------
 
-describe('runPublish --format v2 (process)', () => {
+describe('runPublish (process)', () => {
   let server: Server;
   let baseUrl: string;
   let tempHome: string;
@@ -232,9 +186,9 @@ describe('runPublish --format v2 (process)', () => {
     return path;
   }
 
-  it('--format v2 publishes through the v2 endpoints and prints the fragment URL', { timeout: 30000 }, async () => {
+  it('publishes through the v2 endpoints and prints the fragment URL', { timeout: 30000 }, async () => {
     const path = ompExport();
-    const { code, stdout, stderr } = await runCli(['publish', path, '--harness', 'omp', '--format', 'v2', '--yes']);
+    const { code, stdout, stderr } = await runCli(['publish', path, '--harness', 'omp', '--yes']);
     expect(code, `stderr: ${stderr}`).toBe(0);
 
     const published = stdout.split(/\r?\n/).find((l) => l.startsWith('Published: '));
@@ -255,7 +209,7 @@ describe('runPublish --format v2 (process)', () => {
     expect(createBody.session.sessionId).toBe('omp-v2-1');
   });
 
-  it('no --format defaults to v2 (the canary default)', { timeout: 30000 }, async () => {
+  it('publishes v2 by default', { timeout: 30000 }, async () => {
     const path = ompExport();
     const before = v2Calls.length;
     const { code, stdout, stderr } = await runCli(['publish', path, '--harness', 'omp', '--yes']);
@@ -265,7 +219,7 @@ describe('runPublish --format v2 (process)', () => {
     expect(published).toBeDefined();
     const url = published!.slice('Published: '.length).trim();
     expect(url.startsWith(`${baseUrl}/chats/v2share1#`)).toBe(true);
-    // Only v2 endpoints were hit — the v1 flow (preview/create) was not.
+    // Only the v2 endpoints were hit.
     expect(v2Calls.slice(before).map((c) => c.method)).toEqual(['create', 'finalize']);
   });
 
@@ -273,7 +227,7 @@ describe('runPublish --format v2 (process)', () => {
     const path = ompExport();
     const createsBefore = v2Calls.filter((c) => c.method === 'create').length;
     failFinalize = true;
-    const { code, stdout, stderr } = await runCli(['publish', path, '--harness', 'omp', '--format', 'v2', '--yes']);
+    const { code, stdout, stderr } = await runCli(['publish', path, '--harness', 'omp', '--yes']);
     failFinalize = false;
     expect(code).toBe(1);
 

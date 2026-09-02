@@ -10,32 +10,19 @@ export class QuireApiError extends Error {
   }
 }
 
-export interface PreviewResponse {
-  messages: unknown[];
-  summary: Record<string, number>;
-  bytes: number;
-  messageCount: number;
-}
-
-export interface CreateResponse {
-  token: string;
-  url: string;
-  uploadId: string;
-  chunkCount: number;
-  summary: Record<string, number>;
-  bytes: number;
-  messageCount: number;
-}
-
+/** Owner-facing share shape (v2 only): no content key, no upload token. */
 export interface ShareMeta {
-  token: string;
-  title: string;
-  createdAt: string;
-  expiresAt: string | null;
-  hasPassword: boolean;
-  revoked: boolean;
-  messageCount: number;
+  id: string;
+  publicId: string;
+  title: string | null;
   preset: string;
+  expiresAt: string | null;
+  messageCount: number;
+  bytes: number;
+  redactions: Record<string, number>;
+  createdAt: string;
+  state: string;
+  format: 'v2';
 }
 
 export interface V2CreateResponse {
@@ -164,24 +151,6 @@ export class QuireApi {
     return json as T;
   }
 
-  preview(session: unknown, preset: string): Promise<PreviewResponse> {
-    return this.request('POST', '/api/chats/preview', { session, preset });
-  }
-
-  create(
-    session: unknown,
-    opts: { preset?: string; password?: string; expiresAt?: string; expectedChunks?: number } = {},
-  ): Promise<CreateResponse> {
-    return this.request('POST', '/api/chats', { session, ...opts });
-  }
-
-  createChunk(
-    token: string,
-    body: { uploadId: string; chunkSeq: number; messages: unknown[] },
-  ): Promise<{ ok: boolean; messageCount: number; bytes: number; summary: Record<string, number> }> {
-    return this.request('POST', `/api/chats/${token}/chunks`, body);
-  }
-
   // v2 sealed shares (OMP-inspired sharing migration). The body is serialized
   // once per call; the orchestrator reuses the same body object on retry, so
   // the serialized bytes — and the server's byte-exact digest — are stable.
@@ -209,7 +178,7 @@ export class QuireApi {
     return this.request('GET', `/api/chats/${token}`);
   }
 
-  patch(token: string, body: { password?: string | null; expiresAt?: string | null; revoke?: boolean }): Promise<{ ok: boolean }> {
+  patch(token: string, body: { title?: string; expiresAt?: string | null }): Promise<{ ok: boolean }> {
     return this.request('PATCH', `/api/chats/${token}`, body);
   }
 
