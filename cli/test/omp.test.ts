@@ -72,6 +72,38 @@ describe('OMP export parsing', () => {
     expect(() => extractOmpSessionData(html)).toThrow(pattern);
   });
 
+  it('rejects malformed base64 edge cases', () => {
+    const bad = [
+      ['unpadded tail', 'abc'],
+      ['padding in the middle', 'ab=c'],
+      ['lone early padding', 'a==='],
+      ['padding past the end', 'abcd==ef'],
+      ['non-alphabet char', 'ab!d'],
+    ] as const;
+    for (const [_name, body] of bad) {
+      const html = `<script id="session-data" type="application/json">${body}</script>`;
+      expect(() => extractOmpSessionData(html)).toThrow(/OMP export.*base64/i);
+    }
+  });
+
+  it('accepts unpadded base64 (byte length a multiple of four)', () => {
+    let text = 'x';
+    const data = { header, entries: [message('u1', null, text)], leafId: 'u1' };
+    for (let i = 0; i < 4 && Buffer.from(JSON.stringify(data), 'utf8').toString('base64').includes('='); i++) {
+      text += 'x';
+    }
+    expect(() => extractOmpSessionData(ompHtml(data))).not.toThrow(/base64/i);
+  });
+
+  it('accepts multi-megabyte base64 payloads without a regex stack overflow', () => {
+    // The old backtracking BASE64_RE threw RangeError: Maximum call stack
+    // size exceeded in Node above ~4.5M encoded chars, crashing publish
+    // (exit 1) for every session whose export exceeded ~3.4MB.
+    const data = { header, entries: [message('u1', null, 'x'.repeat(4_000_000))], leafId: 'u1' };
+    const parsed = extractOmpSessionData(ompHtml(data));
+    expect(parsed.leafId).toBe('u1');
+  });
+
   it('rejects duplicate session-data scripts', () => {
     const one = ompHtml({ header, entries: [], leafId: null });
     expect(() => extractOmpSessionData(one + one)).toThrow(/OMP export.*exactly one/i);

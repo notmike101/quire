@@ -38,7 +38,25 @@ export interface OmpAdapterOptions {
 
 const SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 const ATTR_RE = /([^\s=]+)\s*=\s*(["'])(.*?)\2/g;
-const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+// Base64 without backtracking: the classic `(?:[A-Za-z0-9+/]{4})*` regex
+// overflows the V8 call stack above ~4.5M chars (RangeError, exit 1) on
+// large exports. Same accepted language, linear scan.
+function isBase64(s: string): boolean {
+  const n = s.length;
+  if (n === 0 || n % 4 !== 0) return false;
+  let pad = 0;
+  for (let i = 0; i < n; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 61) {
+      if (i < n - 2) return false;
+      pad++;
+    } else if (!((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47)) {
+      return false;
+    }
+  }
+  if (pad === 1 && s.charCodeAt(n - 1) !== 61) return false;
+  return pad <= 2;
+}
 
 function scriptAttributes(raw: string): Map<string, string> {
   const attrs = new Map<string, string>();
@@ -89,7 +107,7 @@ export function extractOmpSessionData(
   if (bodies.length !== 1) throw new Error('OMP export must contain exactly one session-data script');
 
   const encoded = bodies[0]!.replace(/\s+/g, '');
-  if (encoded.length === 0 || !BASE64_RE.test(encoded)) throw new Error('OMP export session data is not valid base64');
+  if (!isBase64(encoded)) throw new Error('OMP export session data is not valid base64');
   const decoded = Buffer.from(encoded, 'base64');
   if (decoded.length > maxSessionDataBytes) throw new Error('OMP export session data is too large');
   let value: unknown;
@@ -138,7 +156,7 @@ function messageTime(message: Record<string, unknown>, entry: OmpEntry): string 
 
 function imagePart(raw: Record<string, unknown>, budget: ImageBudget): ShapedPart | null {
   if (typeof raw.data !== 'string' || typeof raw.mimeType !== 'string' || !isImageMime(raw.mimeType)) return null;
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(raw.data)) return null;
+  if (!isBase64(raw.data)) return null;
   const bytes = Buffer.byteLength(raw.data, 'base64');
   if (bytes > MAX_IMAGE_BYTES || budget.remaining < bytes) {
     return { type: 'image', mime: raw.mimeType, bytes, tooLarge: true };
