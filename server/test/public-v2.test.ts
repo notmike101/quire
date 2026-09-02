@@ -177,7 +177,7 @@ describe('v2 public blobs', () => {
 
 describe('v2 public unlock', () => {
   it('full password flow: 401 -> bad_password -> unlock -> cookie grants access', async () => {
-    await seedV2Share('v2pw1', { password: 's3cret!' });
+    await seedV2Share('v2pw1', { password: 'opensesame' });
     expect((await app.request('/api/v2/public/shares/v2pw1/bootstrap')).status).toBe(401);
 
     const bad = await app.request('/api/v2/public/shares/v2pw1/unlock', {
@@ -187,7 +187,7 @@ describe('v2 public unlock', () => {
     expect((await json(bad)).error.code).toBe('bad_password');
 
     const good = await app.request('/api/v2/public/shares/v2pw1/unlock', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 's3cret!' }),
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'opensesame' }),
     });
     expect(good.status).toBe(200);
     const setCookie = good.headers.get('set-cookie') ?? '';
