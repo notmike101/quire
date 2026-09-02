@@ -3,8 +3,12 @@ import type { HarnessAdapter, ShapedImage, ShapedMessage, ShapedPart, ShapedSess
 import { MAX_SESSION_MESSAGES, truncateInput, truncateOutput, truncatePartText } from '../shape.js';
 import { embedLocalMarkdownImages, isImageMime, MAX_IMAGE_BYTES, MAX_SESSION_IMAGE_BYTES, type ImageBudget } from '../image.js';
 
-export const OMP_MAX_HTML_BYTES = 32 * 1024 * 1024;
-export const OMP_MAX_SESSION_DATA_BYTES = 20 * 1024 * 1024;
+// OMP exports embed sub-agent sessions (for OMP's own viewer) that this
+// adapter never publishes, so real exports run far larger than the
+// publishable branch. Memory guards, not protocol limits: keep them above
+// heavy sub-agent usage.
+export const OMP_MAX_HTML_BYTES = 128 * 1024 * 1024;
+export const OMP_MAX_SESSION_DATA_BYTES = 96 * 1024 * 1024;
 
 export interface OmpHeader {
   type: 'session';

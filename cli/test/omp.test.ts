@@ -104,6 +104,16 @@ describe('OMP export parsing', () => {
     expect(parsed.leafId).toBe('u1');
   });
 
+  it('accepts exports larger than the legacy 32MB cap (sub-sessions inflate the export)', () => {
+    // OMP embeds sub-agent sessions in the export for its own viewer; the
+    // adapter never publishes them, but they count against the size caps.
+    // 2000 x 16KB entries -> ~32MB JSON -> ~43MB base64 HTML.
+    const filler = 'x'.repeat(16_000);
+    const entries = Array.from({ length: 2_000 }, (_, i) => message(`u${i}`, i === 0 ? null : `u${i - 1}`, filler));
+    const parsed = extractOmpSessionData(ompHtml({ header, entries, leafId: 'u1999' }));
+    expect(parsed.entries.length).toBe(2_000);
+  });
+
   it('rejects duplicate session-data scripts', () => {
     const one = ompHtml({ header, entries: [], leafId: null });
     expect(() => extractOmpSessionData(one + one)).toThrow(/OMP export.*exactly one/i);
