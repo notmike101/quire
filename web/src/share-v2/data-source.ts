@@ -12,9 +12,9 @@ function toError(err: unknown): ShareError {
   return err instanceof ShareError ? err : new ShareError(0, 'http', GENERIC_ERROR);
 }
 
-// Mirrors v1's api.ts error mapping: the server's error code wins; a
-// non-JSON body falls back to the status so the composable's state machine
-// (needs_password / expired / not_found) still works.
+// The server's error code wins; a non-JSON body falls back to the status so
+// the composable's state machine (needs_password / expired / not_found)
+// still works.
 async function httpError(res: Response): Promise<ShareError> {
   let code = 'http';
   let message = `HTTP ${res.status}`;
