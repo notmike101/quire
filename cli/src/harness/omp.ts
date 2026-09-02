@@ -5,10 +5,10 @@ import { embedLocalMarkdownImages, isImageMime, MAX_IMAGE_BYTES, MAX_SESSION_IMA
 
 // OMP exports embed sub-agent sessions (for OMP's own viewer) that this
 // adapter never publishes, so real exports run far larger than the
-// publishable branch. Memory guards, not protocol limits: keep them above
-// heavy sub-agent usage.
-export const OMP_MAX_HTML_BYTES = 128 * 1024 * 1024;
-export const OMP_MAX_SESSION_DATA_BYTES = 96 * 1024 * 1024;
+// publishable branch. Memory guards, not protocol limits: 2 GB covers any
+// realistic session; above that the CLI risks OOM, so fail clean.
+export const OMP_MAX_HTML_BYTES = 2 * 1024 * 1024 * 1024;
+export const OMP_MAX_SESSION_DATA_BYTES = 1536 * 1024 * 1024;
 
 export interface OmpHeader {
   type: 'session';
