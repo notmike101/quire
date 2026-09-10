@@ -67,7 +67,7 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: ^2.1.1
-        version: 2.1.1(hono@4.13.4)
+        version: 2.1.1(hono@4.13.5)
       '@quire/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -78,8 +78,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(postgres@3.4.9)
       hono:
-        specifier: ^4.13.4
-        version: 4.13.4
+        specifier: ^4.13.5
+        version: 4.13.5
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
@@ -1209,8 +1209,8 @@ packages:
     resolution: {integrity: sha512-F/1DnUGPopORZi0ni+CvrCgHQ5FyEAHRLSApuYWMmrbSwoN2Mn/7k+Gl38gJnR7yyDZk6WLXwiGod1JOWNDKGw==}
     hasBin: true
 
-  hono@4.13.4:
-    resolution: {integrity: sha512-AGEwKIyRMHRv1t8Wjwa3LHxQ61X5CqrdFT+4BRNTpqS5aJNnpl5WLjADb7vFlJzI/8uK7T5QLVApCMQKNa3LgQ==}
+  hono@4.13.5:
+    resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
     engines: {node: '>=16.9.0'}
 
   html-encoding-sniffer@4.0.0:
@@ -2069,9 +2069,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@hono/node-server@2.1.1(hono@4.13.4)':
+  '@hono/node-server@2.1.1(hono@4.13.5)':
     dependencies:
-      hono: 4.13.4
+      hono: 4.13.5
 
   '@isaacs/cliui@8.0.2':
     dependencies:
@@ -2804,7 +2804,7 @@ snapshots:
 
   he@1.2.0: {}
 
-  hono@4.13.4: {}
+  hono@4.13.5: {}
 
   html-encoding-sniffer@4.0.0:
     dependencies:
