@@ -19,7 +19,14 @@ server before anything is stored or sent.
   a secret.
 - **Long-session friendly viewer.** Vue 3 + Tailwind CSS v4, markdown + Shiki
   syntax highlighting, infinite-scroll lazy loading (50 messages per page),
-  and automatic dark mode via `prefers-color-scheme`.
+  and automatic dark mode via `prefers-color-scheme`. Consecutive tool calls
+  form collapsible activity panels across message/page boundaries, with short
+  file/command previews and visible failure summaries. A single call has only
+  one disclosure. System reminders show a short preview; full tool and reminder
+  details expand on demand. Empty thinking remains a plain label, not an empty
+  dropdown. Raw tool output retains its original whitespace without renderer-added
+  indentation. Local file references render as text, not navigable links;
+  web/email links remain active.
 - **No existence oracle.** Unknown and revoked tokens return byte-identical
   `404`s.
 - **Rate limiting.** 5 failed unlocks → 15-minute lockout per token+IP;
@@ -76,6 +83,9 @@ Operational runbook — migration, metrics, rollback, backup/restore:
 `docs/operations/sealed-shares.md`.
 
 ## Quick start (local dev)
+
+Use Node ≥22 and the pnpm version pinned in `package.json`. pnpm settings
+(dependency overrides and native-build approvals) live in `pnpm-workspace.yaml`.
 
 ```bash
 pnpm install
@@ -173,4 +183,6 @@ reverse proxy (Caddy/Nginx/Traefik) on your chosen host. Notes:
 - Unit: `pnpm --filter @quire/<server|cli|web|plugin> test`
   (server tests need `pnpm db:test:up` first).
 - E2E: `pnpm --filter @quire/e2e test` — builds and drives the compose stack
-  on port 8790, then tears it down. Requires Docker.
+  on port 8790, then tears it down. Requires Docker and standard Playwright
+  Chromium, installed with `pnpm --filter @quire/e2e exec playwright install chromium`.
+  No CloakBrowser installation or custom browser path is required.
