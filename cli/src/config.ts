@@ -7,6 +7,12 @@ export interface CliConfig {
   apiKey: string;
 }
 
+/**
+ * Load CLI credentials, preferring environment values over the home config.
+ *
+ * @param env - Environment containing optional server URL and API key overrides.
+ * @returns Required credentials with a validated transport URL and no trailing slash.
+ */
 export function loadCliConfig(env: NodeJS.ProcessEnv = process.env): CliConfig {
   let file: Partial<CliConfig> = {};
   const path = join(homedir(), '.quire', 'config.json');

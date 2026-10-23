@@ -21,6 +21,11 @@ afterAll(() => {
 
 // Import the installed artifact (not a hand-maintained copy) with a
 // cache-busting query so each test gets a fresh module instance.
+/**
+ * Import the installed handler with a fresh module cache key.
+ *
+ * @returns Handler exports from an isolated module instance.
+ */
 async function loadHandler(): Promise<any> {
   importCount += 1;
   return import(pathToFileURL(handlerPath).href + '?v=' + importCount);
@@ -34,14 +39,32 @@ interface FakeBunOptions {
   neverEnds?: boolean;
 }
 
+/**
+ * Simulate Bun process spawning for handler success and failure scenarios.
+ *
+ * @param options - Process output, exit, and hanging behavior.
+ * @returns Spawn implementation, recorded calls, and kill spy.
+ */
 function makeFakeBun(options: FakeBunOptions = {}) {
   const calls: Array<{ cmd: string[]; stdout?: string; stderr?: string; shell?: boolean }> = [];
   const kill = vi.fn();
+  /**
+   * Record a command and return the configured child-process behavior.
+   *
+   * @param opts - Command vector and stream options supplied by the handler.
+   * @param opts.cmd - Executable and exact argument vector to record.
+   * @param opts.stdout - Requested standard-output handling mode.
+   * @param opts.stderr - Requested standard-error handling mode.
+   * @returns Simulated child streams, exit promise, and kill function.
+   */
   const spawn = (opts: { cmd: string[]; stdout?: string; stderr?: string }) => {
     calls.push(opts);
     if (options.spawnError) throw options.spawnError;
     const stdout = options.neverEnds
-      ? new ReadableStream<Uint8Array>({ start() { /* never enqueues, never closes */ } })
+      ? new ReadableStream<Uint8Array>({
+          /** Leave the stream open and silent to exercise handler timeouts. */
+          start() { /* never enqueues, never closes */ },
+        })
       : new Response(options.stdoutText ?? '').body;
     const exited = options.neverEnds
       ? new Promise<number>(() => { /* never resolves */ })

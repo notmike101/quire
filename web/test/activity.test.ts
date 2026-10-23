@@ -7,6 +7,12 @@ import type { ShareMessage, SharePart } from '../src/api';
 
 const read: SharePart = { type: 'tool', tool: 'read', status: 'completed', input: { path: 'web/src/App.vue:80-100', i: 'Reading viewer component' }, output: 'private full source' };
 const failed: SharePart = { type: 'tool', tool: 'functions.exec_command', status: 'error', input: { cmd: 'pnpm typecheck' }, output: 'Cannot find module @quire/protocol\nFull diagnostic details' };
+/**
+ * Wrap activity parts in a single assistant-message fixture.
+ *
+ * @param parts - Ordered parts whose grouping is under test.
+ * @returns Assistant message with a stable identity and no timestamp.
+ */
 const message = (parts: SharePart[]): ShareMessage => ({ chunkSeq: 0, seq: 1, role: 'assistant', time: null, parts });
 
 describe('activity panels', () => {

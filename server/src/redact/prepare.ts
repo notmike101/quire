@@ -100,6 +100,12 @@ const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u0080-\u
 // long run of clean UTF-8 text and is always found. The post-Round-14 audit
 // tightened this to scan EVERY meaningful run: a longer clean run must not hide
 // a shorter credential-bearing run elsewhere in the bytes.
+/**
+ * Collect maximal well-formed UTF-8 runs long enough to scan for secrets.
+ *
+ * @param buf - Decoded data-URI bytes, possibly containing binary segments.
+ * @returns Text runs spanning at least eight bytes.
+ */
 function validUtf8Runs(buf: Buffer): string[] {
   // Round 8: the Round-5 binary search assumed "prefix of length m is valid
   // UTF-8" is monotonic, but it is NOT — a valid 2-byte char (e.g. 0xC3 0xA9 =
@@ -109,6 +115,11 @@ function validUtf8Runs(buf: Buffer): string[] {
   const runs: string[] = [];
   let runStart = 0;
   let i = 0;
+  /**
+   * Save the current meaningful run and move past an invalid byte.
+   *
+   * @param at - Byte offset immediately after the valid run.
+   */
   const endRun = (at: number): void => {
     if (at - runStart >= 8) runs.push(buf.subarray(runStart, at).toString('utf8'));
     runStart = at + 1; // next run starts after the offending byte
@@ -138,6 +149,14 @@ function validUtf8Runs(buf: Buffer): string[] {
   if (buf.length - runStart >= 8) runs.push(buf.subarray(runStart).toString('utf8'));
   return runs;
 }
+/**
+ * Redact URL credentials or replace a data URI whose decoded text contains secrets.
+ *
+ * @param src - Image source URL or data URI.
+ * @param preset - Redaction rule selection.
+ * @param add - Callback accumulating counts for detected secrets.
+ * @returns The cleaned source, with sensitive payloads replaced.
+ */
 function redactSrc(src: string, preset: Preset, add: (counts: Record<string, number>) => void): string {
   const m = /^data:([^,]*),(.+)$/.exec(src);
   if (!m || !m[1] || !m[2]) {
@@ -216,6 +235,14 @@ const MD_IMG_URI_RE =
 // markdown-wrapped URI already handled by MD_IMG_URI_RE above is a no-op here).
 const BARE_DATA_URI_RE = /data:[^,\s]*,[^)\s"'<>]+/gi;
 
+/**
+ * Scan embedded data URIs before applying text rules to control-stripped prose.
+ *
+ * @param s - Free text that may contain image markup or bare data URIs.
+ * @param preset - Redaction rule selection.
+ * @param add - Callback accumulating text and data-URI redaction counts.
+ * @returns Redacted text with clean data-URI payloads preserved.
+ */
 function redTextWithDataUris(
   s: string,
   preset: Preset,
@@ -241,10 +268,24 @@ function redTextWithDataUris(
   return r.text;
 }
 
+/**
+ * Redact every public free-text field and image payload in a shaped part.
+ *
+ * @param part - Shaped message part to prepare for storage.
+ * @param preset - Redaction rule selection.
+ * @param add - Callback accumulating counts across the session.
+ * @returns A part with redacted fields and copied image metadata.
+ */
 function redactPart(part: ShapedPart, preset: Preset, add: (counts: Record<string, number>) => void): ShapedPart {
   // Round 9 (F5): free-text fields also carry markdown image data-URIs, so
   // they go through the data-URI-aware pass (which strips control chars
   // before the rules run — F2).
+  /**
+   * Apply this part's preset and count accumulator to a text field.
+   *
+   * @param s - Field value to redact.
+   * @returns Text after data-URI-aware redaction.
+   */
   const red = (s: string): string => redTextWithDataUris(s, preset, add);
   const out: ShapedPart = { ...part };
   if (part.text !== undefined) out.text = red(part.text);
@@ -273,7 +314,15 @@ function redactPart(part: ShapedPart, preset: Preset, add: (counts: Record<strin
   return out;
 }
 
-/** Redact a session-level free-text field (title/model/provider) into `out`. */
+/**
+ * Redact a session-level free-text field into the output metadata.
+ *
+ * @param field - Optional title, model, or provider value.
+ * @param preset - Redaction rule selection.
+ * @param add - Callback accumulating counts across the session.
+ * @param out - Metadata object receiving the redacted value.
+ * @param key - Destination property name.
+ */
 function redactMetaField(
   field: string | undefined,
   preset: Preset,
@@ -312,9 +361,18 @@ function redactMetaField(
  * cross-thread marshalling of the (potentially multi-MB) session for a
  * disproportionate risk/complexity cost. Revisit only if the request cap or the
  * rule set grows enough that a single publish measurably stalls the loop.
+ *
+ * @param session - Shaped session containing messages and public metadata.
+ * @param preset - Redaction rule selection applied to every public field.
+ * @returns Redacted messages and metadata, byte and message counts, and rule totals.
  */
 export function prepareContent(session: ShapedSession, preset: Preset): PreparedContent & { title: string; model?: string; provider?: string } {
   const summary: Record<string, number> = {};
+  /**
+   * Sum per-rule matches from each field into the session summary.
+   *
+   * @param counts - Redaction counts produced by one field scan.
+   */
   const add = (counts: Record<string, number>): void => {
     for (const [k, v] of Object.entries(counts)) summary[k] = (summary[k] ?? 0) + v;
   };

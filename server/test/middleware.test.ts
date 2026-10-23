@@ -14,7 +14,12 @@ let db: Db;
 let app: ReturnType<typeof createApp>;
 let dist: string;
 
-/** Response.json() is typed Promise<unknown> under @types/node (no DOM lib); cast to a plain object. */
+/**
+ * Decode a JSON response into an assertion-friendly object.
+ *
+ * @param r - HTTP response returned by the test application.
+ * @returns Parsed response fields with the test's plain-object typing.
+ */
 const json = (r: Response): Promise<Record<string, any>> => r.json() as Promise<Record<string, any>>;
 
 beforeAll(async () => {
@@ -28,6 +33,7 @@ beforeAll(async () => {
   // already-migrated test container emits two ("schema/relation already
   // exists, skipping"). Silence them so this file's output stays clean.
   const origLog = console.log;
+  /** Ignore expected migration notices during test setup. */
   console.log = () => {};
   try {
     await migrateDb(db);
@@ -90,6 +96,11 @@ describe('body limit', () => {
     const total = 25 * 1024 * 1024;
     const chunkSize = 1024 * 1024;
     const stream = new ReadableStream<Uint8Array>({
+      /**
+       * Enqueue an over-limit request body without a declared length.
+       *
+       * @param controller - Stream controller receiving the synthetic body chunks.
+       */
       start(controller) {
         let sent = 0;
         const block = new Uint8Array(chunkSize).fill(1);
@@ -146,7 +157,16 @@ describe('static SPA', () => {
 
 describe('error handler', () => {
   it('maps unknown errors to a uniform 500 without leaking internals', () => {
-    const fakeCtx = { json: (body: unknown, status?: number) => ({ body, status }) } as never;
+    const fakeCtx = {
+      /**
+       * Capture response arguments without constructing a full request context.
+       *
+       * @param body - JSON response payload.
+       * @param status - HTTP status supplied by the error handler.
+       * @returns The payload and status for assertions.
+       */
+      json: (body: unknown, status?: number) => ({ body, status }),
+    } as never;
     const result = errorHandler(new Error('secret internal detail'), fakeCtx) as unknown as { body: { error: { code: string; message: string } }; status: number };
     expect(result.status).toBe(500);
     expect(result.body.error.code).toBe('internal');
@@ -162,7 +182,14 @@ describe('error handler', () => {
       calls.push(args);
     });
     const hostile = 'boom\u0000\u0001\u001b[31m' + 'x'.repeat(600);
-    errorHandler(new Error(hostile), { json: () => ({}) } as never);
+    errorHandler(new Error(hostile), {
+      /**
+       * Return a response stand-in while the test inspects only the log.
+       *
+       * @returns An empty response object.
+       */
+      json: () => ({}),
+    } as never);
     spy.mockRestore();
     expect(calls).toHaveLength(1);
     const logged = calls[0]!.map((a) => String(a)).join(' ');
@@ -170,7 +197,16 @@ describe('error handler', () => {
     expect(logged.length).toBeLessThan(600);
   });
   it('passes HTTPException status through', () => {
-    const fakeCtx = { json: (body: unknown, status?: number) => ({ body, status }) } as never;
+    const fakeCtx = {
+      /**
+       * Capture response arguments for HTTP-exception assertions.
+       *
+       * @param body - JSON response payload.
+       * @param status - HTTP status supplied by the error handler.
+       * @returns The payload and status for assertions.
+       */
+      json: (body: unknown, status?: number) => ({ body, status }),
+    } as never;
     const result = errorHandler(new HTTPException(404, { message: 'gone' }), fakeCtx) as { status: number };
     expect(result.status).toBe(404);
   });
@@ -185,7 +221,14 @@ describe('error handler', () => {
     });
     const dbErr = new Error('Failed query: select * from secrets where k = $1 params: [AKIAABCDEFGHIJKLMNOP]');
     (dbErr as { code?: string }).code = '42601';
-    errorHandler(dbErr, { json: () => ({}) } as never);
+    errorHandler(dbErr, {
+      /**
+       * Return a response stand-in while the test inspects only the log.
+       *
+       * @returns An empty response object.
+       */
+      json: () => ({}),
+    } as never);
     spy.mockRestore();
     expect(calls).toHaveLength(1);
     const logged = calls[0]!.map((a) => String(a)).join(' ');

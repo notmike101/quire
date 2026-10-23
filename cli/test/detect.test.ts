@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const tempDirs: string[] = [];
+/**
+ * Register a temporary store directory for suite cleanup.
+ *
+ * @param dir - Newly created directory.
+ * @returns The same directory path.
+ */
 function trackTemp(dir: string): string {
   tempDirs.push(dir);
   return dir;

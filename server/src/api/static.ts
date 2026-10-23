@@ -1,7 +1,12 @@
 import { serveStatic } from '@hono/node-server/serve-static';
 import type { Hono } from 'hono';
 
-/** Serve the built SPA: /chats/:token -> index.html, /assets/* from the dist dir. */
+/**
+ * Serve the built SPA entry point and its traversal-checked assets.
+ *
+ * @param app - Application receiving static and crawler routes.
+ * @param webDist - Filesystem root containing the built viewer.
+ */
 export function mountStatic(app: Hono, webDist: string): void {
   // Disallow crawling of the whole site. Shared sessions are opt-in,
   // password-gated, expiring transcripts and must never be indexed. (The
@@ -23,6 +28,11 @@ export function mountStatic(app: Hono, webDist: string): void {
     }
     const result = await serveStatic({
       root: webDist,
+      /**
+       * Pin the static lookup to the validated asset path.
+       *
+       * @returns The asset path relative to the viewer root.
+       */
       rewriteRequestPath: () => `/assets/${assetPath}`,
     })(c, async () => {});
     return result ?? c.notFound();

@@ -27,6 +27,12 @@ import { buildRailEntries, buildViewerPages } from './pages.js';
  * with `ShareV2Error(404, 'not_found')` in all three.
  */
 export class ShareV2Error extends Error {
+  /**
+   * Attach a route-safe failure code and HTTP status to a store error.
+   *
+   * @param status - HTTP status the route should return.
+   * @param code - Machine-readable failure code.
+   */
   constructor(
     public readonly status: number,
     public readonly code: string,
@@ -35,16 +41,34 @@ export class ShareV2Error extends Error {
   }
 }
 
-/** base64url(HMAC-SHA256(UNLOCK_SECRET, 'quire-upload-token\0' + publicId + '\0' + uploadRequestId)). */
+/**
+ * Derive the replayable upload credential using the server's signing secret.
+ *
+ * @param config - Server configuration containing the HMAC secret.
+ * @param publicId - Public share identifier.
+ * @param uploadRequestId - Owner's idempotency identifier for the create request.
+ * @returns A base64url HMAC bound to the share and upload request.
+ */
 export function deriveUploadToken(config: Config, publicId: string, uploadRequestId: string): string {
   return createHmac('sha256', config.unlockSecret)
     .update(`quire-upload-token\0${publicId}\0${uploadRequestId}`)
     .digest('base64url');
 }
 
+/**
+ * Hash request or ciphertext bytes for idempotency and integrity checks.
+ *
+ * @param value - Text or bytes to hash.
+ * @returns A hexadecimal SHA-256 digest.
+ */
 const sha256Hex = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex');
 
-/** True when `e` is a Postgres unique-violation (SQLSTATE 23505). */
+/**
+ * Recognize a direct or wrapped PostgreSQL unique-constraint failure.
+ *
+ * @param e - Exception raised by the database operation.
+ * @returns Whether the exception carries SQLSTATE 23505.
+ */
 export function isUniqueViolation(e: unknown): boolean {
   const err = e as { code?: string; cause?: { code?: string } };
   return err?.code === '23505' || err?.cause?.code === '23505';
@@ -58,6 +82,13 @@ export function isUniqueViolation(e: unknown): boolean {
 // state to add this chunk to: chunks are contiguous (chunkSeq = maxSeq+1), so at
 // most one chunk is in flight at a time and no other request can commit a
 // redactions update in the window between the read and this write.
+/**
+ * Sum per-category redaction counts without mutating either input.
+ *
+ * @param prev - Accumulated counts from earlier chunks, if any.
+ * @param next - Counts produced by the accepted chunk.
+ * @returns A new summary containing the category-wise totals.
+ */
 export function mergeRedactionSummary(
   prev: Record<string, number> | null | undefined,
   next: Record<string, number>,
@@ -96,6 +127,12 @@ export interface CreateV2UploadResult {
  * match (the uploadToken is re-derived, never stored); throws
  * ShareV2Error(409, 'upload_conflict') when the same uploadRequestId was
  * already used with a different digest.
+ *
+ * @param db - Database containing share and chunk-zero idempotency rows.
+ * @param config - Configuration used to rederive the upload token.
+ * @param uploadRequestId - Create-request idempotency identifier.
+ * @param requestDigest - Digest of the exact incoming request bytes.
+ * @returns The stored upload result, or null when no upload exists.
  */
 async function storedUpload(
   db: Db,
@@ -128,6 +165,11 @@ async function storedUpload(
  * Idempotent by (uploadRequestId, requestDigest): a replay with the same
  * digest returns the stored result; a different digest is 409
  * `upload_conflict`.
+ *
+ * @param db - Database receiving the share, chunk marker, and sealed pages.
+ * @param config - Configuration used to derive the upload credential.
+ * @param input - Initial session, encryption key, metadata, and idempotency data.
+ * @returns The created or replayed upload's identifiers and accumulated counters.
  */
 export async function createV2Upload(db: Db, config: Config, input: CreateV2UploadInput): Promise<CreateV2UploadResult> {
   const prepared = prepareContent(input.session, input.preset);
@@ -221,6 +263,11 @@ export type AcceptV2SourceChunkResult = { ok: true } | { ok: false; status: 409 
  * pages are built (continuing the global page/message seqs), sealed, and
  * inserted with the chunk marker + share counter update in the same
  * transaction.
+ *
+ * @param db - Database whose share row is locked during chunk acceptance.
+ * @param config - Server configuration retained in the store operation signature.
+ * @param input - Prepared chunk, content key, share coordinates, and request digest.
+ * @returns Success for an accepted or replayed chunk, otherwise a protocol failure.
  */
 export async function acceptV2SourceChunk(
   db: Db,
@@ -291,6 +338,11 @@ export type FinalizeV2UploadResult =
  * under one FOR UPDATE lock/transaction. The decrypted pages and rail
  * plaintext are discarded after sealing. Idempotent: a `ready` share returns
  * its stored summary; an incomplete one is 400 `incomplete`.
+ *
+ * @param db - Database whose share row is locked during finalization.
+ * @param config - Server configuration retained in the store operation signature.
+ * @param input - Internal and public share identifiers plus the in-memory content key.
+ * @returns The key-free published summary, or an incomplete-upload failure.
  */
 export async function finalizeV2Upload(db: Db, config: Config, input: FinalizeV2UploadInput): Promise<FinalizeV2UploadResult> {
   return db.transaction(async (tx) => {
@@ -357,7 +409,13 @@ export interface V2PublicShareState {
   redactions: Record<string, number>;
 }
 
-/** Key-free public state for a v2 share (no content key, no upload token). Null when unknown. */
+/**
+ * Read share state for access gating without exposing content keys or upload tokens.
+ *
+ * @param db - Database containing the share.
+ * @param publicId - Public share identifier.
+ * @returns The stored gate state and metadata, or null when unknown.
+ */
 export async function getV2PublicShareState(db: Db, publicId: string): Promise<V2PublicShareState | null> {
   const [row] = await db.select().from(sharesV2).where(eq(sharesV2.publicId, publicId)).limit(1);
   if (!row) return null;
@@ -391,6 +449,12 @@ export interface V2OwnerShare {
   format: 'v2';
 }
 
+/**
+ * Convert a database row into key-free owner metadata with ISO timestamps.
+ *
+ * @param row - Stored sealed-share row.
+ * @returns The owner-management response shape.
+ */
 function toV2OwnerShare(row: typeof sharesV2.$inferSelect): V2OwnerShare {
   return {
     id: row.id,
@@ -407,19 +471,38 @@ function toV2OwnerShare(row: typeof sharesV2.$inferSelect): V2OwnerShare {
   };
 }
 
-/** All v2 shares (any state) in the owner-facing shape, newest first. */
+/**
+ * List up to 200 shares in any state, newest first.
+ *
+ * @param db - Database containing the owner's sealed shares.
+ * @returns Owner-facing share summaries.
+ */
 export async function listV2(db: Db): Promise<V2OwnerShare[]> {
   const rows = await db.select().from(sharesV2).orderBy(desc(sharesV2.createdAt)).limit(200);
   return rows.map(toV2OwnerShare);
 }
 
-/** Owner-facing shape for one v2 share by publicId; null when unknown. */
+/**
+ * Read one share's owner-management metadata.
+ *
+ * @param db - Database containing the share.
+ * @param publicId - Public share identifier.
+ * @returns Owner metadata, or null when unknown.
+ */
 export async function getV2OwnerShare(db: Db, publicId: string): Promise<V2OwnerShare | null> {
   const [row] = await db.select().from(sharesV2).where(eq(sharesV2.publicId, publicId)).limit(1);
   return row ? toV2OwnerShare(row) : null;
 }
 
-/** The stored ciphertext + its digest for one blob, or null when absent. */
+/**
+ * Read one sealed blob and its stored integrity digest.
+ *
+ * @param db - Database containing ciphertext blobs.
+ * @param id - Internal share UUID.
+ * @param kind - Blob family to read.
+ * @param seq - Sequence within that blob family.
+ * @returns Ciphertext and its digest, or null when absent.
+ */
 export async function getV2Blob(db: Db, id: string, kind: BlobKind, seq: number): Promise<{ ciphertext: Uint8Array; digest: string } | null> {
   const [row] = await db
     .select({ ciphertext: shareBlobsV2.ciphertext, digest: shareBlobsV2.digest })
@@ -428,13 +511,29 @@ export async function getV2Blob(db: Db, id: string, kind: BlobKind, seq: number)
   return row ?? null;
 }
 
-/** Hard-deletes a share by publicId; FK cascade removes its chunks + blobs. */
+/**
+ * Hard-delete a share and cascade deletion to its chunks and blobs.
+ *
+ * @param db - Database containing the share.
+ * @param publicId - Public share identifier to revoke.
+ * @returns Whether an existing share was deleted.
+ */
 export async function revokeV2(db: Db, publicId: string): Promise<boolean> {
   const rows = await db.delete(sharesV2).where(eq(sharesV2.publicId, publicId)).returning({ id: sharesV2.id });
   return rows.length > 0;
 }
 
-/** Patches the mutable share fields; returns whether a row was updated. */
+/**
+ * Patch mutable stored metadata without rewriting encrypted blobs.
+ *
+ * @param db - Database containing the share.
+ * @param publicId - Public share identifier to update.
+ * @param patch - Metadata fields to change.
+ * @param patch.title - Replacement title, when supplied.
+ * @param patch.expiresAt - ISO expiration time, or null to remove expiration.
+ * @param patch.preset - Replacement preset metadata, when supplied.
+ * @returns Whether an existing share was updated.
+ */
 export async function updateV2(
   db: Db,
   publicId: string,
@@ -448,7 +547,12 @@ export async function updateV2(
   return rows.length > 0;
 }
 
-/** Deletes all shares whose expiresAt is in the past (any state). Returns the count. */
+/**
+ * Hard-delete shares whose expiration precedes database time, in any state.
+ *
+ * @param db - Database containing shares and cascading child rows.
+ * @returns The number of deleted shares.
+ */
 export async function deleteExpiredV2(db: Db): Promise<number> {
   const rows = await db.delete(sharesV2).where(sql`${sharesV2.expiresAt} < now()`).returning({ id: sharesV2.id });
   return rows.length;

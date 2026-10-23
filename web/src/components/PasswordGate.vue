@@ -5,6 +5,7 @@ defineProps<{ error: string }>();
 const emit = defineEmits<{ unlock: [password: string] }>();
 const password = ref('');
 
+/** Emit an unlock request only when the password field is nonempty. */
 function submit(): void {
   if (password.value) emit('unlock', password.value);
 }

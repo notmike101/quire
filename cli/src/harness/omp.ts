@@ -45,6 +45,12 @@ const ATTR_RE = /([^\s=]+)\s*=\s*(["'])(.*?)\2/g;
 // Base64 without backtracking: the classic `(?:[A-Za-z0-9+/]{4})*` regex
 // overflows the V8 call stack above ~4.5M chars (RangeError, exit 1) on
 // large exports. Same accepted language, linear scan.
+/**
+ * Validate padded base64 with a linear scan safe for large exports.
+ *
+ * @param s - Encoded payload without whitespace.
+ * @returns Whether the alphabet, length, and padding are valid.
+ */
 function isBase64(s: string): boolean {
   const n = s.length;
   if (n === 0 || n % 4 !== 0) return false;
@@ -62,6 +68,12 @@ function isBase64(s: string): boolean {
   return pad <= 2;
 }
 
+/**
+ * Collect quoted script attributes using case-insensitive attribute names.
+ *
+ * @param raw - Text inside the script opening tag.
+ * @returns Attribute names mapped to their quoted values.
+ */
 function scriptAttributes(raw: string): Map<string, string> {
   const attrs = new Map<string, string>();
   ATTR_RE.lastIndex = 0;
@@ -70,6 +82,12 @@ function scriptAttributes(raw: string): Map<string, string> {
   return attrs;
 }
 
+/**
+ * Validate the session header, entry identifiers, and active-leaf shape.
+ *
+ * @param value - Decoded export payload.
+ * @returns Payload with validated OMP session structure.
+ */
 function validateSessionData(value: unknown): OmpSessionData {
   if (!value || typeof value !== 'object') throw new Error('OMP export has an invalid payload');
   const raw = value as Record<string, unknown>;
@@ -92,6 +110,13 @@ function validateSessionData(value: unknown): OmpSessionData {
   return value as OmpSessionData;
 }
 
+/**
+ * Decode the single embedded session-data script without executing export HTML.
+ *
+ * @param html - OMP export document.
+ * @param options - HTML and decoded-payload memory guards.
+ * @returns Validated session data.
+ */
 export function extractOmpSessionData(
   html: string,
   options: Pick<OmpAdapterOptions, 'maxHtmlBytes' | 'maxSessionDataBytes'> = {},
@@ -123,6 +148,12 @@ export function extractOmpSessionData(
   return validateSessionData(value);
 }
 
+/**
+ * Reconstruct the selected root-to-leaf branch, rejecting broken ancestry.
+ *
+ * @param data - Validated session data and selected leaf.
+ * @returns Active entries in conversation order.
+ */
 export function activeOmpBranch(data: OmpSessionData): OmpEntry[] {
   if (data.leafId === null) {
     if (data.entries.length === 0) return [];
@@ -150,6 +181,13 @@ export function activeOmpBranch(data: OmpSessionData): OmpEntry[] {
   return branch.reverse();
 }
 
+/**
+ * Prefer a message timestamp over its containing entry's timestamp.
+ *
+ * @param message - Raw message carrying an optional millisecond timestamp.
+ * @param entry - Containing entry with an optional ISO timestamp.
+ * @returns Available message time, or undefined.
+ */
 function messageTime(message: Record<string, unknown>, entry: OmpEntry): string | undefined {
   if (typeof message.timestamp === 'number' && Number.isFinite(message.timestamp)) {
     return new Date(message.timestamp).toISOString();
@@ -158,6 +196,13 @@ function messageTime(message: Record<string, unknown>, entry: OmpEntry): string 
   return undefined;
 }
 
+/**
+ * Shape a valid base64 image while accounting for the session allowance.
+ *
+ * @param raw - OMP image content block.
+ * @param budget - Mutable remaining session image-byte allowance.
+ * @returns Embedded image, oversized placeholder, or null for invalid content.
+ */
 function imagePart(raw: Record<string, unknown>, budget: ImageBudget): ShapedPart | null {
   if (typeof raw.data !== 'string' || typeof raw.mimeType !== 'string' || !isImageMime(raw.mimeType)) return null;
   if (!isBase64(raw.data)) return null;
@@ -169,6 +214,14 @@ function imagePart(raw: Record<string, unknown>, budget: ImageBudget): ShapedPar
   return { type: 'image', src: `data:${raw.mimeType};base64,${raw.data}`, mime: raw.mimeType, bytes };
 }
 
+/**
+ * Shape visible text and image blocks without interpreting remote URLs.
+ *
+ * @param content - String content or an OMP content-block array.
+ * @param roots - Declared workspace roots allowed for local images.
+ * @param budget - Mutable remaining session image-byte allowance.
+ * @returns Supported visible parts in source order.
+ */
 function visibleParts(content: unknown, roots: string[], budget: ImageBudget): ShapedPart[] {
   const rawParts = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : [];
   const parts: ShapedPart[] = [];
@@ -186,6 +239,16 @@ function visibleParts(content: unknown, roots: string[], budget: ImageBudget): S
   return parts;
 }
 
+/**
+ * Shape the active conversation and match tool results to their calls.
+ *
+ * @param branch - Active OMP entries in root-to-leaf order.
+ * @param header - Session metadata declaring allowed workspace roots.
+ * @param options - Message and cumulative image-byte limits.
+ * @param options.maxMessages - Maximum visible messages retained from the branch.
+ * @param options.maxImageBytes - Cumulative raw image bytes allowed in the transcript.
+ * @returns Visible user and assistant messages.
+ */
 export function shapeOmpBranch(
   branch: OmpEntry[],
   header: OmpHeader,
@@ -197,6 +260,11 @@ export function shapeOmpBranch(
   const messages: ShapedMessage[] = [];
   const calls = new Map<string, ShapedPart>();
   let warned = false;
+  /**
+   * Retain a nonempty message within the limit and warn once on truncation.
+   *
+   * @param message - Shaped conversation message.
+   */
   const push = (message: ShapedMessage): void => {
     if (message.parts.length === 0) return;
     if (messages.length >= options.maxMessages) {
@@ -264,6 +332,12 @@ export function shapeOmpBranch(
   return messages;
 }
 
+/**
+ * Create an adapter that loads only explicitly supplied OMP export paths.
+ *
+ * @param options - Export memory guards and transcript shaping limits.
+ * @returns Path-based OMP adapter with no automatic session discovery.
+ */
 export function makeOmpAdapter(options: OmpAdapterOptions = {}): HarnessAdapter {
   const maxHtmlBytes = options.maxHtmlBytes ?? OMP_MAX_HTML_BYTES;
   const maxSessionDataBytes = options.maxSessionDataBytes ?? OMP_MAX_SESSION_DATA_BYTES;
@@ -272,12 +346,24 @@ export function makeOmpAdapter(options: OmpAdapterOptions = {}): HarnessAdapter 
   return {
     name: 'omp',
     preserveDirectLoadError: true,
+    /**
+     * Keep OMP exports out of automatic session discovery.
+     *
+     * @returns An empty session list.
+     */
     async listSessions() {
       return [];
     },
+    /** Reject current-session guessing because OMP must supply an exact export. */
     async resolveCurrent() {
       throw new Error('OMP --current is unsupported; run /share in OMP so it can supply the exact export path');
     },
+    /**
+     * Validate an export file and shape only its selected conversation branch.
+     *
+     * @param exportPath - Exact path supplied by OMP's share handler.
+     * @returns Session metadata and the active visible transcript.
+     */
     async loadSession(exportPath: string): Promise<ShapedSession> {
       let info;
       try {

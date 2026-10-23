@@ -35,9 +35,20 @@ export interface V2MetricEntry {
   maxLatencyMs: number | null;
 }
 
+/** Process-local aggregate counters that contain no share identifiers or content. */
 export class V2Metrics {
   private buckets = new Map<string, Bucket>();
 
+  /**
+   * Accumulate one pipeline outcome into its category-and-status bucket.
+   *
+   * @param category - Pipeline operation being measured.
+   * @param status - HTTP status, or zero for a background job.
+   * @param opts - Numeric measurements to accumulate.
+   * @param opts.count - Number of events represented, defaulting to one.
+   * @param opts.bytes - Byte count to add when available.
+   * @param opts.latencyMs - Elapsed operation time in milliseconds.
+   */
   record(
     category: V2MetricCategory,
     status: number,
@@ -55,6 +66,11 @@ export class V2Metrics {
     this.buckets.set(key, b);
   }
 
+  /**
+   * Read sorted aggregate counters with rounded latency averages.
+   *
+   * @returns Detached metric entries ordered by category and status.
+   */
   snapshot(): V2MetricEntry[] {
     const out: V2MetricEntry[] = [];
     for (const [key, b] of this.buckets) {
@@ -73,6 +89,7 @@ export class V2Metrics {
     return out.sort((a, z) => a.category.localeCompare(z.category) || a.status - z.status);
   }
 
+  /** Clear all buckets, primarily to isolate metric assertions in tests. */
   reset(): void {
     this.buckets.clear();
   }

@@ -59,6 +59,11 @@ interface ClientOut {
   error?: string;
 }
 
+/**
+ * Run the isolated keep-alive client against this test's listening server.
+ *
+ * @returns Parsed socket scenarios, rejecting on child failure or invalid output.
+ */
 function runClient(): Promise<ClientOut> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLIENT, String(port)], { stdio: ['ignore', 'pipe', 'pipe'] });

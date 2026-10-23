@@ -87,6 +87,13 @@ describe('revoke (process)', () => {
     await new Promise<void>((r) => server.close(() => r()));
   });
 
+  /**
+   * Run a management command against the fixture server with scripted input.
+   *
+   * @param args - CLI arguments after the entry point.
+   * @param stdin - Confirmation input to write before closing the pipe.
+   * @returns Exit code and captured standard output.
+   */
   function runCli(args: string[], stdin: string): Promise<{ code: number | null; stdout: string }> {
     const child = spawn(process.execPath, ['--import', 'tsx', indexTs, ...args], {
       cwd: cliRoot,

@@ -13,6 +13,14 @@ const META: ShareMeta = {
   redactions: { 'api-key': 2 },
 };
 
+/**
+ * Build a page of alternating user and assistant messages for pagination tests.
+ *
+ * @param count - Number of messages on the page.
+ * @param start - Zero-based offset before the page's first message.
+ * @param nextCursor - Continuation cursor, or null for the last page.
+ * @returns Page with stable message identities and shared fixture metadata.
+ */
 function makePage(count: number, start: number, nextCursor: string | null): PageResponse {
   return {
     meta: META,
@@ -31,15 +39,33 @@ type Result = PageResponse | ShareError;
 
 // The composable is the unit under test; a stub data source stands in for the
 // real one (v2 blob machinery is covered by share-data-source.test.ts).
+/**
+ * Queue data-source results while counting initial and subsequent page loads.
+ *
+ * @param firsts - Results consumed by initial-load calls.
+ * @param nexts - Results consumed by pagination calls.
+ * @param unlock - Optional password behavior for access-state tests.
+ * @returns Stub source and mutable load-call counters.
+ */
 function fakeSource(firsts: Result[], nexts: Result[] = [], unlock?: (password: string) => Promise<void>) {
   const calls = { loadFirst: 0, loadNext: 0 };
   const source: ShareDataSource = {
+    /**
+     * Consume the next queued initial response and count the request.
+     *
+     * @returns Queued page or share error.
+     */
     loadFirst: async () => {
       calls.loadFirst++;
       const r = firsts.shift();
       if (r === undefined) throw new Error('unexpected loadFirst');
       return r;
     },
+    /**
+     * Consume the next queued pagination response and count the request.
+     *
+     * @returns Queued page or share error.
+     */
     loadNext: async () => {
       calls.loadNext++;
       const r = nexts.shift();

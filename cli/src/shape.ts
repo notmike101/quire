@@ -9,7 +9,12 @@ const MAX_TOOL_OUTPUT_BYTES = 20 * 1024;
  */
 export const MAX_SESSION_MESSAGES = 50_000;
 
-/** Tool outputs can be huge; cap them so uploads stay small and pages stay fast. */
+/**
+ * Bound tool output while retaining a visible omitted-byte count.
+ *
+ * @param output - Optional raw tool output.
+ * @returns Original output or its first 20 KiB with a truncation marker.
+ */
 export function truncateOutput(output: string | undefined): string | undefined {
   if (output === undefined) return undefined;
   const buf = Buffer.from(output);
@@ -31,6 +36,9 @@ const MAX_TOOL_INPUT_BYTES = 20 * 1024;
  * throwing toJSON, or a RangeError on some engines for pathologically deep
  * structures) — caught, and the input is kept as-is (the server's iterative
  * walkStrings still redacts it).
+ *
+ * @param input - Raw tool arguments.
+ * @returns Original input or a marker containing a bounded serialized preview.
  */
 export function truncateInput(input: unknown): unknown {
   if (input === undefined || input === null) return input;
@@ -60,6 +68,12 @@ export function truncateInput(input: unknown): unknown {
  */
 const MAX_PART_TEXT_BYTES = 256 * 1024;
 
+/**
+ * Bound one visible text part while recording omitted bytes.
+ *
+ * @param text - Raw text, reasoning, or system-part content.
+ * @returns Original text or its first 256 KiB with a truncation marker.
+ */
 export function truncatePartText(text: string): string {
   const buf = Buffer.from(text);
   if (buf.byteLength <= MAX_PART_TEXT_BYTES) return text;
@@ -76,6 +90,9 @@ export function truncatePartText(text: string): string {
  * Round 11: extend to C1 (0x80-0x9F, incl. the C1 form of ESC 0x9B) and the
  * bidi override/isolate controls (0x202A-0x202E, 0x2066-0x2069), which can
  * spoof text direction — aligning with the server's C1 set (CONTROL_CHARS_RE).
+ *
+ * @param s - Untrusted single-line terminal display value.
+ * @returns Value without terminal control or bidirectional override characters.
  */
 export function stripControlChars(s: string): string {
   return s.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '');

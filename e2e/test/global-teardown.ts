@@ -1,5 +1,10 @@
 import { execSync } from 'node:child_process';
 
+/**
+ * Stop the E2E Docker stack and remove its test database volumes.
+ *
+ * @throws {Error} If Docker cannot finish teardown within the command timeout.
+ */
 export default async function globalTeardown(): Promise<void> {
   execSync('docker compose -f ../docker-compose.yml -f ../docker-compose.e2e.yml down -v', {
     stdio: 'inherit',

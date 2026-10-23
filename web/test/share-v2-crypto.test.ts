@@ -30,12 +30,24 @@ const VECTOR =
   '5153485201b8972387f5550f59912bde5df0d38f35e4cf344baa090f1291fbcb73a721c37c7cff7d7bdec4ab1fd925a512c15e0b6f6cc87569faacd9121186d10921d7f1e8c7922f4ff47a37fc3c98247f0f15fcab2001b45e9762608ec394f072615abd685712b1f8a302258707fcce5021f2ef6f47876b09c282768589235d7e9a5da292b679a8d829642edd32956cdd52b14bedd4ae694af4c6705e96ffd5cfed287ae8a7705f267ece4bf246da6d4366a62599d4eb69ce4c49c095df80ffba4dc5d85ca10bdb62d0879937f7b0f3c3db133d0d3514396fe9c9e63e83b470e6e9ae4bfbd83f1dee0fa374c85dbe26ea011d80252cf7063a7bec39194f2ab4f07a6530a514093732';
 const VECTOR_BYTES = Buffer.from(VECTOR, 'hex');
 
+/**
+ * Copy a byte view into an exactly sized ArrayBuffer for browser crypto inputs.
+ *
+ * @param bytes - Fixture bytes to copy.
+ * @returns Independent ArrayBuffer containing only the supplied bytes.
+ */
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const out = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(out).set(bytes);
   return out;
 }
 
+/**
+ * Encode key bytes in the unpadded URL-fragment format.
+ *
+ * @param raw - Bytes to encode.
+ * @returns URL-safe base64 without padding.
+ */
 function base64url(raw: Buffer): string {
   return raw.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }

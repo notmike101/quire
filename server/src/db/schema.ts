@@ -27,10 +27,27 @@ export const unlockLockouts = pgTable('unlock_lockouts', {
 // standard customType pattern from the drizzle docs. postgres.js returns
 // bytea as a Buffer, so driverData is Buffer and app code sees Uint8Array.
 const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
+  /**
+   * Select PostgreSQL's binary storage type.
+   *
+   * @returns The bytea SQL type name.
+   */
   dataType() {
     return 'bytea';
   },
+  /**
+   * Convert the driver's binary buffer into application bytes.
+   *
+   * @param value - Buffer decoded by the PostgreSQL driver.
+   * @returns An application-owned byte array.
+   */
   fromDriver: (value) => new Uint8Array(value),
+  /**
+   * Convert application bytes into the driver's binary representation.
+   *
+   * @param value - Byte array to persist.
+   * @returns A buffer accepted by the PostgreSQL driver.
+   */
   toDriver: (value) => Buffer.from(value),
 });
 

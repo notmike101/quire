@@ -33,7 +33,13 @@ const MB = 1024 * 1024;
 // keepAlive: true is the point — this is the client shape that pools sockets.
 const agent = new http.Agent({ keepAlive: true });
 
-/** True if the socket closes within `ms` (already closed counts as true). */
+/**
+ * Wait for a socket to close within the specified deadline.
+ *
+ * @param {import('node:net').Socket | null | undefined} socket - Response socket, if still attached.
+ * @param {number} ms - Maximum wait in milliseconds.
+ * @returns {Promise<boolean>} Whether the socket was already closed or closed before the deadline.
+ */
 function closesWithin(socket, ms) {
   return new Promise((resolve) => {
     if (!socket || socket.destroyed) return resolve(true);
@@ -45,6 +51,14 @@ function closesWithin(socket, ms) {
   });
 }
 
+/**
+ * Send a POST through the shared agent and retain the response socket.
+ *
+ * @param {string} path - Server request path.
+ * @param {import('node:buffer').Buffer | undefined} body - Optional request-body buffer.
+ * @param {number | undefined} declaredLength - Optional Content-Length, including intentionally oversized values.
+ * @returns {Promise<{status: number, connection: string | null, body: string, socket: import('node:net').Socket | null}>} Response status, connection header, body text, and socket.
+ */
 function post(path, body, declaredLength) {
   return new Promise((resolve, reject) => {
     const headers = { 'content-type': 'application/json' };
@@ -77,6 +91,12 @@ function post(path, body, declaredLength) {
   });
 }
 
+/**
+ * Send a follow-up GET through the same pool used for rejected uploads.
+ *
+ * @param {string} path - Server request path.
+ * @returns {Promise<{status: number, body: string, socket: import('node:net').Socket | null}>} Response status, body text, and socket.
+ */
 function get(path) {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, path, method: 'GET', agent }, (res) => {

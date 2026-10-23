@@ -14,11 +14,12 @@ import {
   xssSession,
 } from './helpers';
 
-// The compose server's full log history. The stack is built fresh per run
-// (global-setup `up -d --build`, global-teardown `down -v`), so this is
-// exactly this run's output. Used to assert the content key never reaches the
-// server's logs. The base compose file interpolates the three secrets at parse
-// time, so they must be exported (same values global-setup uses).
+/**
+ * Read this run's compose server logs to check for leaked content keys.
+ * Supply the same parse-time compose secrets as global setup.
+ *
+ * @returns The server container's complete compose log output.
+ */
 function serverLogs(): string {
   return execSync('docker compose -f ../docker-compose.yml -f ../docker-compose.e2e.yml logs server', {
     encoding: 'utf8',

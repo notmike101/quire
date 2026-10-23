@@ -216,6 +216,13 @@ describe('prepareContent', () => {
 });
 
 describe('Chain F widened rules', () => {
+  /**
+   * Prepare a one-message session for widened-rule assertions.
+   *
+   * @param text - Candidate secret or clean text.
+   * @param preset - Rule selection, defaulting to strict.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
 
@@ -261,6 +268,13 @@ describe('Chain F widened rules', () => {
 });
 
 describe('Round 10 space-separated CLI-arg secrets (R10-PLUGIN-1)', () => {
+  /**
+   * Prepare command-line text for space-separated credential-rule assertions.
+   *
+   * @param text - Command or prose to scan.
+   * @param preset - Rule selection, defaulting to strict.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
 
@@ -317,6 +331,13 @@ describe('Round 10 space-separated CLI-arg secrets (R10-PLUGIN-1)', () => {
 });
 
 describe('Round 11 CLI-arg hardening (R11-1/2/6)', () => {
+  /**
+   * Prepare command text for quoted-value and flag-name regression cases.
+   *
+   * @param text - Command or prose to scan.
+   * @param preset - Rule selection, defaulting to strict.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
 
@@ -376,6 +397,13 @@ describe('Round 11 CLI-arg hardening (R11-1/2/6)', () => {
 });
 
 describe('Round 12 CLI-arg floor + base64 bearer (F1/F2)', () => {
+  /**
+   * Prepare text for short CLI credential and base64 Bearer regression cases.
+   *
+   * @param text - Candidate command, header, or prose.
+   * @param preset - Rule selection, defaulting to normal.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'normal') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
 
@@ -435,8 +463,21 @@ describe('Round 12 CLI-arg floor + base64 bearer (F1/F2)', () => {
 });
 
 describe('Round 13 re-audit: env-var + compound names, floor, passphrase, ReDoS, over-redact', () => {
+  /**
+   * Prepare text for compound-name, passphrase, and matching-complexity regressions.
+   *
+   * @param text - Candidate assignment, command, or prose.
+   * @param preset - Rule selection, defaulting to normal.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'normal') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+  /**
+   * Serialize only prepared messages for secret-absence assertions.
+   *
+   * @param out - Prepared single-message fixture.
+   * @returns Message JSON without metadata or counters.
+   */
   const msg = (out: ReturnType<typeof one>) => JSON.stringify(out.messages);
   // 40 backslashes, built at runtime (no backslash literals in this source).
   const BS = String.fromCharCode(92).repeat(40);
@@ -524,8 +565,21 @@ describe('Round 13 re-audit: env-var + compound names, floor, passphrase, ReDoS,
 });
 
 describe('Round 14 re-audit: pass aliases, env-var ReDoS, multi-word values, Basic auth', () => {
+  /**
+   * Prepare text for alias, multi-word value, and Basic-auth regression cases.
+   *
+   * @param text - Candidate assignment, command, or authorization header.
+   * @param preset - Rule selection, defaulting to normal.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'normal') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+  /**
+   * Serialize prepared messages for secret-absence assertions.
+   *
+   * @param out - Prepared single-message fixture.
+   * @returns Message JSON without metadata or counters.
+   */
   const msg = (out: ReturnType<typeof one>) => JSON.stringify(out.messages);
 
   it('redacts pass and pw aliases in assignment, compound, JSON, CLI, and query forms (R14-1)', () => {
@@ -566,8 +620,21 @@ describe('Round 14 re-audit: pass aliases, env-var ReDoS, multi-word values, Bas
 });
 
 describe('post-Round 14 sequential re-audit', () => {
+  /**
+   * Prepare text for overlap, quoting, and line-boundary regression cases.
+   *
+   * @param text - Candidate text to scan.
+   * @param preset - Rule selection, defaulting to normal.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'normal') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+  /**
+   * Serialize prepared messages for complete-secret-removal assertions.
+   *
+   * @param out - Prepared single-message fixture.
+   * @returns Message JSON without metadata or counters.
+   */
   const msg = (out: ReturnType<typeof one>) => JSON.stringify(out.messages);
 
   it('redacts the full enclosing assignment when it overlaps a higher-priority secret', () => {
@@ -671,6 +738,13 @@ describe('post-Round 14 sequential re-audit', () => {
 });
 
 describe('Round 2 widened rules', () => {
+  /**
+   * Prepare a text message for expanded credential-rule coverage.
+   *
+   * @param text - Candidate secret or clean prose.
+   * @param preset - Rule selection, defaulting to strict.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
 
@@ -784,6 +858,13 @@ describe('Round 2 widened rules', () => {
 });
 
 describe('Round 3 fixes', () => {
+  /**
+   * Prepare text for quoted assignments and truncated-key regression cases.
+   *
+   * @param text - Candidate text to scan.
+   * @param preset - Rule selection, defaulting to strict.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
 
@@ -1045,6 +1126,13 @@ describe('Round 5 fixes', () => {
     // The old walk SKIPPED over-deep nodes (a complete redaction bypass for any
     // secret nested >512 deep). Round 5 collapses the over-deep subtree to a
     // JSON string and runs it through the rules, so the secret is still caught.
+    /**
+     * Nest a value beyond the walker's depth cap.
+     *
+     * @param n - Number of object layers to construct.
+     * @param v - Leaf value hidden inside the structure.
+     * @returns The nested object chain.
+     */
     function deep(n: number, v: unknown): unknown {
       let x = v;
       for (let i = 0; i < n; i++) x = { v: x };
@@ -1111,6 +1199,12 @@ describe('Round 6 fixes (bare-token ReDoS)', () => {
   // run: 'a' is hex but the dots break every hex run to length 1. This is the
   // input that made the old lookahead quadratic (the lookahead failed at every
   // position, forcing a full-run rescan each time).
+  /**
+   * Build a long hex-and-separator run with no non-hex alphabetic characters.
+   *
+   * @param n - Minimum desired character count.
+   * @returns An alternating letter-and-period adversarial input.
+   */
   const adversarial = (n: number) => 'a.'.repeat(Math.ceil(n / 2));
 
   it('redacts a long no-g-z run in LINEAR time (was O(N²) — authenticated DoS)', () => {
@@ -1161,6 +1255,13 @@ describe('Round 6 fixes (bare-token ReDoS)', () => {
 });
 
 describe('Round 7 fixes', () => {
+  /**
+   * Prepare text for key-position and token-discrimination regression cases.
+   *
+   * @param text - Candidate text to scan.
+   * @param preset - Rule selection, defaulting to strict.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
   // A 24-char run that only the bare-token fallback matches (contains g-z letters).
@@ -1263,8 +1364,21 @@ describe('Round 7 fixes', () => {
 });
 
 describe('Round 8 fixes', () => {
+  /**
+   * Prepare text for invisible-character and Unicode matching regressions.
+   *
+   * @param text - Candidate text to scan.
+   * @param preset - Rule selection, defaulting to strict.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+  /**
+   * Prepare an image source for decoded-payload and control-character assertions.
+   *
+   * @param src - Image URL or data URI to scan.
+   * @returns A strictly redacted single-image session.
+   */
   const img = (src: string) =>
     prepareContent(
       { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src, mime: 'image/png', alt: 'shot', bytes: 4 }] }] },
@@ -1346,8 +1460,21 @@ describe('Round 8 fixes', () => {
 });
 
 describe('Round 9 fixes', () => {
+  /**
+   * Prepare text for Unicode offset, embedded data-URI, and control-character regressions.
+   *
+   * @param text - Candidate text to scan.
+   * @param preset - Rule selection, defaulting to strict.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'strict') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
+  /**
+   * Prepare an image source for data-URI and malformed-payload regression cases.
+   *
+   * @param src - Image URL or data URI to scan.
+   * @returns A strictly redacted single-image session.
+   */
   const img = (src: string) =>
     prepareContent(
       { sessionId: 's', title: 't', messages: [{ role: 'assistant', parts: [{ type: 'image', src, mime: 'image/png', alt: 'shot', bytes: 4 }] }] },
@@ -1525,6 +1652,13 @@ describe('Round 9 (D8): base64 data URIs are not secrets', () => {
 });
 
 describe('Round 10 fixes', () => {
+  /**
+   * Prepare text for bare data-URI and credential-encoding regression cases.
+   *
+   * @param text - Candidate text to scan.
+   * @param preset - Rule selection, defaulting to normal.
+   * @returns Prepared text and accumulated redaction counts.
+   */
   const one = (text: string, preset: 'strict' | 'normal' = 'normal') =>
     prepareContent({ sessionId: 's', title: 't', messages: [{ role: 'user', parts: [{ type: 'text', text }] }] }, preset);
 

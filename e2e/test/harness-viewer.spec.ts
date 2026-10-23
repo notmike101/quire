@@ -12,16 +12,51 @@ const timestamp = '2026-01-01T12:00:00.000Z';
 const singletonOutput = '  <output data-kind="fixture">& not markup</output>\n    indented line  \n\n';
 const finalText = 'Final answer stays visible. [Local source](file:///workspace/src/singleton.ts) and [Public docs](https://example.org/docs).';
 
+/**
+ * Write a Codex database and rollout, then load them through the real adapter.
+ *
+ * @param dir - Temporary directory receiving the synthetic Codex files.
+ * @returns The normalized session with reasoning, singleton tools, and batched tools.
+ */
 async function codexSession(dir: string) {
   const dbPath = join(dir, 'state_5.sqlite');
   const rolloutPath = join(dir, 'rollout.jsonl');
+  /**
+   * Serialize one timestamped Codex response-item event.
+   *
+   * @param payload - Response item stored in the rollout.
+   * @returns A JSON line for the synthetic rollout.
+   */
   const event = (payload: Record<string, unknown>) => JSON.stringify({ timestamp, type: 'response_item', payload });
+  /**
+   * Serialize a Codex text message with role-appropriate content type.
+   *
+   * @param role - User or assistant role for the message.
+   * @param text - Message text to include.
+   * @returns A serialized response-item message event.
+   */
   const message = (role: string, text: string) => event({
     type: 'message', role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text }],
   });
+  /**
+   * Serialize a Codex function call with JSON-encoded arguments.
+   *
+   * @param id - Call identifier linking the invocation to its result.
+   * @param name - Tool name recorded in the invocation.
+   * @param input - Arguments to encode in the call.
+   * @returns A serialized function-call event.
+   */
   const call = (id: string, name: string, input: object) => event({
     type: 'function_call', call_id: id, name, arguments: JSON.stringify(input),
   });
+  /**
+   * Serialize a Codex tool result while preserving output whitespace.
+   *
+   * @param id - Identifier of the invocation being answered.
+   * @param output - Tool output text.
+   * @param isError - Whether the tool invocation failed.
+   * @returns A serialized function-call-output event.
+   */
   const result = (id: string, output: string, isError = false) => event({
     type: 'function_call_output', call_id: id, output, is_error: isError,
   });
@@ -64,17 +99,52 @@ async function codexSession(dir: string) {
   return makeCodexAdapter(dbPath, {}).loadSession('codex-viewer');
 }
 
+/**
+ * Write an OMP HTML export and load it through the real adapter.
+ *
+ * @param dir - Temporary directory receiving the synthetic export.
+ * @returns The normalized session with reasoning, singleton tools, and batched tools.
+ */
 async function ompSession(dir: string) {
   const exportPath = join(dir, 'session.html');
   const entries: object[] = [];
   let parentId: string | null = null;
+  /**
+   * Append an OMP message and advance the session's parent-linked entry chain.
+   *
+   * @param role - Harness message role, including toolResult for tool responses.
+   * @param content - Ordered text, thinking, or tool-call content blocks.
+   * @param extra - Additional message fields such as model or result metadata.
+   */
   const message = (role: string, content: object[], extra: Record<string, unknown> = {}) => {
     const id = `entry-${entries.length}`;
     entries.push({ type: 'message', id, parentId, timestamp, message: { role, content, ...extra } });
     parentId = id;
   };
+  /**
+   * Wrap text as an OMP content block.
+   *
+   * @param value - Text to preserve in the block.
+   * @returns An OMP text block.
+   */
   const text = (value: string) => ({ type: 'text', text: value });
+  /**
+   * Construct an OMP tool-call content block.
+   *
+   * @param id - Identifier linking the call to its result.
+   * @param name - Harness tool name.
+   * @param args - Tool input arguments.
+   * @returns An OMP toolCall block.
+   */
   const call = (id: string, name: string, args: object) => ({ type: 'toolCall', id, name, arguments: args });
+  /**
+   * Append an OMP tool-result message to the entry chain.
+   *
+   * @param toolCallId - Identifier of the invocation being answered.
+   * @param toolName - Name of the tool that produced the result.
+   * @param output - Tool output text to preserve.
+   * @param isError - Whether the tool invocation failed.
+   */
   const result = (toolCallId: string, toolName: string, output: string, isError = false) => {
     message('toolResult', [text(output)], { toolCallId, toolName, isError });
   };
@@ -105,14 +175,48 @@ async function ompSession(dir: string) {
   return makeOmpAdapter().loadSession(exportPath);
 }
 
+/**
+ * Write a Claude Code transcript and load it through the real adapter.
+ *
+ * @param dir - Temporary directory receiving the synthetic JSONL transcript.
+ * @returns The normalized session with reasoning, singleton tools, and batched tools.
+ */
 async function claudeCodeSession(dir: string) {
   const sessionPath = join(dir, 'claude-viewer.jsonl');
   const events: object[] = [{ type: 'summary', summary: 'Claude Code adapter viewer' }];
+  /**
+   * Append a Claude Code message to the synthetic transcript.
+   *
+   * @param role - Message role used for both the event and its message body.
+   * @param content - Plain message text or ordered harness content blocks.
+   */
   const message = (role: string, content: string | object[]) => {
     events.push({ type: role, timestamp, message: { role, content, model: 'synthetic-model' } });
   };
+  /**
+   * Wrap text as a Claude Code content block.
+   *
+   * @param value - Text to preserve in the block.
+   * @returns A Claude Code text block.
+   */
   const text = (value: string) => ({ type: 'text', text: value });
+  /**
+   * Construct a Claude Code tool-use content block.
+   *
+   * @param id - Identifier linking the invocation to its result.
+   * @param name - Harness tool name.
+   * @param input - Tool input arguments.
+   * @returns A Claude Code tool_use block.
+   */
   const call = (id: string, name: string, input: object) => ({ type: 'tool_use', id, name, input });
+  /**
+   * Construct a Claude Code tool-result content block.
+   *
+   * @param tool_use_id - Identifier of the invocation being answered.
+   * @param content - Tool output text to preserve.
+   * @param is_error - Whether the tool invocation failed.
+   * @returns A Claude Code tool_result block.
+   */
   const result = (tool_use_id: string, content: string, is_error = false) => ({ type: 'tool_result', tool_use_id, content, is_error });
   message('user', 'Inspect the synthetic files.');
   message('assistant', [

@@ -4,6 +4,12 @@ import type { ShareDataSource } from '../share-data-source';
 
 export type LoadState = 'loading' | 'ready' | 'needs_password' | 'expired' | 'not_found' | 'error';
 
+/**
+ * Manage transcript pagination, access states, and password submission.
+ *
+ * @param source - Share transport and decryption implementation.
+ * @returns Reactive viewer state and actions for loading or unlocking the share.
+ */
 export function useMessages(source: ShareDataSource) {
   const state = ref<LoadState>('loading');
   const meta = ref<ShareMeta | null>(null);
@@ -19,6 +25,7 @@ export function useMessages(source: ShareDataSource) {
   let nextCursor: string | null = null;
   let exhausted = false;
 
+  /** Replace the transcript with its first page and map failures to viewer states. */
   async function loadFirst(): Promise<void> {
     state.value = 'loading';
     passwordError.value = '';
@@ -40,6 +47,7 @@ export function useMessages(source: ShareDataSource) {
     state.value = 'ready';
   }
 
+  /** Append the next page unless pagination is exhausted or already in progress. */
   async function loadMore(): Promise<void> {
     if (exhausted || loadingMore.value || nextCursor === null) return;
     loadingMore.value = true;
@@ -54,9 +62,11 @@ export function useMessages(source: ShareDataSource) {
     loadingMore.value = false;
   }
 
-  // Load pages until the message with the given identity is present (or the share is
-  // exhausted). Used by the rail: clicking a tick whose message hasn't loaded
-  // yet fetches the intervening pages first, then the caller scrolls to it.
+  /**
+   * Fetch intervening pages until a rail target is loaded or loading cannot continue.
+   *
+   * @param target - Composite identity of the message to reveal.
+   */
   async function ensureLoadedThrough(target: MessageIdentity): Promise<void> {
     while (
       !messages.value.some((m) => m.chunkSeq === target.chunkSeq && m.seq === target.seq) &&
@@ -71,6 +81,11 @@ export function useMessages(source: ShareDataSource) {
     }
   }
 
+  /**
+   * Unlock the share and reload it, exposing a reader-friendly error on failure.
+   *
+   * @param password - Password entered in the access gate.
+   */
   async function submitPassword(password: string): Promise<void> {
     passwordError.value = '';
     try {

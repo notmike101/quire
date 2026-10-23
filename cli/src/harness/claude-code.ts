@@ -7,6 +7,11 @@ import { truncateOutput, truncateInput, MAX_SESSION_MESSAGES } from '../shape.js
 import { extractSystemParts, extractReasoningParts } from '../system.js';
 import { MAX_IMAGE_BYTES, MAX_SESSION_IMAGE_BYTES, isImageMime, type ImageBudget } from '../image.js';
 
+/**
+ * Locate Claude Code's default session store.
+ *
+ * @returns Projects directory under the current user's home.
+ */
 export function claudeProjectsDir(): string {
   return join(homedir(), '.claude', 'projects');
 }
@@ -42,6 +47,12 @@ interface CcEvent {
 // the whole file. A multi-GB session file would otherwise be fully
 // materialized as one string (plus the split array of lines) before parsing.
 // Malformed lines are skipped, mirroring the old readFileSync path.
+/**
+ * Stream session events while ignoring empty and malformed JSONL lines.
+ *
+ * @param file - Session JSONL path.
+ * @yields Parsed Claude Code events in file order.
+ */
 async function* jsonlEventsStream(file: string): AsyncGenerator<CcEvent> {
   const rl = createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
   try {
@@ -62,6 +73,12 @@ async function* jsonlEventsStream(file: string): AsyncGenerator<CcEvent> {
 // Round 9 (C-F12): a broken symlink (or a file removed between readdir and
 // stat) makes statSync throw; session discovery must skip the entry, not
 // crash the whole list/load.
+/**
+ * Inspect a discovery candidate without failing on vanished files.
+ *
+ * @param p - Candidate filesystem path.
+ * @returns File metadata, or null when the path cannot be inspected.
+ */
 function safeStat(p: string): Stats | null {
   try {
     return statSync(p);
@@ -70,6 +87,12 @@ function safeStat(p: string): Stats | null {
   }
 }
 
+/**
+ * Normalize a tool result's content for output truncation.
+ *
+ * @param block - Tool-result content block.
+ * @returns Literal text or a JSON representation of structured content.
+ */
 function toolResultText(block: CcBlock): string {
   return typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '');
 }
@@ -78,6 +101,10 @@ function toolResultText(block: CcBlock): string {
  * Claude Code encodes images as {type:'image', source:{type:'base64',
  * media_type, data}} blocks inside a tool_result's content array. Extract them
  * as image parts (data URIs). Non-image content is left to toolResultText.
+ *
+ * @param block - Tool result containing possible base64 image blocks.
+ * @param budget - Mutable remaining session image-byte allowance.
+ * @returns Image parts, including placeholders for oversized images.
  */
 function imagePartsFromToolResult(block: CcBlock, budget: ImageBudget): ShapedPart[] {
   const content = block.content;
@@ -103,11 +130,24 @@ function imagePartsFromToolResult(block: CcBlock, budget: ImageBudget): ShapedPa
   return out;
 }
 
+/**
+ * Create a read-only adapter for Claude Code JSONL sessions.
+ *
+ * @param projectsDir - Root directory containing project session files.
+ * @param maxMessages - Maximum number of shaped messages retained.
+ * @param maxImageBytes - Cumulative image-byte allowance per loaded session.
+ * @returns Session discovery and shaping adapter.
+ */
 export function makeClaudeCodeAdapter(
   projectsDir: string = claudeProjectsDir(),
   maxMessages: number = MAX_SESSION_MESSAGES,
   maxImageBytes: number = MAX_SESSION_IMAGE_BYTES,
 ): HarnessAdapter {
+  /**
+   * Discover JSONL files directly in the store or one project directory below it.
+   *
+   * @returns Candidate session file paths.
+   */
   const sessionFiles = (): string[] => {
     if (!existsSync(projectsDir)) return [];
     const files: string[] = [];
@@ -130,6 +170,14 @@ export function makeClaudeCodeAdapter(
 // title. Read only a bounded head (the first events carry the summary / first
 // user message) and parse lines from it. A line cut mid-JSON or mid-UTF-8 at
 // the byte boundary fails JSON.parse and is skipped — the title is best-effort.
+/**
+ * Read a bounded prefix of session events for title discovery.
+ *
+ * @param file - Session JSONL path.
+ * @param maxLines - Maximum number of prefix lines to parse.
+ * @param maxBytes - Maximum bytes read from the file.
+ * @returns Valid events from the bounded prefix, or an empty array if unreadable.
+ */
 function headEvents(file: string, maxLines: number, maxBytes = 256 * 1024): CcEvent[] {
   let head: Buffer;
   try {
@@ -166,6 +214,12 @@ function headEvents(file: string, maxLines: number, maxBytes = 256 * 1024): CcEv
     .filter((e): e is CcEvent => e !== null);
 }
 
+  /**
+   * Choose a summary or first user text as the session's display title.
+   *
+   * @param file - Session JSONL path.
+   * @returns Discovered title, falling back to the filename's session ID.
+   */
   const titleFor = (file: string): string => {
     const id = file.split(/[\\/]/).pop()!.replace(/\.jsonl$/, '');
     try {
@@ -187,6 +241,11 @@ function headEvents(file: string, maxLines: number, maxBytes = 256 * 1024): CcEv
   return {
     name: 'claude-code',
 
+    /**
+     * Discover the 50 most recently modified session files.
+     *
+     * @returns Session metadata ordered newest first.
+     */
     async listSessions(): Promise<HarnessSessionInfo[]> {
       const infos: HarnessSessionInfo[] = [];
       for (const file of sessionFiles()) {
@@ -203,12 +262,23 @@ function headEvents(file: string, maxLines: number, maxBytes = 256 * 1024): CcEv
       return infos.slice(0, 50);
     },
 
+    /**
+     * Select the most recently modified Claude Code session.
+     *
+     * @returns Current session metadata.
+     */
     async resolveCurrent(): Promise<HarnessSessionInfo> {
       const all = await this.listSessions();
       if (all.length === 0) throw new Error('no Claude Code sessions found');
       return all[0]!;
     },
 
+    /**
+     * Shape a session's main conversation, matching tool results to calls.
+     *
+     * @param id - Session filename without its JSONL extension.
+     * @returns Transcript with bounded messages, tool payloads, and images.
+     */
     async loadSession(id: string): Promise<ShapedSession> {
       const file = sessionFiles().find((f) => f.split(/[\\/]/).pop() === `${id}.jsonl`);
       if (!file) throw new Error(`Claude Code session not found: ${id}`);
@@ -222,6 +292,7 @@ function headEvents(file: string, maxLines: number, maxBytes = 256 * 1024): CcEv
       // full for the title/model; only the message list is bounded.
       let shapedCount = 0;
       let capWarned = false;
+      /** Report message truncation at most once for this session. */
       const noteCap = (): void => {
         // Round 8: hitting the cap silently drops the tail — say so once.
         if (!capWarned) {

@@ -23,9 +23,20 @@ const TITLE = 'v2 metrics canary share';
 let db: Db;
 let app: Hono;
 
-/** Response.json() is typed Promise<unknown> under @types/node (no DOM lib); cast to a plain object. */
+/**
+ * Decode a JSON response into an assertion-friendly object.
+ *
+ * @param r - HTTP response returned by the test application.
+ * @returns Parsed response fields with the test's plain-object typing.
+ */
 const json = (r: Response): Promise<Record<string, any>> => r.json() as Promise<Record<string, any>>;
 
+/**
+ * Build a two-chunk upload containing synthetic secrets for metric privacy checks.
+ *
+ * @param over - Top-level create fields to override.
+ * @returns The create request using the file's content key and canary title.
+ */
 const createBody = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   protocol: 'quire-share-v1',
   uploadRequestId: 'req-metrics',
@@ -43,7 +54,11 @@ const createBody = (over: Record<string, unknown> = {}): Record<string, unknown>
   ...over,
 });
 
-/** Publishes a complete two-chunk v2 share; returns the publicId + uploadToken. */
+/**
+ * Publish and finalize a complete two-chunk share through the API.
+ *
+ * @returns Its public share ID and upload credential.
+ */
 async function publishV2(): Promise<{ shareId: string; uploadToken: string }> {
   const createRes = await app.request('/api/v2/shares', {
     method: 'POST',
@@ -67,13 +82,25 @@ async function publishV2(): Promise<{ shareId: string; uploadToken: string }> {
   return { shareId: created.shareId as string, uploadToken: created.uploadToken as string };
 }
 
-/** The /metrics snapshot as an array of entries (category/status/count/bytes/latency). */
+/**
+ * Fetch the process metric snapshot through the HTTP endpoint.
+ *
+ * @returns Metric entries containing category, status, counts, bytes, and latency.
+ */
 async function metrics(): Promise<Array<Record<string, any>>> {
   const res = await app.request('/metrics');
   expect(res.status).toBe(200);
   return (await json(res)) as unknown as Array<Record<string, any>>;
 }
 
+/**
+ * Find a required metric bucket, failing the test if it is absent.
+ *
+ * @param entries - Snapshot entries returned by the metrics endpoint.
+ * @param category - Pipeline category to match.
+ * @param status - Outcome status to match.
+ * @returns The first matching aggregate entry.
+ */
 const entry = (entries: Array<Record<string, any>>, category: string, status: number): Record<string, any> => {
   const found = entries.filter((e) => e.category === category && e.status === status);
   expect(found.length, `${category} ${status}`).toBeGreaterThan(0);
@@ -85,6 +112,7 @@ beforeAll(async () => {
   // postgres.js console.logs NOTICE lines; migrateDb against an already-migrated
   // container emits "already exists, skipping". Silence so output stays clean.
   const origLog = console.log;
+  /** Ignore expected migration notices during test setup. */
   console.log = () => {};
   try {
     await migrateDb(db);

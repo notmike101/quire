@@ -1,6 +1,12 @@
 import { QuireApi } from '../api.js';
 import { stripControlChars } from '../shape.js';
 
+/**
+ * Print the owner's shares as a terminal-safe metadata table.
+ *
+ * @param api - Authenticated owner API client.
+ * @param out - Destination for each rendered line.
+ */
 export async function runList(api: QuireApi = new QuireApi(), out: (line: string) => void = console.log): Promise<void> {
   const { shares } = await api.list();
   if (shares.length === 0) {
@@ -15,6 +21,12 @@ export async function runList(api: QuireApi = new QuireApi(), out: (line: string
     s.state,
   ]);
   const widths = rows[0]!.map((_, i) => Math.max(rows[0]![i]!.length, ...rows.map((r) => r[i]!.length)));
+  /**
+   * Align one row using the computed column widths.
+   *
+   * @param r - Ordered table cells.
+   * @returns Padded cells separated by two spaces.
+   */
   const line = (r: string[]) => r.map((cell, i) => cell.padEnd(widths[i]!)).join('  ');
   out(line(['ID', 'TITLE', 'CREATED', 'EXPIRES', 'STATE']));
   for (const r of rows) out(line(r));

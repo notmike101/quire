@@ -5,6 +5,9 @@
  * the server stores what it stores, but the browser must not fetch or
  * execute from an untrusted origin. Only concrete raster types are accepted
  * (not svg+xml, which can carry SMIL animation and is never a screenshot).
+ *
+ * @param src - Candidate image source from shared content.
+ * @returns Whether the source is an allowed raster data URI or safe asset path.
  */
 export function isSafeImageSrc(src: string | undefined): boolean {
   if (!src) return false;

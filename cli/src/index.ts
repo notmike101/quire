@@ -20,6 +20,7 @@ Usage:
 Config: QUIRE_SERVER_URL + QUIRE_API_KEY (env) or ~/.quire/config.json
 `;
 
+/** Parse command-line arguments and dispatch the selected Quire command. */
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   switch (command) {

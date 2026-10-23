@@ -16,6 +16,10 @@ const DRAIN_TIMEOUT_MS = 500;
  * not a RST). A RST — unread body bytes sitting in the receive buffer when the
  * socket closes — makes the kernel discard the queued 413, so a pooling client
  * sees a bare ECONNRESET instead of the response. Best-effort: never throws.
+ *
+ * @param reader - Request-body reader to consume without retaining chunks.
+ * @param cap - Maximum number of additional bytes to discard.
+ * @param timeoutMs - Maximum time to spend draining, in milliseconds.
  */
 async function drainReader(
   reader: ReadableStreamDefaultReader<Uint8Array>,
@@ -48,6 +52,11 @@ async function drainReader(
   }
 }
 
+/**
+ * Create middleware that adds browser security and no-index headers.
+ *
+ * @returns Middleware that applies headers after the downstream handler.
+ */
 export function securityHeaders(): MiddlewareHandler {
   return async (c, next) => {
     await next();
@@ -103,6 +112,12 @@ export function securityHeaders(): MiddlewareHandler {
 // "socket hang up" (the e2e "lazy-loads subsequent pages" flake; Playwright's
 // driver shares one keep-alive agent across all APIRequestContexts). nginx and
 // Express do the same: close the connection on an oversized-body reject.
+/**
+ * Buffer accepted bodies while rejecting declared or streamed oversized uploads.
+ *
+ * @param maxBytes - Maximum accepted request-body size in bytes.
+ * @returns Middleware that restores accepted bytes for downstream consumers.
+ */
 export function bodyLimit(maxBytes: number = MAX_UPLOAD_BYTES): MiddlewareHandler {
   return async (c, next) => {
     // Cheap fast path: reject an oversized DECLARED length before reading.

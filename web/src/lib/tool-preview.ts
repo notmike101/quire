@@ -1,10 +1,23 @@
 import type { SharePart } from '../api';
 
+/**
+ * Collapse whitespace and truncate a preview to its display budget.
+ *
+ * @param text - Text to summarize.
+ * @param limit - Maximum displayed length, including an ellipsis when truncated.
+ * @returns Single-line preview.
+ */
 export function compactPreview(text: string, limit = 140): string {
   const line = text.replace(/\s+/g, ' ').trim();
   return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
 }
 
+/**
+ * Decode JSON arguments, including tool-call wrappers, without discarding raw text.
+ *
+ * @param input - Tool arguments or output to decode.
+ * @returns Parsed JSON when valid, otherwise the original value.
+ */
 function inputValue(input: unknown): unknown {
   if (typeof input !== 'string') return input;
   try {
@@ -16,10 +29,22 @@ function inputValue(input: unknown): unknown {
   }
 }
 
+/**
+ * Derive a compact tool title and useful argument summary.
+ *
+ * @param part - Tool part whose intent, command, path, or query should be shown.
+ * @returns Display title and detail for the collapsed tool card.
+ */
 export function toolPreview(part: SharePart): { title: string; detail: string } {
   const name = (part.tool ?? 'tool').split('.').pop() ?? 'tool';
   const input = inputValue(part.input);
   const args = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
+  /**
+   * Read the first nonempty string argument among known aliases.
+   *
+   * @param keys - Argument names in priority order.
+   * @returns Matching string, or an empty string when no alias is populated.
+   */
   const string = (...keys: string[]): string => {
     for (const key of keys) if (typeof args[key] === 'string' && args[key]) return args[key] as string;
     return '';
@@ -52,11 +77,29 @@ export function toolPreview(part: SharePart): { title: string; detail: string } 
   return { title: compactPreview(intent || action, 90), detail: compactPreview(detail) };
 }
 
+/**
+ * Recognize the failure statuses used by supported harnesses.
+ *
+ * @param part - Tool part to inspect.
+ * @returns Whether its status denotes a failure.
+ */
 export function toolFailed(part: SharePart): boolean {
   return /^(?:error|failed|failure)$/i.test(part.status ?? '');
 }
 
+/**
+ * Extract a useful diagnostic from raw or structured tool output.
+ *
+ * @param part - Failed tool part.
+ * @returns Compact diagnostic, first output line, or a missing-details message.
+ */
 export function toolErrorPreview(part: SharePart): string {
+  /**
+   * Extract text from a string or common structured result fields.
+   *
+   * @param value - Decoded tool result.
+   * @returns Available result text, or an empty string.
+   */
   const textFrom = (value: unknown): string => {
     if (typeof value === 'string') return value;
     if (!value || typeof value !== 'object') return '';

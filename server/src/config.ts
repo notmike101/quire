@@ -38,6 +38,12 @@ const schema = z.object({
   // test suite volume). The 429 path itself stays unit-tested.
   QUIRE_PUBLIC_RATE_LIMIT: z.coerce.number().int().positive().default(120),
 });
+/**
+ * Validate environment settings and apply server defaults without echoing secrets.
+ *
+ * @param env - Environment variables to load, defaulting to the process environment.
+ * @returns Validated server configuration.
+ */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = schema.safeParse(env);
   if (!parsed.success) {

@@ -33,10 +33,22 @@ const tickEls = ref<(HTMLElement | null)[]>([]);
 // cluster scroll offsets into "N more" counts.
 const ROW_H = 12;
 
+/**
+ * Supply a tooltip label even when the indexed preview is empty.
+ *
+ * @param entry - Rail entry being previewed.
+ * @returns Preview text or a generic user-message label.
+ */
 function preview(entry: RailUserEntry): string {
   return entry.preview || 'user message';
 }
 
+/**
+ * Retain each rendered tick element for tooltips and active-tick scrolling.
+ *
+ * @param el - Tick element, or null when Vue removes it.
+ * @param i - Position of the tick in the full-share index.
+ */
 function setTickEl(el: HTMLElement | null, i: number) {
   tickEls.value[i] = el;
 }
@@ -56,6 +68,11 @@ const tipPreview = computed(() => {
   return entry ? preview(entry) : '';
 });
 
+/**
+ * Show a tick's preview and position it beside the tick after rendering.
+ *
+ * @param i - Index of the hovered or focused tick.
+ */
 function showTip(i: number) {
   const tick = tickEls.value[i];
   if (!tick) return;
@@ -84,6 +101,7 @@ function showTip(i: number) {
   })();
 }
 
+/** Hide the currently displayed tick preview. */
 function hideTip() {
   tipVisible.value = false;
 }
@@ -99,6 +117,11 @@ let settleTimer = 0;
 let settleRaf = 0;
 let settleRaf2 = 0;
 
+/**
+ * Load a target message if necessary, then scroll to and highlight it.
+ *
+ * @param i - Full-share rail index of the requested user message.
+ */
 async function jumpTo(i: number) {
   const entry = entries.value[i];
   if (!entry) return;
@@ -169,6 +192,11 @@ let inObserve = false;
 // the reading line (28% down the viewport). This is the single source of truth
 // for the active tick; the IntersectionObserver is only a trigger to recompute
 // it, not the decider.
+/**
+ * Find the last loaded user message at or above the viewport's reading line.
+ *
+ * @returns Loaded user-message index, defaulting to the first entry.
+ */
 function activeUserMsgIdx(): number {
   if (!loadedIds.value.length) return 0;
   const line = window.innerHeight * 0.28;
@@ -183,6 +211,7 @@ function activeUserMsgIdx(): number {
   return best;
 }
 
+/** Rebuild visibility observation for the user-message anchors currently in the DOM. */
 function observeTargets() {
   observer?.disconnect();
   if (!loadedIds.value.length) return;
@@ -212,6 +241,7 @@ function observeTargets() {
 }
 
 let scrollRaf = 0;
+/** Recompute the active tick at most once per animation frame during scrolling. */
 function onWindowScroll() {
   if (scrollRaf) return;
   scrollRaf = requestAnimationFrame(() => {
@@ -272,6 +302,7 @@ onMounted(() => {
   // pick a later message. This anchor applies only to the initial settle, not
   // to the scroll/observer tracking (which must follow the reader). rAF can be
   // throttled under load, so also settle on a short timeout fallback.
+  /** Set the initial active tick after layout, keeping the first tick at page top. */
   const settle = () => {
     const best = window.scrollY < 8 ? 0 : activeUserMsgIdx();
     if (best !== activeIdx.value) activeIdx.value = best;
@@ -301,6 +332,7 @@ onBeforeUnmount(() => {
 // ---- Overflow: toggle the .is-overflowing class so the scrollbar only
 // appears when the tick group actually exceeds the viewport budget.
 // Re-evaluated after layout settles and on resize.
+/** Toggle the cluster scrollbar only when its ticks exceed the available height. */
 function updateOverflow() {
   const c = clusterEl.value;
   if (!c) return;
@@ -308,6 +340,7 @@ function updateOverflow() {
 }
 
 let overflowSettle = 0;
+/** Replace the delayed overflow measurement so late layout changes are included. */
 function scheduleOverflowSettle() {
   if (overflowSettle) window.clearTimeout(overflowSettle);
   overflowSettle = window.setTimeout(updateOverflow, 300);
@@ -322,6 +355,7 @@ watch(
   },
 );
 
+/** Refresh rail overflow after the viewport size changes. */
 function onResize() {
   updateOverflow();
 }

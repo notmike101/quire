@@ -12,10 +12,23 @@ import fixture from './fixtures/tool-heavy-session.json' with { type: 'json' };
 
 // Minimal PreparedContent for partitioner tests — buildViewerPages only reads
 // `prepared.messages`, so redaction fields are irrelevant here.
+/**
+ * Wrap messages in the minimal prepared shape needed by the partitioner.
+ *
+ * @param messages - Messages to partition without running redaction.
+ * @returns Prepared content with placeholder byte and redaction totals.
+ */
 function prepared(messages: ShapedMessage[]): PreparedContent {
   return { messages, summary: {}, bytes: 0, messageCount: messages.length };
 }
 
+/**
+ * Build a timestamped message with deterministic text for sequence assertions.
+ *
+ * @param role - User or assistant role assigned to the message.
+ * @param i - Number embedded in its text.
+ * @returns A shaped single-part text message.
+ */
 function textMsg(role: 'user' | 'assistant', i: number): ShapedMessage {
   return { role, time: '2026-09-01T00:00:00.000Z', parts: [{ type: 'text', text: `message ${i}` }] };
 }
@@ -62,6 +75,12 @@ describe('buildViewerPages', () => {
 
   it('splits on the byte bound before the message-count bound', () => {
     // Three ~2 MiB messages: any two together exceed 4 MiB, so each gets its own page.
+    /**
+     * Build a tool message large enough to force a byte-bound page split.
+     *
+     * @param i - Number used to distinguish the message payload.
+     * @returns A message with approximately two MiB of output.
+     */
     const big = (i: number): ShapedMessage => ({ role: 'assistant', parts: [{ type: 'tool', tool: 'bash', output: `m${i}`.padEnd(2 * 1024 * 1024, 'x') }] });
     const { pages } = buildViewerPages({ shareId: 's', chunkSeq: 0, prepared: prepared([big(0), big(1), big(2)]), startPageSeq: 0, startMsgSeq: 0 });
     expect(pages.map((p) => p.messages.length)).toEqual([1, 1, 1]);
@@ -86,6 +105,13 @@ describe('buildViewerPages', () => {
 });
 
 describe('buildRailEntries', () => {
+  /**
+   * Wrap wire messages in a page for rail-index assertions.
+   *
+   * @param seq - Global page sequence.
+   * @param messages - Messages contained in the page.
+   * @returns A protocol page for the fixed synthetic share.
+   */
   const page = (seq: number, messages: ShareMessageV1[]): SharePageV1 => ({ protocol: SHARE_PROTOCOL, shareId: 's', seq, messages });
 
   it('returns only user messages in global order with v1-matching previews', () => {

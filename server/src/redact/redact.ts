@@ -16,7 +16,14 @@ import { rules, type Preset } from './rules.js';
 // secret persists unredacted — is preserved).
 const MAX_WALK_DEPTH = 512;
 
-/** Map every string/number/boolean leaf of a JSON value through fn (structure preserved). */
+/**
+ * Transform primitive leaves and string keys, mutating nested containers in place.
+ * Over-deep subtrees are collapsed to redacted JSON strings.
+ *
+ * @param value - Value whose strings, numeric leaves, and boolean leaves are scanned.
+ * @param fn - Transformation applied to keys and textual representations.
+ * @returns The transformed root value, preserving unchanged primitive types.
+ */
 export function walkStrings(value: unknown, fn: (s: string) => string): unknown {
   const work: Array<{ container: Record<string, unknown> | unknown[]; key: PropertyKey; value: unknown; depth: number }> = [];
   const root: Record<string, unknown> = { value };
@@ -139,6 +146,12 @@ const INVISIBLE_CP = new Set<number>([
 // non-redacted output. The regular space U+0020 is Zs (neither Cf nor Mn) and
 // is deliberately NOT stripped — it legitimately ends a token.
 const INVISIBLE_CF_MN_RE = /[\p{Cf}\p{Mn}]/u;
+/**
+ * Identify code points stripped from the secret-matching copy of text.
+ *
+ * @param cp - Unicode code point to classify.
+ * @returns Whether the code point can invisibly split a credential.
+ */
 function isInvisible(cp: number): boolean {
   if (INVISIBLE_CP.has(cp)) return true;
   if (cp >= 0xfe00 && cp <= 0xfe0f) return true; // variation selectors (Mn)
@@ -162,6 +175,12 @@ function isInvisible(cp: number): boolean {
 // never preceded by it, so no genuine redaction is lost.
 const DATA_URI_RE = /data:[^,\s]*;base64,[a-z0-9+/%=]+/gi;
 
+/**
+ * Locate base64 data URIs shielded from ordinary plaintext secret rules.
+ *
+ * @param s - Text in the same coordinate space used for rule matching.
+ * @returns Ordered URI spans with inclusive starts and exclusive ends.
+ */
 function findDataUriSpans(s: string): Array<{ s: number; e: number }> {
   const spans: Array<{ s: number; e: number }> = [];
   DATA_URI_RE.lastIndex = 0;
@@ -173,6 +192,13 @@ function findDataUriSpans(s: string): Array<{ s: number; e: number }> {
   return spans;
 }
 
+/**
+ * Match secrets on an invisible-stripped copy and redact their full original spans.
+ *
+ * @param text - Text to scan without changing non-redacted Unicode formatting.
+ * @param preset - Rule set to apply, or none to leave the text unchanged.
+ * @returns Redacted text and counts of emitted replacements by category.
+ */
 export function redactText(
   text: string,
   preset: Preset,
@@ -210,6 +236,13 @@ export function redactText(
   // DATA_URI_RE note). Computed on the stripped text so the spans share the
   // same coordinate space as the rule spans below.
   const dataUriSpans = findDataUriSpans(stripped);
+  /**
+   * Test whether a candidate rule match overlaps a shielded data URI.
+   *
+   * @param s - Inclusive start of the candidate match.
+   * @param e - Exclusive end of the candidate match.
+   * @returns Whether any data-URI span overlaps the match.
+   */
   const inDataUri = (s: number, e: number) => {
     let lo = 0;
     let hi = dataUriSpans.length;

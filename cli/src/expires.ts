@@ -12,7 +12,9 @@ const KEYWORD_OFFSETS: Record<string, number> = {
 /**
  * Accepts an ISO datetime, a duration like 30m/24h/7d, or a relative keyword
  * (tomorrow, today, week, month, year, optionally prefixed with "in ").
- * Returns an ISO string.
+ *
+ * @param value - Future date, duration, or supported relative keyword.
+ * @returns Future expiration normalized to an ISO datetime string.
  */
 export function parseExpiry(value: string): string {
   const raw = value.trim();

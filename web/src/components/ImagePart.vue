@@ -4,7 +4,12 @@ import { isSafeImageSrc } from '../lib/imgsrc';
 
 const props = defineProps<{ part: SharePart }>();
 
-// Human-readable size for the too-large placeholder.
+/**
+ * Format the omitted image's byte count for its placeholder.
+ *
+ * @param n - Original image size, when available.
+ * @returns Size in B, KB, or MB, or an empty string for a missing or zero size.
+ */
 function fmtBytes(n: number | undefined): string {
   if (!n) return '';
   if (n < 1024) return `${n} B`;

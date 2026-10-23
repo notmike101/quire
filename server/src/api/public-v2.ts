@@ -16,8 +16,26 @@ export interface PublicV2Deps {
   ipWindow: IpWindow;
 }
 
+/**
+ * Hide unknown and incomplete shares behind the same response.
+ *
+ * @param c - Request context used to create the response.
+ * @returns The uniform not-found response.
+ */
 const notFound = (c: Context) => c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
+/**
+ * Report that a previously published share has expired.
+ *
+ * @param c - Request context used to create the response.
+ * @returns An expired-share response.
+ */
 const expired = (c: Context) => c.json({ error: { code: 'expired', message: 'This share has expired' } }, 410);
+/**
+ * Ask the viewer to unlock a password-protected share.
+ *
+ * @param c - Request context used to create the response.
+ * @returns A password-required response.
+ */
 const needsPassword = (c: Context) => c.json({ error: { code: 'needs_password', message: 'This share is password protected' } }, 401);
 
 /**
@@ -26,6 +44,11 @@ const needsPassword = (c: Context) => c.json({ error: { code: 'needs_password', 
  * existence oracle — a killed upload never reveals its partial state); an
  * expired share returns 410 (it existed and is gone); a password-protected
  * share without a valid unlock cookie returns 401.
+ *
+ * @param c - Request context containing the share ID and unlock cookie.
+ * @param db - Database used to load the public share state.
+ * @param config - Configuration containing the unlock-cookie signing secret.
+ * @returns Ready share state or the response denying access.
  */
 async function gate(c: Context, db: Db, config: Config): Promise<V2PublicShareState | Response> {
   const shareId = c.req.param('shareId') ?? '';
@@ -43,6 +66,12 @@ async function gate(c: Context, db: Db, config: Config): Promise<V2PublicShareSt
 // seq is clamped to the int32 max so it is just a miss (404), never a driver
 // overflow 500. Non-integer and negative seqs are misses too.
 const INT32_MAX = 2_147_483_647;
+/**
+ * Parse a blob sequence and clamp it to the database integer range.
+ *
+ * @param raw - Sequence route parameter.
+ * @returns The parsed sequence, or -1 for invalid or negative values.
+ */
 function parseSeq(raw: string | undefined): number {
   const n = Number.parseInt(raw ?? '', 10);
   if (!Number.isInteger(n) || n < 0) return -1;
@@ -54,8 +83,25 @@ function parseSeq(raw: string | undefined): number {
 // match the envelope bytes before they are served (defense in depth: a
 // corrupt row must not reach the viewer as an undecryptable blob); on
 // mismatch the row is broken server-side, so 500, never the corrupt bytes.
+/**
+ * Gate access and serve a ciphertext blob only after verifying its stored digest.
+ *
+ * @param c - Request context containing the share ID and unlock cookie.
+ * @param db - Database containing the share and blob.
+ * @param config - Server configuration used to validate access.
+ * @param kind - Blob family to retrieve.
+ * @param seq - Sequence within the selected blob family.
+ * @returns Ciphertext bytes or an access, missing-blob, or integrity error.
+ */
 async function serveBlob(c: Context, db: Db, config: Config, kind: 'manifest' | 'index' | 'page', seq: number): Promise<Response> {
   const t0 = Date.now();
+  /**
+   * Record the blob request's status, byte count, and elapsed time.
+   *
+   * @param status - HTTP response status.
+   * @param bytes - Served ciphertext bytes, when available.
+   * @returns No value; the metric bucket is updated in place.
+   */
   const note = (status: number, bytes?: number) => v2Metrics.record('v2_blob_serve', status, { bytes, latencyMs: Date.now() - t0 });
   const gated = await gate(c, db, config);
   if (gated instanceof Response) {
@@ -86,11 +132,28 @@ async function serveBlob(c: Context, db: Db, config: Config, kind: 'manifest' | 
   return c.body(Buffer.from(blob.ciphertext), 200, { 'content-type': 'application/octet-stream' });
 }
 
+/**
+ * Build rate-limited bootstrap, ciphertext, and password-unlock routes.
+ *
+ * @param deps - Public-route dependencies.
+ * @param deps.db - Database containing sealed shares.
+ * @param deps.config - Server configuration for cookies and proxy handling.
+ * @param deps.unlockLimiter - Failed-unlock limiter keyed by share and IP.
+ * @param deps.tokenLimiter - Failed-unlock limiter keyed by share alone.
+ * @param deps.ipWindow - Request-volume limiter shared across public endpoints.
+ * @returns The router mounted under the v2 API prefix.
+ */
 export function publicV2Routes({ db, config, unlockLimiter, tokenLimiter, ipWindow }: PublicV2Deps): Hono {
   const app = new Hono();
 
   // Per-IP volume window shared with v1's public endpoints: bounds total
   // per-IP request volume on every path, not just the failure paths.
+  /**
+   * Consume the caller's public-request allowance.
+   *
+   * @param c - Request context used to identify the caller.
+   * @returns A rate-limit response when exhausted, otherwise undefined.
+   */
   const volumeLimited = (c: Context): Response | undefined =>
     ipWindow.allow(clientIp(c, config.trustProxy))
       ? undefined

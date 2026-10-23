@@ -6,11 +6,21 @@ import { truncateOutput, truncateInput, MAX_SESSION_MESSAGES } from '../shape.js
 import { extractSystemParts, extractReasoningParts } from '../system.js';
 import { readArtifactDataUri, fileToDataUri, mimeFromExtension, isImageMime, MAX_IMAGE_BYTES, MAX_SESSION_IMAGE_BYTES, embedLocalMarkdownImages, type ImageBudget } from '../image.js';
 
+/**
+ * Locate the default ZCode session database.
+ *
+ * @returns Database path under the current user's home.
+ */
 export function zcodeDbPath(): string {
   return join(homedir(), '.zcode', 'cli', 'db', 'db.sqlite');
 }
 
-/** ZCode artifact store root: `~/.zcode/cli/artifacts/<sessionId>/`. */
+/**
+ * Locate a session's ZCode artifact store.
+ *
+ * @param sessionId - Exact ZCode session identifier.
+ * @returns Artifact directory under the current user's ZCode store.
+ */
 export function zcodeArtifactsDir(sessionId: string): string {
   return join(homedir(), '.zcode', 'cli', 'artifacts', sessionId);
 }
@@ -51,6 +61,11 @@ interface RawPart {
  * as data-URI artifacts referenced by `state.attachments[]`). Returns images
  * to be attached to the tool part (rendered inside its collapsible body), or
  * [] if none.
+ *
+ * @param raw - Tool part containing attachment references.
+ * @param artifactDir - Artifact directory belonging to this session.
+ * @param budget - Mutable remaining session image-byte allowance.
+ * @returns Embedded attachment images or metadata-only placeholders.
  */
 function imagesFromAttachments(raw: RawPart, artifactDir: string, budget: ImageBudget): ShapedImage[] {
   const attachments = raw.state?.attachments;
@@ -82,6 +97,11 @@ function imagesFromAttachments(raw: RawPart, artifactDir: string, budget: ImageB
  * Best-effort: resolve a screenshot tool call's on-disk file (input.filename
  * relative to the session working dir) to an image. Returns [] if the file
  * is gone or not an image — the markdown link in the tool output still renders.
+ *
+ * @param raw - Screenshot tool part containing its output filename.
+ * @param workDir - Session workspace root, if available.
+ * @param budget - Mutable remaining session image-byte allowance.
+ * @returns Screenshot image or placeholder, or an empty array if unavailable.
  */
 function imageFromScreenshotFile(raw: RawPart, workDir: string | undefined, budget: ImageBudget): ShapedImage[] {
   if (!workDir) return [];
@@ -101,6 +121,12 @@ function imageFromScreenshotFile(raw: RawPart, workDir: string | undefined, budg
   return [{ src: uri.dataUri, mime: uri.mime, alt: filename, bytes: uri.bytes }];
 }
 
+/**
+ * Recognize screenshot tool names that can expose a local output filename.
+ *
+ * @param tool - Optional tool identifier.
+ * @returns Whether the identifier names a screenshot-taking tool.
+ */
 function isScreenshotTool(tool: string | undefined): boolean {
   return typeof tool === 'string' && /take_screenshot/i.test(tool);
 }
@@ -111,12 +137,26 @@ function isScreenshotTool(tool: string | undefined): boolean {
  * part is emitted immediately after it, so the transcript shows the actual image
  * instead of a redacted `file:///…` path. Links whose file is gone or too large
  * are left untouched (they get redacted server-side as before).
+ *
+ * @param text - Markdown text containing possible local image links.
+ * @param workDir - Workspace root confining local image reads.
+ * @param budget - Mutable remaining session image-byte allowance.
+ * @returns Rewritten text and image parts extracted from permitted local files.
  */
 function embedMarkdownImages(text: string, workDir: string | undefined, budget: ImageBudget): { text: string; images: ShapedPart[] } {
   return embedLocalMarkdownImages(text, workDir ? [workDir] : [], budget);
 }
 
 
+/**
+ * Convert one stored ZCode part into supported transcript content.
+ *
+ * @param raw - Parsed part record.
+ * @param artifactDir - Session artifact directory for tool attachments.
+ * @param workDir - Optional root confining local image reads.
+ * @param budget - Mutable remaining session image-byte allowance.
+ * @returns Shaped parts, or an empty array for internal or unsupported records.
+ */
 function partToShaped(raw: RawPart, artifactDir: string, workDir: string | undefined, budget: ImageBudget): ShapedPart[] {
   switch (raw.type) {
     case 'text': {
@@ -155,17 +195,36 @@ function partToShaped(raw: RawPart, artifactDir: string, workDir: string | undef
   }
 }
 
+/**
+ * Create a read-only adapter for ZCode's session and artifact stores.
+ *
+ * @param dbPath - ZCode session database path.
+ * @param workDirOverride - Optional workspace root replacing stored metadata.
+ * @param maxMessages - Maximum message rows loaded per session.
+ * @param maxImageBytes - Cumulative image-byte allowance per session.
+ * @returns Session discovery and shaping adapter.
+ */
 export function makeZcodeAdapter(
   dbPath: string = zcodeDbPath(),
   workDirOverride?: string,
   maxMessages: number = MAX_SESSION_MESSAGES,
   maxImageBytes: number = MAX_SESSION_IMAGE_BYTES,
 ): HarnessAdapter {
+  /**
+   * Open the session database without permitting writes.
+   *
+   * @returns A database connection that the caller must close.
+   */
   const open = (): DatabaseSync => new DatabaseSync(dbPath, { readOnly: true });
 
   return {
     name: 'zcode',
 
+    /**
+     * List the 50 newest sessions excluding subagent children.
+     *
+     * @returns Session metadata ordered by update time.
+     */
     async listSessions(): Promise<HarnessSessionInfo[]> {
       const db = open();
       try {
@@ -194,12 +253,23 @@ export function makeZcodeAdapter(
       }
     },
 
+    /**
+     * Select the newest top-level ZCode session.
+     *
+     * @returns Current session metadata.
+     */
     async resolveCurrent(): Promise<HarnessSessionInfo> {
       const all = await this.listSessions();
       if (all.length === 0) throw new Error('no ZCode sessions found');
       return all[0]!;
     },
 
+    /**
+     * Shape a session's visible conversation and supported attachments.
+     *
+     * @param id - Exact session identifier.
+     * @returns Bounded transcript excluding model-only and continuation records.
+     */
     async loadSession(id: string): Promise<ShapedSession> {
       const db = open();
       try {

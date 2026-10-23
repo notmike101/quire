@@ -103,9 +103,16 @@ no longer exports. Other packages use TypeScript 7; upgrade the viewer when
 ```bash
 pnpm install
 pnpm db:test:up            # Postgres on :54329 for tests
+pnpm lint                  # documentation lint; zero errors or warnings allowed
 pnpm typecheck
 pnpm test                  # unit tests for all packages + E2E (needs Docker)
 ```
+
+Documentation lint uses `eslint-plugin-jsdoc` across JavaScript, TypeScript,
+and Vue script blocks. `eslint.config.mjs` adapts the syntax and coverage rules
+from `@notmike101/eslint-config-jsdoc`; TypeScript comments describe behavior
+without repeating parameter or return types. `pnpm lint` enforces
+`--max-warnings 0`, including warning-level documentation rules.
 
 Run the server against a local Postgres:
 

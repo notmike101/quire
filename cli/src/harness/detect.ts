@@ -7,10 +7,21 @@ import type { HarnessAdapter } from './types.js';
 
 export type HarnessName = 'zcode' | 'claude-code' | 'codex' | 'omp';
 
+/**
+ * Resolve the default stores used for automatic harness detection.
+ *
+ * @returns Paths for the ZCode, Claude Code, and Codex stores.
+ */
 export function defaultStorePaths(): { zcode: string; claudeCode: string; codex: string } {
   return { zcode: zcodeDbPath(), claudeCode: claudeProjectsDir(), codex: codexStateDbPath() };
 }
 
+/**
+ * Read a store's modification time without failing discovery.
+ *
+ * @param path - Candidate store path.
+ * @returns Modification time in milliseconds, or undefined if unavailable.
+ */
 function mtimeIfExists(path: string): number | undefined {
   try {
     return existsSync(path) ? statSync(path).mtimeMs : undefined;
@@ -19,6 +30,16 @@ function mtimeIfExists(path: string): number | undefined {
   }
 }
 
+/**
+ * Prefer explicit harness environment markers, then the newest available store.
+ *
+ * @param env - Environment containing optional harness markers.
+ * @param paths - Store locations to compare when no marker is set.
+ * @param paths.zcode - ZCode database path whose modification time is compared.
+ * @param paths.claudeCode - Claude Code projects directory whose modification time is compared.
+ * @param paths.codex - Codex database path used to read the newest task timestamp.
+ * @returns Detected harness name; OMP requires explicit selection.
+ */
 export function detectHarness(
   env: NodeJS.ProcessEnv = process.env,
   paths: { zcode: string; claudeCode: string; codex: string } = defaultStorePaths(),
@@ -37,6 +58,12 @@ export function detectHarness(
   throw new Error('could not detect a harness; pass --harness zcode, claude-code, codex, or omp');
 }
 
+/**
+ * Construct the adapter for an explicitly selected harness.
+ *
+ * @param name - Supported harness identifier.
+ * @returns Harness-specific discovery and loading implementation.
+ */
 export function makeAdapter(name: HarnessName): HarnessAdapter {
   switch (name) {
     case 'zcode': return makeZcodeAdapter();

@@ -10,6 +10,12 @@ import { unlockBodySchema } from './schema.js';
 // IPv6. Anything else (a hostname, "not-an-ip", a port, garbage) is rejected so
 // a broken proxy assumption cannot let a client choose its own rate-limit key.
 const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+/**
+ * Check whether a proxy header contains a supported IPv4 or IPv6 address.
+ *
+ * @param s - Candidate address without a port.
+ * @returns Whether the address passes the proxy-header format checks.
+ */
 function isWellFormedIp(s: string): boolean {
   if (IPV4_RE.test(s)) return s.split('.').every((o) => Number(o) <= 255);
   if (s.includes(':')) return /^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}$/.test(s);
@@ -30,6 +36,13 @@ function isWellFormedIp(s: string): boolean {
 // (Round 9 B-F2: the old LEFTMOST choice was attacker-controlled behind
 // Cloudflare — the client's own XFF value — letting it cycle keys to evade the
 // per-IP unlock lockout and content throttle.)
+/**
+ * Select the socket address or a validated hop supplied by a trusted proxy.
+ *
+ * @param c - Request context containing headers and connection information.
+ * @param trustProxy - Whether the immediate proxy's address headers are trusted.
+ * @returns The rate-limit address, or "unknown" when no connection is available.
+ */
 export function clientIp(c: Context, trustProxy = false): string {
   if (trustProxy) {
     const xff = c.req.header('x-forwarded-for');
@@ -50,6 +63,13 @@ export function clientIp(c: Context, trustProxy = false): string {
   }
 }
 
+/**
+ * Find an unmodified cookie value in a request header.
+ *
+ * @param header - Raw Cookie header, if present.
+ * @param name - Cookie name to match exactly.
+ * @returns The trimmed value of the first matching cookie, if any.
+ */
 export function parseCookie(header: string | undefined, name: string): string | undefined {
   if (!header) return undefined;
   for (const part of header.split(';')) {
@@ -70,6 +90,15 @@ export function parseCookie(header: string | undefined, name: string): string | 
  * share for the window; a successful unlock clears both. Returns a Response
  * for every terminal outcome: 429 locked, 400 malformed body, 401 wrong
  * password (failure recorded), 200 (cookie set).
+ *
+ * @param c - Request context containing the password body and client address.
+ * @param deps - Unlock dependencies shared by the public routes.
+ * @param deps.unlockLimiter - Failure limiter for the share-and-IP pair.
+ * @param deps.tokenLimiter - Failure limiter shared by all IPs for this share.
+ * @param deps.config - Server configuration for proxy trust and cookie signing.
+ * @param shareId - Public share identifier used in cookies and limiter keys.
+ * @param passwordHash - Stored password hash to verify.
+ * @returns The unlock result, setting a signed cookie only on success.
  */
 export async function checkUnlock(
   c: Context,
@@ -99,7 +128,13 @@ export async function checkUnlock(
   return c.json({ ok: true });
 }
 
-/** Sets the stateless unlock cookie for a share. */
+/**
+ * Sets the stateless unlock cookie for a share.
+ *
+ * @param c - Request context whose response receives the cookie.
+ * @param config - Server configuration containing the signing secret.
+ * @param shareId - Public share identifier bound into the cookie signature.
+ */
 export function setUnlockCookie(c: Context, config: Config, shareId: string): void {
   const value = signUnlockCookie(config.unlockSecret, shareId, Date.now() + UNLOCK_TTL_MS);
   c.header('Set-Cookie', `${unlockCookieName(shareId)}=${value}; HttpOnly; Secure; SameSite=Strict; Max-Age=1800; Path=/`);

@@ -1,13 +1,18 @@
 import type { ShapedMessage } from './harness/types.js';
 
-/** Per-request cap is 20 MB (server MAX_UPLOAD_BYTES). Target slightly under so the
- *  JSON envelope (session header + create/chunk wrapper) still fits under the cap. */
+/**
+ * Target below the 20 MB request cap to leave room for the JSON envelope.
+ */
 export const CHUNK_TARGET_BYTES = 19 * 1024 * 1024;
 
 /**
  * Greedily pack messages into chunks whose serialized size is <= maxBytes.
  * Order is preserved. A single message larger than maxBytes gets its own chunk
  * (it will 413 server-side; such a message is pathological). Empty input -> [].
+ *
+ * @param messages - Messages in transcript order.
+ * @param maxBytes - Target sum of serialized message bytes per chunk.
+ * @returns Ordered chunks, or an empty array for no messages.
  */
 export function chunkMessages(messages: ShapedMessage[], maxBytes: number = CHUNK_TARGET_BYTES): ShapedMessage[][] {
   if (messages.length === 0) return [];
