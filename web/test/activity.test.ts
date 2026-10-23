@@ -107,6 +107,17 @@ describe('collapsed activity context', () => {
   });
 
   it.each([
+    [{ type: 'tool', tool: 'write_stdin', input: { session_id: 1, chars: '' } }, 'Run command'],
+    [{ type: 'tool', tool: 'functions.write_stdin', input: { session_id: 1, chars: 'y\n' } }, 'Run command'],
+    [{ type: 'tool', tool: 'write', input: { path: 'web/src/App.vue', content: 'updated' } }, 'Update files'],
+    [{ type: 'tool', tool: 'functions.write_file', input: { path: 'web/src/App.vue', content: 'updated' } }, 'Update files'],
+  ] as [SharePart, string][])('classifies %o as %s', (part, action) => {
+    const w = mount(ToolCard, { props: { part } });
+    expect(w.find('button').text()).toContain(action);
+    w.unmount();
+  });
+
+  it.each([
     '{"output":"Permission denied","metadata":{"exit_code":1}}',
     'Chunk ID: abc\nWall time: 0.1 seconds\nProcess exited with code 1\nFinal output:\nPermission denied',
   ])('shows the command diagnostic rather than its result envelope', (output) => {

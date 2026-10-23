@@ -31,6 +31,7 @@ export function toolPreview(part: SharePart): { title: string; detail: string } 
   const cwd = string('cwd', 'workdir');
   const intent = string('i', 'description', 'title');
   const action = /read|view_file/i.test(name) ? 'Read file'
+    : /^write_stdin$/i.test(name) ? 'Run command'
     : /edit|patch|write/i.test(name) ? 'Update files'
     : /grep|search|find/i.test(name) ? 'Search'
     : /bash|exec|shell|command/i.test(name) ? 'Run command'

@@ -23,7 +23,8 @@ server before anything is stored or sent.
   form collapsible activity panels across message/page boundaries, with short
   file/command previews and visible failure summaries. A single call has only
   one disclosure. Opened tool details persist through pagination and group
-  reopening. System reminders show a short preview; full tool and reminder
+  reopening; completed assistant Markdown is retained when later pages load.
+  System reminders show a short preview; full tool and reminder
   details expand on demand. Empty thinking remains a plain label, not an empty
   dropdown. Raw tool output retains its original whitespace without renderer-added
   indentation. Local file references render as text, not navigable links;

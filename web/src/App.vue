@@ -18,17 +18,29 @@ const { state, meta, messages, userIndex, loadingMore, errorMessage, passwordErr
   useMessages(createDataSource(shareId, fragment));
 
 // Assistant message boundaries are harness storage details, not activity boundaries.
-// Recompute over loaded pages so a run can continue when the next page arrives.
-const displayMessages = computed(() => {
-  const out: ShareMessage[] = [];
-  for (const message of messages.value) {
-    const last = out[out.length - 1];
+// Pages append immutable source messages. Retain completed runs so their parts
+// identity does not retrigger AssistantMessage's Markdown/Shiki watcher.
+let groupedSource: ShareMessage[] = [];
+const displayMessages = computed<ShareMessage[]>((previous) => {
+  const source = messages.value;
+  const appended = previous !== undefined && groupedSource.length <= source.length
+    && groupedSource.every((message, i) => message === source[i]);
+  const out: ShareMessage[] = appended ? [...previous] : [];
+  for (let i = appended ? groupedSource.length : 0; i < source.length; i++) {
+    const message = source[i]!;
+    let last = out[out.length - 1];
     if (last?.role === 'assistant' && message.role === 'assistant') {
+      // Copy the trailing run once before extending it; never mutate prior props.
+      if (last === previous?.[previous.length - 1]) {
+        last = { ...last, parts: [...last.parts] };
+        out[out.length - 1] = last;
+      }
       for (const part of message.parts) last.parts.push(part);
     } else {
       out.push(message.role === 'assistant' ? { ...message, parts: [...message.parts] } : message);
     }
   }
+  groupedSource = source;
   return out;
 });
 
