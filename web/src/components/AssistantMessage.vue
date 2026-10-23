@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { ref, watch } from 'vue';
 import { renderMarkdown } from '../markdown';
-import ToolCard from './ToolCard.vue';
+import ToolGroup from './ToolGroup.vue';
 import ReasoningBlock from './ReasoningBlock.vue';
 import SystemNotice from './SystemNotice.vue';
 import ImagePart from './ImagePart.vue';
@@ -11,20 +11,24 @@ const props = defineProps<{ message: ShareMessage }>();
 
 type RenderedPart =
   | { kind: 'html'; html: string }
-  | { kind: 'tool'; part: SharePart }
+  | { kind: 'tools'; parts: SharePart[] }
   | { kind: 'reasoning'; part: SharePart }
   | { kind: 'system'; part: SharePart }
   | { kind: 'image'; part: SharePart };
 
 const parts = ref<RenderedPart[]>([]);
 
-onMounted(async () => {
+watch(() => props.message.parts, async (source, _previous, onCleanup) => {
+  let stale = false;
+  onCleanup(() => { stale = true; });
   const out: RenderedPart[] = [];
-  for (const part of props.message.parts) {
+  for (const part of source) {
     if (part.type === 'text') {
-      out.push({ kind: 'html', html: await renderMarkdown(part.text ?? '') });
+      if (part.text?.trim()) out.push({ kind: 'html', html: await renderMarkdown(part.text) });
     } else if (part.type === 'tool') {
-      out.push({ kind: 'tool', part });
+      const last = out[out.length - 1];
+      if (last?.kind === 'tools') last.parts.push(part);
+      else out.push({ kind: 'tools', parts: [part] });
     } else if (part.type === 'system') {
       out.push({ kind: 'system', part });
     } else if (part.type === 'image') {
@@ -33,15 +37,15 @@ onMounted(async () => {
       out.push({ kind: 'reasoning', part });
     }
   }
-  parts.value = out;
-});
+  if (!stale) parts.value = out;
+}, { immediate: true });
 </script>
 
 <template>
   <div class="my-4 text-sm leading-relaxed">
     <template v-for="(item, i) in parts" :key="i">
       <div v-if="item.kind === 'html'" class="prose-quire" v-html="item.html" />
-      <ToolCard v-else-if="item.kind === 'tool'" :part="item.part" />
+      <ToolGroup v-else-if="item.kind === 'tools'" :parts="item.parts" />
       <SystemNotice v-else-if="item.kind === 'system'" :text="item.part.text ?? ''" />
       <ImagePart v-else-if="item.kind === 'image'" :part="item.part" />
       <ReasoningBlock v-else :text="item.part.text ?? ''" />

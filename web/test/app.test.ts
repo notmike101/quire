@@ -3,6 +3,8 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { Blob as NodeBlob } from 'node:buffer';
 import { SHARE_PROTOCOL } from '@quire/protocol';
 import App from '../src/App.vue';
+import AssistantMessage from '../src/components/AssistantMessage.vue';
+import type { ShareMessage } from '../src/api';
 import { mockFetch, seal, TEST_FRAGMENT, TEST_KEY, type V2Route } from './v2-helpers';
 
 // jsdom's Blob lacks .stream() and corrupts bytes through undici's Response;
@@ -33,14 +35,19 @@ const MESSAGES = [
 ];
 const USER_INDEX = [{ chunkSeq: 0, seq: 1, preview: 'hello from user' }];
 
-async function v2Routes(messages: object[], userIndex: object[]): Promise<Record<string, V2Route>> {
+async function v2Routes(messages: object[], userIndex: object[], remainingPages: object[][] = []): Promise<Record<string, V2Route>> {
   const base = `/api/v2/public/shares/${SHARE_ID}`;
-  return {
+  const routes: Record<string, V2Route> = {
     [`${base}/bootstrap`]: { status: 200, body: {} },
-    [`${base}/blobs/manifest/0`]: { status: 200, blob: await seal(SHARE_ID, TEST_KEY, 'manifest', 0, { protocol: SHARE_PROTOCOL, shareId: SHARE_ID, ...META, pageCount: 1 }) },
+    [`${base}/blobs/manifest/0`]: { status: 200, blob: await seal(SHARE_ID, TEST_KEY, 'manifest', 0, { protocol: SHARE_PROTOCOL, shareId: SHARE_ID, ...META, pageCount: 1 + remainingPages.length }) },
     [`${base}/blobs/index/0`]: { status: 200, blob: await seal(SHARE_ID, TEST_KEY, 'index', 0, { protocol: SHARE_PROTOCOL, shareId: SHARE_ID, seq: 0, entries: userIndex }) },
     [`${base}/blobs/page/0`]: { status: 200, blob: await seal(SHARE_ID, TEST_KEY, 'page', 0, { protocol: SHARE_PROTOCOL, shareId: SHARE_ID, seq: 0, messages }) },
   };
+  for (const [i, messages] of remainingPages.entries()) {
+    const seq = i + 1;
+    routes[`${base}/blobs/page/${seq}`] = { status: 200, blob: await seal(SHARE_ID, TEST_KEY, 'page', seq, { protocol: SHARE_PROTOCOL, shareId: SHARE_ID, seq, messages }) };
+  }
+  return routes;
 }
 
 beforeEach(() => {
@@ -61,6 +68,94 @@ describe('App', () => {
     expect(w.text()).toContain('gpt-x');
     expect(w.text()).toContain('1 redacted');
     expect(w.html()).toContain('hello from user');
+  });
+
+  it('groups calls across assistant messages and chunks without crossing user turns', async () => {
+    const tool = (path: string) => ({ type: 'tool', tool: 'read', input: { path } });
+    mockFetch(await v2Routes([
+      { chunkSeq: 0, seq: 1, role: 'user', time: null, parts: [{ type: 'text', text: 'Inspect files' }] },
+      { chunkSeq: 0, seq: 2, role: 'assistant', time: null, parts: [tool('first.ts')] },
+      { chunkSeq: 1, seq: 1, role: 'assistant', time: null, parts: [tool('second.ts')] },
+      { chunkSeq: 1, seq: 2, role: 'user', time: null, parts: [{ type: 'text', text: 'Next turn' }] },
+      { chunkSeq: 1, seq: 3, role: 'assistant', time: null, parts: [tool('third.ts')] },
+    ], USER_INDEX));
+    const w = mount(App);
+    await vi.waitFor(() => expect(w.findAll('.tool-group')).toHaveLength(1));
+    expect(w.findAll('.tool-group')[0]!.text()).toContain('2 calls');
+    expect(w.find('#msg-1-2').text()).toContain('Next turn');
+    await w.find('.tool-group button').trigger('click');
+    expect(w.find('.tool-group').text()).toContain('first.ts');
+    expect(w.find('.tool-group').text()).toContain('second.ts');
+    expect(w.find('.tool-group').text()).not.toContain('third.ts');
+    w.unmount();
+  });
+
+  it('retains completed assistant props while extending only the trailing run across pages', async () => {
+    let loadNextPage!: () => void;
+    vi.stubGlobal('IntersectionObserver', class extends FakeIntersectionObserver {
+      constructor(callback: (entries: { isIntersecting: boolean }[]) => void) {
+        super();
+        loadNextPage = () => callback([{ isIntersecting: true }]);
+      }
+    });
+    const message = (seq: number, role: ShareMessage['role'], parts: ShareMessage['parts']): ShareMessage => ({
+      chunkSeq: 0, seq, role, time: null, parts,
+    });
+    const tool = (path: string, output: string) => ({ type: 'tool' as const, tool: 'read', input: { path }, output });
+    mockFetch(await v2Routes([
+      message(1, 'user', [{ type: 'text', text: 'First question' }]),
+      message(2, 'assistant', [{ type: 'text', text: 'Completed **answer**.' }]),
+      message(3, 'assistant', [{ type: 'text', text: 'Completed details.' }]),
+      message(4, 'user', [{ type: 'text', text: 'Second question' }]),
+      message(5, 'assistant', [{ type: 'text', text: 'Still working.' }, tool('first.ts', 'retained tool details')]),
+    ], [
+      { chunkSeq: 0, seq: 1, preview: 'First question' },
+      { chunkSeq: 0, seq: 4, preview: 'Second question' },
+      { chunkSeq: 0, seq: 7, preview: 'Third question' },
+    ], [
+      [message(6, 'assistant', [tool('second.ts', 'new tool details')])],
+      [
+        message(7, 'user', [{ type: 'text', text: 'Third question' }]),
+        message(8, 'assistant', [{ type: 'text', text: 'A separate answer.' }]),
+      ],
+    ]));
+    const w = mount(App);
+    try {
+      await vi.waitFor(() => expect(w.text()).toContain('Still working.'));
+      const [completed, trailing] = w.findAllComponents(AssistantMessage);
+      const completedMessage = completed!.props('message');
+      const completedParts = completedMessage.parts;
+      const trailingMessage = trailing!.props('message');
+      const trailingParts = trailingMessage.parts;
+      expect(completedParts).toHaveLength(2);
+      await trailing!.find('button').trigger('click');
+      await vi.waitFor(() => expect(trailing!.text()).toContain('retained tool details'));
+
+      loadNextPage();
+      await vi.waitFor(() => expect(trailing!.find('.tool-group').text()).toContain('2 calls'));
+      expect(completed!.props('message')).toBe(completedMessage);
+      expect(completed!.props('message').parts).toBe(completedParts);
+      expect(trailing!.props('message')).not.toBe(trailingMessage);
+      expect(trailing!.props('message').parts).not.toBe(trailingParts);
+      expect(trailing!.props('message').parts).toHaveLength(3);
+      expect(trailingParts).toHaveLength(2);
+      expect(trailing!.find('.tool-group > button').attributes('aria-expanded')).toBe('true');
+      expect(trailing!.text()).toContain('retained tool details');
+      expect(trailing!.text()).toContain('second.ts');
+
+      const extendedMessage = trailing!.props('message');
+      loadNextPage();
+      await vi.waitFor(() => expect(w.text()).toContain('A separate answer.'));
+      expect(w.findAllComponents(AssistantMessage)).toHaveLength(3);
+      expect(completed!.props('message')).toBe(completedMessage);
+      expect(completed!.props('message').parts).toBe(completedParts);
+      expect(trailing!.props('message')).toBe(extendedMessage);
+      expect(trailing!.find('.tool-group > button').attributes('aria-expanded')).toBe('true');
+      expect(trailing!.text()).toContain('retained tool details');
+      expect(w.find('#msg-0-7').text()).toContain('Third question');
+    } finally {
+      w.unmount();
+    }
   });
 
   it('shows the password gate when the share is protected', async () => {

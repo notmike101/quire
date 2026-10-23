@@ -28,7 +28,11 @@ Full design and threat reasoning: `docs/superpowers/specs/`.
 
 ## 2. Commands
 
-Requirements: Node ≥ 22, pnpm 9.15.0 (corepack).
+Requirements: Node ≥ 22 and the pnpm version pinned in `package.json` (via Corepack).
+
+`pnpm-lock.yaml` intentionally contains pnpm 12's boot and project YAML documents.
+Use the pinned pnpm; do not merge or discard either document for an older parser.
+Format reference: https://pnpm.io/lockfile.
 
 | Task | Command |
 |---|---|
@@ -59,8 +63,9 @@ Key facts:
 - Server integration tests default to `postgres://quire:quire@localhost:54329/quire_test`
   (overridable via `DATABASE_URL`). Run `pnpm db:test:up` first.
 - E2E uses a *different* stack: `docker compose -f docker-compose.yml -f docker-compose.e2e.yml`
-  on port `8790`, DB `quire:e2e@postgres:5432/quire`, and CloakBrowser at
-  `D:\cloakbrowser\current\chrome.exe` (stealth Chromium — never vanilla Playwright Chromium).
+  on port `8790`, DB `quire:e2e@postgres:5432/quire`, and standard Playwright Chromium.
+  Install the browser with `pnpm --filter @quire/e2e exec playwright install chromium`;
+  CloakBrowser is not required.
 - Server test files run serialized (`fileParallelism: false` in `server/vitest.config.ts`)
   because `db.test.ts` destructively drops tables in `beforeAll`.
 - The server has **no dev script**. To run it locally: `pnpm --filter @quire/server build`,

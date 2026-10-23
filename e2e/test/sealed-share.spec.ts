@@ -293,6 +293,98 @@ test.describe('sealed share (v2) viewer', () => {
     await expect(page.getByText('Message 119', { exact: true })).toBeVisible({ timeout: 15000 });
   });
 
+  test('an opened tool output stays visible when more calls load and the group is reopened', async ({ page, request }) => {
+    const firstOutput = '  <output data-kind="pagination">& first result</output>\n    indented line  \n\n';
+    const secondOutput = 'Second call output stays collapsed.';
+    const { url } = await createV2Share(request, {
+      session: {
+        sessionId: 'sess_paginated_tools',
+        title: 'Paginated Tool Session',
+        model: 'test-model',
+        messages: [
+          ...Array.from({ length: 49 }, (_, i) => ({
+            role: i === 0 ? 'user' : 'assistant',
+            time: new Date(Date.UTC(2026, 0, 1, 12, i)).toISOString(),
+            parts: [{ type: 'text', text: i === 0 ? 'Inspect both files.' : `Context message ${i}.` }],
+          })),
+          {
+            role: 'assistant',
+            time: '2026-01-01T12:49:00.000Z',
+            parts: [{
+              type: 'tool',
+              tool: 'Read',
+              callID: 'first-read',
+              status: 'completed',
+              input: { file_path: 'src/first.ts' },
+              output: firstOutput,
+            }],
+          },
+          {
+            role: 'assistant',
+            time: '2026-01-01T12:50:00.000Z',
+            parts: [{
+              type: 'tool',
+              tool: 'Read',
+              callID: 'second-read',
+              status: 'completed',
+              input: { file_path: 'src/second.ts' },
+              output: secondOutput,
+            }],
+          },
+          {
+            role: 'assistant',
+            time: '2026-01-01T12:51:00.000Z',
+            parts: [{ type: 'text', text: 'Both files inspected.' }],
+          },
+        ],
+      },
+    });
+    const { promise: pageReleased, resolve: releasePage } = Promise.withResolvers<void>();
+    await page.route('**/blobs/page/1', async (route) => {
+      await pageReleased;
+      await route.continue();
+    });
+    const pageRequested = page.waitForRequest('**/blobs/page/1');
+    try {
+      await page.goto(url);
+      await expect(page.getByRole('heading', { name: 'Paginated Tool Session' })).toBeVisible();
+      const firstCall = page.getByRole('button', { name: /^Read file Read · src\/first\.ts$/ });
+      const output = page.locator('pre').filter({ hasText: '<output data-kind="pagination">' });
+      await expect(firstCall).toHaveAttribute('aria-expanded', 'false');
+      await expect(output).toHaveCount(0);
+      await expect(page.locator('.tool-group')).toHaveCount(0);
+      await Promise.all([
+        pageRequested,
+        page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)),
+      ]);
+      await firstCall.click();
+      await expect(output).toBeVisible();
+      await expect.poll(() => output.textContent()).toBe(firstOutput);
+
+      releasePage();
+      const group = page.locator('.tool-group');
+      const groupButton = group.getByRole('button', { name: /2 calls/ });
+      const secondCall = group.getByRole('button', { name: /^Read file Read · src\/second\.ts$/ });
+      await expect(groupButton).toHaveAttribute('aria-expanded', 'true');
+      await expect(firstCall).toHaveAttribute('aria-expanded', 'true');
+      await expect(output).toBeVisible();
+      await expect.poll(() => output.textContent()).toBe(firstOutput);
+      await expect(secondCall).toHaveAttribute('aria-expanded', 'false');
+      await expect(group.locator('pre').filter({ hasText: secondOutput })).toHaveCount(0);
+      await expect(page.getByText('Both files inspected.', { exact: true })).toBeVisible();
+
+      await groupButton.click();
+      await expect(groupButton).toHaveAttribute('aria-expanded', 'false');
+      await expect(output).toBeHidden();
+      await groupButton.click();
+      await expect(firstCall).toHaveAttribute('aria-expanded', 'true');
+      await expect(output).toBeVisible();
+      await expect(secondCall).toHaveAttribute('aria-expanded', 'false');
+    } finally {
+      releasePage();
+    }
+  });
+
   test('a two-chunk v2 share renders messages from both chunks in order', async ({ page, request }) => {
     const { url } = await createV2ChunkedShare(request, { perChunk: 3 });
     await page.goto(url);
@@ -303,13 +395,16 @@ test.describe('sealed share (v2) viewer', () => {
     await expect(page.getByText('chunk1 message 3', { exact: true })).toBeVisible();
   });
 
-  test('a system part renders as a collapsed notice, not a user bubble', async ({ page, request }) => {
+  test('system notices show a short preview and expand their full content', async ({ page, request }) => {
     const { url } = await createV2Share(request, { session: systemNoticeSession() });
     await page.goto(url);
     await expect(page.getByRole('heading', { name: 'System Notice Session' })).toBeVisible();
-    await expect(page.getByText('goal continuation', { exact: true })).toBeVisible({ timeout: 15000 });
+    const notice = page.getByRole('button', { name: /Continue working toward the active session goal/ });
+    await expect(notice).toBeVisible({ timeout: 15000 });
+    await expect(notice).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByText('hidden objective body')).toHaveCount(0);
-    await page.getByRole('button', { name: /goal continuation/ }).click();
+    await notice.click();
+    await expect(notice).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByText('hidden objective body')).toBeVisible();
   });
 
@@ -340,11 +435,12 @@ test.describe('sealed share (v2) viewer', () => {
     await page.goto(url);
     await expect(page.getByRole('heading', { name: 'Tool Image Session' })).toBeVisible();
     await expect(page.getByText('Here is what the file shows.')).toBeVisible();
-    const toolCard = page.locator('div.rounded-lg.border');
+    const toolCard = page.getByRole('button', { name: /1 image/ });
     await expect(toolCard).toBeVisible({ timeout: 15000 });
-    await expect(toolCard.getByText('1 image')).toBeVisible();
+    await expect(toolCard).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.tool-group')).toHaveCount(0);
     await expect(page.locator('img.image-part-img')).toHaveCount(0);
-    await toolCard.getByRole('button').click();
+    await toolCard.click();
     const img = page.locator('img.image-part-img');
     await expect(img).toHaveCount(1);
     await expect(img).toHaveAttribute('src', TINY_PNG_DATA_URI);

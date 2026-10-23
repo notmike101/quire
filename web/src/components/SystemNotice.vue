@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { compactPreview } from '../lib/tool-preview';
 
 const props = defineProps<{ text: string }>();
 const open = ref(false);
@@ -13,16 +14,24 @@ const label = computed(() => {
   if (t.includes('continued from a previous conversation')) return 'context summary';
   return 'system reminder';
 });
+
+const preview = computed(() => compactPreview(
+  props.text.replace(/^\s*<system-(?:reminder|notice)(?:\s[^>]*)?>\s*/i, '').replace(/\s*<\/system-(?:reminder|notice)>\s*$/i, ''),
+));
 </script>
 
 <template>
   <div class="my-2">
     <button
-      class="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 px-2.5 py-0.5 text-xs text-neutral-400 hover:text-neutral-600 dark:border-neutral-800 dark:text-neutral-500 dark:hover:text-neutral-300"
+      class="flex w-full items-start gap-2 rounded-lg border border-neutral-200 px-3 py-2 text-left text-xs text-neutral-500 hover:text-neutral-700 dark:border-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
+      :aria-expanded="open"
       @click="open = !open"
     >
-      <span class="font-mono">{{ open ? '▾' : '▸' }}</span>
-      <span class="italic">{{ label }}</span>
+      <span class="font-mono" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
+      <span class="min-w-0">
+        <span class="block font-medium">{{ label }}</span>
+        <span v-if="preview" class="mt-1 block break-words">{{ preview }}</span>
+      </span>
     </button>
     <div
       v-if="open"
