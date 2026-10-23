@@ -28,7 +28,7 @@ Full design and threat reasoning: `docs/superpowers/specs/`.
 
 ## 2. Commands
 
-Requirements: Node ≥ 22 and the pnpm version pinned in `package.json` (via Corepack).
+Requirements: Node 22.22.2+, Node 24.15.0+, or Node 26+ and the pnpm version pinned in `package.json` (via Corepack).
 
 `pnpm-lock.yaml` intentionally contains pnpm 12's boot and project YAML documents.
 Use the pinned pnpm; do not merge or discard either document for an older parser.

@@ -70,9 +70,9 @@ describe('sealBlob / openBlob', () => {
     const imported = await globalThis.crypto.subtle.importKey('raw', k, { name: 'AES-GCM' }, false, ['decrypt']);
     const plain = new Uint8Array(
       await globalThis.crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: nonce, additionalData: blobAad(SHARE_ID, 'page', 0) },
+        { name: 'AES-GCM', iv: nonce as NodeJS.BufferSource, additionalData: blobAad(SHARE_ID, 'page', 0) as NodeJS.BufferSource },
         imported,
-        ciphertext,
+        ciphertext as NodeJS.BufferSource,
       ),
     );
     // gzip magic 0x1f 0x8b
