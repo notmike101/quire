@@ -88,6 +88,10 @@ Operational runbook — migration, metrics, rollback, backup/restore:
 Use Node ≥22 and the pnpm version pinned in `package.json`. pnpm settings
 (dependency overrides and native-build approvals) live in `pnpm-workspace.yaml`.
 
+The pinned pnpm 12 writes a [two-document lockfile](https://pnpm.io/lockfile):
+package-manager metadata first, project dependencies last. Keep both documents
+and use the pinned package manager rather than a global older pnpm.
+
 ```bash
 pnpm install
 pnpm db:test:up            # Postgres on :54329 for tests
