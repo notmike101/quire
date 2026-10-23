@@ -19,11 +19,24 @@ interface TestEntry {
 
 const tempDirs: string[] = [];
 
+/**
+ * Encode session data in an OMP-compatible HTML script.
+ *
+ * @param data - Payload to serialize and base64-encode.
+ * @param attrs - Script attributes for parser edge cases.
+ * @returns Synthetic OMP export document.
+ */
 function ompHtml(data: unknown, attrs = 'id="session-data" type="application/json"'): string {
   const encoded = Buffer.from(JSON.stringify(data), 'utf8').toString('base64');
   return `<!doctype html><script ${attrs}>${encoded}</script>`;
 }
 
+/**
+ * Write an OMP export in a directory registered for cleanup.
+ *
+ * @param data - Session payload to embed.
+ * @returns Export file path.
+ */
 function writeExport(data: unknown): string {
   const dir = mkdtempSync(join(tmpdir(), 'quire-omp-'));
   tempDirs.push(dir);
@@ -32,6 +45,14 @@ function writeExport(data: unknown): string {
   return path;
 }
 
+/**
+ * Build a deterministic user-message entry.
+ *
+ * @param id - Entry identifier.
+ * @param parentId - Parent entry, or null for a root.
+ * @param text - User message content.
+ * @returns Linked OMP message entry.
+ */
 function message(id: string, parentId: string | null, text: string): TestEntry {
   return {
     type: 'message', id, parentId, timestamp: '2026-08-31T12:00:01.000Z',
@@ -39,6 +60,15 @@ function message(id: string, parentId: string | null, text: string): TestEntry {
   };
 }
 
+/**
+ * Build a deterministic OMP entry of any supported test type.
+ *
+ * @param type - Entry type.
+ * @param id - Entry identifier.
+ * @param parentId - Parent entry, or null for a root.
+ * @param extra - Type-specific fields or fixture overrides.
+ * @returns Linked OMP entry.
+ */
 function entry(type: string, id: string, parentId: string | null, extra: Record<string, unknown> = {}): TestEntry {
   return { type, id, parentId, timestamp: '2026-08-31T12:00:01.000Z', ...extra };
 }

@@ -12,19 +12,38 @@ import { clientIp } from '../src/api/public.js';
 const url = process.env.DATABASE_URL ?? 'postgres://quire:quire@localhost:54329/quire_test';
 const config = { databaseUrl: url, apiKey: 'a'.repeat(64), unlockSecret: 'b'.repeat(64), port: 8787, webDist: '' };
 
+/**
+ * Compute the integrity digest stored beside synthetic ciphertext.
+ *
+ * @param v - Blob bytes to hash.
+ * @returns The hexadecimal SHA-256 digest.
+ */
 const sha256Hex = (v: Uint8Array): string => createHash('sha256').update(v).digest('hex');
 const enc = new TextEncoder();
 
 let db: Db;
 let app: Hono;
 
-/** Response.json() is typed Promise<unknown> under @types/node (no DOM lib); cast to a plain object. */
+/**
+ * Decode a JSON response into an assertion-friendly object.
+ *
+ * @param r - HTTP response returned by the test application.
+ * @returns Parsed response fields with the test's plain-object typing.
+ */
 const json = (r: Response): Promise<Record<string, any>> => r.json() as Promise<Record<string, any>>;
 
 /**
  * Seeds a v2 share directly (the ingestion routes are covered by
  * owner-v2.test.ts). Blob envelopes are opaque to the server: deterministic
  * fake ciphertext with the correct stored digest.
+ *
+ * @param publicId - Public identifier for the seeded share.
+ * @param opts - Optional access state and blob fixtures.
+ * @param opts.password - Plaintext password to hash for unlock tests.
+ * @param opts.expiresAt - Share expiration time, if any.
+ * @param opts.state - Upload state, defaulting to ready.
+ * @param opts.blobs - Whether to insert synthetic manifest, index, and page blobs.
+ * @returns The inserted database share row.
  */
 async function seedV2Share(
   publicId: string,
@@ -62,6 +81,7 @@ beforeAll(async () => {
   // postgres.js console.logs NOTICE lines; migrateDb against an already-migrated
   // container emits "already exists, skipping". Silence so output stays clean.
   const origLog = console.log;
+  /** Ignore expected migration notices during test setup. */
   console.log = () => {};
   try {
     await migrateDb(db);
@@ -285,6 +305,13 @@ describe('v2 public unlock', () => {
     await db.execute(sql`delete from unlock_lockouts where key = 'tok:v2pw5' or key like 'ip:v2pw5:%'`);
     const wired = createApp({ db, config: { ...config, trustProxy: true } });
     await seedV2Share('v2pw5', { password: 'right' });
+    /**
+     * Attempt unlock from a simulated proxy-reported client address.
+     *
+     * @param ip - Client address placed in the forwarded-for header.
+     * @param password - Password candidate submitted to the unlock endpoint.
+     * @returns The unlock endpoint response.
+     */
     const post = (ip: string, password: string) =>
       wired.request('/api/v2/public/shares/v2pw5/unlock', {
         method: 'POST',
@@ -317,12 +344,27 @@ describe('v2 public unlock', () => {
 describe('clientIp (Chain C + Round 9 B-F2)', () => {
   // getConnInfo reads c.env.incoming.socket.remoteAddress; stub that shape so
   // the socket fallback is exercised without a real socket.
+  /**
+   * Build the minimal context consumed by client-address selection.
+   *
+   * @param headers - Lowercase request-header names and their values.
+   * @param socketAddr - Remote address exposed by the simulated socket.
+   * @returns A context stand-in supporting header and connection reads.
+   */
   function fakeCtx(headers: Record<string, string>, socketAddr = '203.0.113.7'): Context {
     // The stub exposes only what clientIp reads (req.header + socket address);
     // unchecked cast at the library boundary — a full Context cannot be built
     // outside a request.
     return {
-      req: { header: (n: string) => headers[n.toLowerCase()] },
+      req: {
+        /**
+         * Read a request header using case-insensitive lookup.
+         *
+         * @param n - Header name requested by the address helper.
+         * @returns The matching fixture value, if present.
+         */
+        header: (n: string) => headers[n.toLowerCase()],
+      },
       env: { incoming: { socket: { remoteAddress: socketAddr, remotePort: 1234, remoteFamily: 'IPv4' } } },
     } as unknown as Context;
   }

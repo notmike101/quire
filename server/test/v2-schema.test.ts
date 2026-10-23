@@ -6,12 +6,24 @@ const url = process.env.DATABASE_URL ?? 'postgres://quire:quire@localhost:54329/
 
 // Raw SQL on purpose: this test must compile (and fail at runtime) before the
 // v2 tables exist in the schema module and in the database.
+/**
+ * Extract the string UUID returned by a raw insert.
+ *
+ * @param rows - Rows returned by the insert query.
+ * @returns The first row's ID, rejecting unexpected query output.
+ */
 const idOf = (rows: Record<string, unknown>[]): string => {
   const row = rows[0];
   if (!row || typeof row.id !== 'string') throw new Error('insert did not return a string id');
   return row.id;
 };
 
+/**
+ * Extract the numeric count returned by a raw count query.
+ *
+ * @param rows - Rows returned by the count query.
+ * @returns The first row's count, rejecting unexpected query output.
+ */
 const countOf = (rows: Record<string, unknown>[]): number => {
   const row = rows[0];
   if (!row || typeof row.n !== 'number') throw new Error('count query did not return n');

@@ -3,6 +3,13 @@ import { QuireApi, QuireApiError } from '../src/api.js';
 
 const config = { serverUrl: 'https://srv.example.com', apiKey: 'k'.repeat(64) };
 
+/**
+ * Install a fetch spy returning a fixed JSON response.
+ *
+ * @param status - HTTP response status.
+ * @param body - JSON response payload.
+ * @returns Fetch spy for inspecting request arguments.
+ */
 function mockFetch(status: number, body: unknown) {
   const fn = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
   vi.stubGlobal('fetch', fn);

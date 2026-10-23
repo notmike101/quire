@@ -2,6 +2,11 @@ import { execSync } from 'node:child_process';
 
 const COMPOSE = 'docker compose -f ../docker-compose.yml -f ../docker-compose.e2e.yml';
 
+/**
+ * Build and start the isolated Docker stack, then wait for its health endpoint.
+ *
+ * @throws {Error} If Docker startup fails or the server is not healthy within 120 seconds.
+ */
 export default async function globalSetup(): Promise<void> {
   // The base compose file interpolates ${POSTGRES_PASSWORD:?...}, ${QUIRE_API_KEY:?...}
   // and ${UNLOCK_SECRET:?...} at parse time, so all three must be exported for the

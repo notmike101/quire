@@ -1,6 +1,15 @@
 import { QuireApi } from '../api.js';
 import { parseExpiry } from '../expires.js';
 
+/**
+ * Update an owned share's expiration.
+ *
+ * @param token - Share identifier, required by the command.
+ * @param values - Expiry expression to parse.
+ * @param values.expires - Required future date, duration, or relative expiry keyword.
+ * @param api - Authenticated owner API client.
+ * @param out - Destination for the success message.
+ */
 export async function runUpdate(
   token: string | undefined,
   values: { expires?: string },

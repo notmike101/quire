@@ -2,6 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { runList } from '../src/commands/list.js';
 import type { ShareMeta } from '../src/api.js';
 
+/**
+ * Build deterministic owner-visible share metadata.
+ *
+ * @param overrides - Fields specific to the test case.
+ * @returns Complete sealed-share metadata fixture.
+ */
 function shareMeta(overrides: Partial<ShareMeta> = {}): ShareMeta {
   return {
     id: '1',

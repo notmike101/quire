@@ -25,12 +25,23 @@ export interface PublishV2Result {
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 500;
 
-/** Network failures and 5xx are retryable; 4xx (conflict, not found, validation) are not. */
+/**
+ * Classify failures eligible for chunk-upload retry.
+ *
+ * @param err - Request failure.
+ * @returns Whether the failure is network-related or a server-side error.
+ */
 function isRetryable(err: unknown): boolean {
   if (err instanceof QuireApiError) return err.status === 0 || err.status >= 500;
   return err instanceof TypeError; // fetch network failure
 }
 
+/**
+ * Retry transient chunk failures with bounded, increasing delays.
+ *
+ * @param fn - Operation that resends an identical chunk payload.
+ * @returns Successful operation result.
+ */
 async function withRetries<T>(fn: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -48,6 +59,11 @@ async function withRetries<T>(fn: () => Promise<T>): Promise<T> {
  * The content key is generated once and held in memory only; the server
  * seals with it and never stores it, and the key fragment is appended to the
  * returned URL locally, so the server never sees the fragment.
+ *
+ * @param api - Authenticated sealed-share API client.
+ * @param session - Shaped session whose messages are packed in order.
+ * @param opts - Redaction, access, expiry, and public-URL settings.
+ * @returns Final public URL and server-reported storage and redaction statistics.
  */
 export async function publishV2(api: QuireApi, session: ShapedSession, opts: PublishV2Options): Promise<PublishV2Result> {
   const key = generateContentKey();

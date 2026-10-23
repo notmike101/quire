@@ -43,10 +43,22 @@ const IMAGE_MIME_BY_EXT: Record<string, string> = {
   '.tif': 'image/tiff',
 };
 
+/**
+ * Recognize MIME values allowed to become image parts.
+ *
+ * @param mime - Optional MIME type.
+ * @returns Whether the value begins with the image media-type prefix.
+ */
 export function isImageMime(mime: string | undefined): boolean {
   return typeof mime === 'string' && mime.startsWith('image/');
 }
 
+/**
+ * Infer a supported image MIME type from a filename extension.
+ *
+ * @param filePath - Image path or filename.
+ * @returns MIME type, or undefined for an unsupported extension.
+ */
 export function mimeFromExtension(filePath: string): string | undefined {
   const dot = filePath.lastIndexOf('.');
   if (dot === -1) return undefined;
@@ -59,7 +71,12 @@ export interface DataUri {
   bytes: number; // decoded (raw) byte length
 }
 
-/** Parse a `data:<mime>;base64,<payload>` string. Returns null if not a data URI. */
+/**
+ * Parse an image data URI and measure its payload.
+ *
+ * @param content - Candidate data URI.
+ * @returns Image URI metadata, or null for unsupported or non-image content.
+ */
 export function parseDataUri(content: string): DataUri | null {
   const m = content.match(/^data:([^;,]+)(?:;([a-z0-9-]+))?,([\s\S]*)$/i);
   if (!m) return null;
@@ -85,6 +102,10 @@ export function parseDataUri(content: string): DataUri | null {
  * form `<random>-media-1-<toolResultId>.<ext>`. The random prefix is unknown, so
  * we readdir and match on the `toolResultId` suffix (verified: exactly one file
  * matches per id). Returns null if no artifact is found or it isn't a data URI.
+ *
+ * @param artifactDir - Session artifact directory confining the lookup.
+ * @param toolResultId - Trailing artifact identifier to match.
+ * @returns Parsed image data URI, or null if unavailable or unsafe to read.
  */
 export function readArtifactDataUri(
   artifactDir: string,
@@ -102,6 +123,12 @@ export function readArtifactDataUri(
   // WITHOUT its extension must END with the id or `-<id>`. A plain substring
   // match would let one id read another attachment's data (e.g. id "abc"
   // matching "xyz987-media-1-tool-result-abc.txt").
+  /**
+   * Remove the final filename extension for exact artifact suffix matching.
+   *
+   * @param f - Artifact filename.
+   * @returns Filename without its final extension.
+   */
   const stem = (f: string): string => {
     const dot = f.lastIndexOf('.');
     return dot > 0 ? f.slice(0, dot) : f;
@@ -158,6 +185,12 @@ export function readArtifactDataUri(
  * inside `root`'s canonical path — markdown image links and screenshot paths
  * come from model output and must not be able to escape the session working
  * dir to exfiltrate an arbitrary local file into the share.
+ *
+ * @param filePath - File to read.
+ * @param mime - MIME type assigned to the resulting data URI.
+ * @param maxBytes - Maximum raw file size to embed.
+ * @param root - Optional canonical containment boundary.
+ * @returns Embedded file metadata, or null if the read is refused or fails.
  */
 export function fileToDataUri(
   filePath: string,
@@ -206,7 +239,14 @@ export function fileToDataUri(
 
 const MARKDOWN_IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
 
-/** Embed local markdown images only when their canonical file is inside an allowed root. */
+/**
+ * Embed local markdown images only inside an allowed canonical workspace root.
+ *
+ * @param text - Markdown containing possible image links.
+ * @param roots - Workspace roots allowed to supply image files.
+ * @param budget - Mutable remaining session image-byte allowance.
+ * @returns Text with embedded links shortened and matching image parts.
+ */
 export function embedLocalMarkdownImages(
   text: string,
   roots: string[],

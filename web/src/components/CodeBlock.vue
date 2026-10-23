@@ -4,10 +4,16 @@ import { ref } from 'vue';
 const props = defineProps<{ code: string }>();
 const copied = ref(false);
 
+/**
+ * Limit displayed code without truncating the original clipboard value.
+ *
+ * @returns Code capped at 20,000 characters, with an ellipsis when shortened.
+ */
 function display(): string {
   return props.code.length > 20000 ? `${props.code.slice(0, 20000)}\n…` : props.code;
 }
 
+/** Copy the full code and briefly acknowledge success when clipboard access works. */
 async function copy(): Promise<void> {
   try {
     await navigator.clipboard.writeText(props.code);

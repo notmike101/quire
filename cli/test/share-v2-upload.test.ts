@@ -13,19 +13,42 @@ import type { ShapedMessage, ShapedSession } from '../src/harness/types.js';
 const KEY_RE = /^[A-Za-z0-9_-]{43}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/**
+ * Build one alternating-role message with deterministic text.
+ *
+ * @param i - Message index determining role and content.
+ * @returns Shaped user or assistant message.
+ */
 function msg(i: number): ShapedMessage {
   return { role: i % 2 === 0 ? 'user' : 'assistant', parts: [{ type: 'text', text: `message ${i}` }] };
 }
 
+/**
+ * Build a deterministic session for upload orchestration tests.
+ *
+ * @param n - Number of messages.
+ * @returns Session containing the requested alternating-role messages.
+ */
 function makeSession(n: number): ShapedSession {
   return { sessionId: 's-1', title: 'demo', messages: Array.from({ length: n }, (_, i) => msg(i)) };
 }
 
 // Same convention as the v1 publish tests: inject a chunker that forces the
 // chunked path without a 19 MB fixture.
+/**
+ * Force three small source chunks without large fixtures.
+ *
+ * @param messages - Six messages to split into pairs.
+ * @returns Three ordered two-message slices.
+ */
 const threeWayChunker = (messages: ShapedMessage[]): ShapedMessage[][] =>
   [messages.slice(0, 2), messages.slice(2, 4), messages.slice(4, 6)];
 
+/**
+ * Create an API double recording the create, chunk, and finalize sequence.
+ *
+ * @returns API double, operation log, and inspectable request spies.
+ */
 function makeApi() {
   const calls: string[] = [];
   const create = vi.fn(async (body: unknown): Promise<V2CreateResponse> => {
@@ -133,7 +156,14 @@ describe('publishV2', () => {
 
   it('omits password and expiresAt from the create body when unset', async () => {
     const { api, create } = makeApi();
-    await publishV2(api, makeSession(2), { preset: 'normal', baseUrl: 'https://srv.example.com', chunker: (m) => [m] });
+    await publishV2(api, makeSession(2), { preset: 'normal', baseUrl: 'https://srv.example.com',
+      /**
+       * Keep the entire session in one creation request.
+       *
+       * @param m - Session messages.
+       * @returns One source chunk containing all messages.
+       */
+      chunker: (m) => [m] });
     const body = create.mock.calls[0]![0] as Record<string, unknown>;
     expect(body.preset).toBe('normal');
     expect(body.sourceChunkCount).toBe(1);
@@ -217,7 +247,14 @@ describe('publishV2', () => {
       redactions: {},
     }));
     await expect(
-      publishV2(api, makeSession(2), { preset: 'strict', baseUrl: 'https://srv.example.com', chunker: (m) => [m] }),
+      publishV2(api, makeSession(2), { preset: 'strict', baseUrl: 'https://srv.example.com',
+        /**
+         * Keep the session in one chunk to isolate finalization validation.
+         *
+         * @param m - Session messages.
+         * @returns One source chunk containing all messages.
+         */
+        chunker: (m) => [m] }),
     ).rejects.toThrow(/different share/);
   });
 });

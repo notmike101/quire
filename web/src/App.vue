@@ -63,10 +63,22 @@ watch(state, async (s) => {
 onMounted(() => void loadFirst());
 onBeforeUnmount(() => observer.disconnect());
 
+/**
+ * Format share timestamps using the reader's locale.
+ *
+ * @param iso - ISO timestamp from share metadata.
+ * @returns Date with year, abbreviated month, and day.
+ */
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+/**
+ * Select the parts that belong in a user-message bubble.
+ *
+ * @param message - User message to render.
+ * @returns Text and system parts, excluding tool, reasoning, and image parts.
+ */
 function userParts(message: ShareMessage): SharePart[] {
   // Text and system parts render in the bubble column; tool/reasoning parts
   // don't appear on user messages in practice, but filter to be safe.

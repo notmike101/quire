@@ -17,9 +17,20 @@ const contentKey = randomBytes(32).toString('base64url');
 let db: Db;
 let app: Hono;
 
-/** Response.json() is typed Promise<unknown> under @types/node (no DOM lib); cast to a plain object. */
+/**
+ * Decode a JSON response into an assertion-friendly object.
+ *
+ * @param r - HTTP response returned by the test application.
+ * @returns Parsed response fields with the test's plain-object typing.
+ */
 const json = (r: Response): Promise<Record<string, any>> => r.json() as Promise<Record<string, any>>;
 
+/**
+ * Build a valid create request containing a synthetic credential to redact.
+ *
+ * @param over - Top-level request fields to override.
+ * @returns The create request object using this file's content key.
+ */
 const createBody = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   protocol: 'quire-share-v1',
   uploadRequestId: 'req-1',
@@ -42,6 +53,7 @@ beforeAll(async () => {
   // postgres.js console.logs NOTICE lines; migrateDb against an already-migrated
   // container emits "already exists, skipping". Silence so output stays clean.
   const origLog = console.log;
+  /** Ignore expected migration notices during test setup. */
   console.log = () => {};
   try {
     await migrateDb(db);
@@ -164,6 +176,11 @@ describe('create', () => {
 });
 
 describe('chunk', () => {
+  /**
+   * Create an unfinished share expecting one additional source chunk.
+   *
+   * @returns Public share ID and upload credential for chunk assertions.
+   */
   async function createTwoChunkShare() {
     const res = await app.request('/api/v2/shares', {
       method: 'POST',
@@ -175,6 +192,12 @@ describe('chunk', () => {
     return { shareId: body.shareId as string, uploadToken: body.uploadToken as string };
   }
 
+  /**
+   * Serialize a source-chunk request using the file's content key.
+   *
+   * @param messages - Messages to send in the chunk.
+   * @returns The protocol chunk request JSON.
+   */
   const chunkBody = (messages: unknown[]) => JSON.stringify({ protocol: 'quire-share-v1', contentKey, messages });
 
   it('accepts an in-order chunk 1', async () => {
@@ -279,6 +302,12 @@ describe('chunk', () => {
 });
 
 describe('finalize', () => {
+  /**
+   * Create a two-chunk share and upload its remaining messages without finalizing.
+   *
+   * @param uploadRequestId - Idempotency identifier for this test upload.
+   * @returns The create response containing the share ID and upload credential.
+   */
   async function completeUpload(uploadRequestId: string) {
     const createRes = await app.request('/api/v2/shares', {
       method: 'POST',

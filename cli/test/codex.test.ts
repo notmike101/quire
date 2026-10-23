@@ -8,6 +8,11 @@ import { makeCodexAdapter } from '../src/harness/codex.js';
 
 const tempDirs: string[] = [];
 
+/**
+ * Create an isolated Codex store with two parent tasks and one child.
+ *
+ * @returns Database and empty parent/child rollout paths.
+ */
 function makeStateDb(): { dbPath: string; parentRollout: string; childRollout: string } {
   const dir = mkdtempSync(join(tmpdir(), 'quire-codex-'));
   tempDirs.push(dir);
@@ -50,6 +55,13 @@ function makeStateDb(): { dbPath: string; parentRollout: string; childRollout: s
   return { dbPath, parentRollout, childRollout };
 }
 
+/**
+ * Serialize a Codex response-item event.
+ *
+ * @param payload - Response-item payload.
+ * @param timestamp - Deterministic event timestamp.
+ * @returns JSONL-ready event text without a trailing newline.
+ */
 function event(payload: Record<string, unknown>, timestamp = '2026-08-31T12:00:00.000Z'): string {
   return JSON.stringify({ timestamp, type: 'response_item', payload });
 }

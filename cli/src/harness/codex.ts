@@ -21,10 +21,21 @@ interface ThreadRow {
   is_subagent?: number;
 }
 
+/**
+ * Locate the default Codex task database.
+ *
+ * @returns State database path under the current user's home.
+ */
 export function codexStateDbPath(): string {
   return join(homedir(), '.codex', 'state_5.sqlite');
 }
 
+/**
+ * Read the newest task timestamp without modifying the store.
+ *
+ * @param dbPath - Codex state database path.
+ * @returns Newest update time in milliseconds, or undefined if unavailable.
+ */
 export function codexStoreUpdatedAt(dbPath: string): number | undefined {
   let db: DatabaseSync | undefined;
   try {
@@ -40,12 +51,24 @@ export function codexStoreUpdatedAt(dbPath: string): number | undefined {
   }
 }
 
+/**
+ * Normalize a stored task timestamp.
+ *
+ * @param row - Task record containing second and optional millisecond timestamps.
+ * @returns ISO timestamp, falling back to the Unix epoch for invalid dates.
+ */
 function updatedAt(row: ThreadRow): string {
   const value = row.updated_at_ms ?? row.updated_at * 1000;
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : new Date(0).toISOString();
 }
 
+/**
+ * Map a task database row to discovery metadata.
+ *
+ * @param row - Task record and optional subagent marker.
+ * @returns Session metadata with an ID fallback for empty titles.
+ */
 function sessionInfo(row: ThreadRow): HarnessSessionInfo {
   return {
     id: row.id,
@@ -61,6 +84,12 @@ interface RolloutEvent {
   payload?: Record<string, unknown>;
 }
 
+/**
+ * Decode serialized tool arguments without discarding non-JSON text.
+ *
+ * @param value - Raw arguments or result value.
+ * @returns Parsed JSON when possible, otherwise the original value.
+ */
 function parseJsonOrString(value: unknown): unknown {
   if (typeof value !== 'string') return value;
   try {
@@ -70,6 +99,12 @@ function parseJsonOrString(value: unknown): unknown {
   }
 }
 
+/**
+ * Normalize tool output for transcript storage.
+ *
+ * @param value - Raw tool result.
+ * @returns Literal text or a serialized representation.
+ */
 function stringifyOutput(value: unknown): string {
   if (typeof value === 'string') return value;
   try {
@@ -79,6 +114,13 @@ function stringifyOutput(value: unknown): string {
   }
 }
 
+/**
+ * Recognize explicit tool errors and command exit envelopes.
+ *
+ * @param value - Tool payload or output to inspect.
+ * @param commandResult - Whether command-envelope text may be interpreted.
+ * @returns Whether an explicit failure marker or nonzero exit code is present.
+ */
 function resultFailed(value: unknown, commandResult = false): boolean {
   const result = commandResult ? parseJsonOrString(value) : value;
   if (Array.isArray(result)) {
@@ -111,6 +153,14 @@ function resultFailed(value: unknown, commandResult = false): boolean {
   return exit !== null && Number(exit[1]) !== 0;
 }
 
+/**
+ * Shape supported Codex text and image content blocks.
+ *
+ * @param content - Raw message content array.
+ * @param budget - Mutable remaining session image-byte allowance.
+ * @param taskRoot - Root confining local image reads.
+ * @returns Text and image parts in source order.
+ */
 function contentParts(content: unknown, budget: ImageBudget, taskRoot: string): ShapedPart[] {
   if (!Array.isArray(content)) return [];
   const parts: ShapedPart[] = [];
@@ -148,6 +198,12 @@ function contentParts(content: unknown, budget: ImageBudget, taskRoot: string): 
   return parts;
 }
 
+/**
+ * Combine the visible text entries in a reasoning summary.
+ *
+ * @param summary - Raw summary block array.
+ * @returns Joined summary text, or undefined when no text entries exist.
+ */
 function reasoningSummary(summary: unknown): string | undefined {
   if (!Array.isArray(summary)) return undefined;
   const texts = summary
@@ -157,17 +213,43 @@ function reasoningSummary(summary: unknown): string | undefined {
   return texts.length > 0 ? texts.join('\n') : undefined;
 }
 
+/**
+ * Recognize leading Codex environment and repository instruction injections.
+ *
+ * @param text - User-side text to classify.
+ * @returns Whether the text begins with a known injected-context marker.
+ */
 function isCodexContextInjection(text: string): boolean {
   return /^\s*(?:<recommended_plugins(?:\s|>)|# AGENTS\.md instructions for\b|<environment_context(?:\s|>))/.test(text);
 }
 
+/**
+ * Create a read-only Codex task and rollout adapter.
+ *
+ * @param dbPath - Codex state database path.
+ * @param env - Environment used to resolve an explicit current task.
+ * @param maxMessages - Maximum shaped messages retained per session.
+ * @param maxImageBytes - Cumulative image-byte allowance per session.
+ * @returns Task discovery and rollout-shaping adapter.
+ */
 export function makeCodexAdapter(
   dbPath: string = codexStateDbPath(),
   env: NodeJS.ProcessEnv = process.env,
   maxMessages: number = MAX_SESSION_MESSAGES,
   maxImageBytes: number = MAX_SESSION_IMAGE_BYTES,
 ): HarnessAdapter {
+  /**
+   * Open the task database without permitting writes.
+   *
+   * @returns A database connection that the caller must close.
+   */
   const open = (): DatabaseSync => new DatabaseSync(dbPath, { readOnly: true });
+  /**
+   * Look up a task and its subagent marker by exact ID.
+   *
+   * @param id - Task identifier.
+   * @returns Matching row, or undefined when absent.
+   */
   const findThread = (id: string): ThreadRow | undefined => {
     const db = open();
     try {
@@ -187,6 +269,11 @@ export function makeCodexAdapter(
   return {
     name: 'codex',
 
+    /**
+     * List the 50 newest top-level Codex tasks.
+     *
+     * @returns Discovery metadata excluding spawned child tasks.
+     */
     async listSessions(): Promise<HarnessSessionInfo[]> {
       const db = open();
       try {
@@ -207,6 +294,11 @@ export function makeCodexAdapter(
       }
     },
 
+    /**
+     * Resolve CODEX_THREAD_ID, or fall back to the newest top-level task.
+     *
+     * @returns Selected task metadata.
+     */
     async resolveCurrent(): Promise<HarnessSessionInfo> {
       const currentId = env.CODEX_THREAD_ID;
       if (currentId) {
@@ -219,6 +311,12 @@ export function makeCodexAdapter(
       return sessions[0]!;
     },
 
+    /**
+     * Read and shape one task's rollout, including explicitly selected children.
+     *
+     * @param id - Exact task identifier.
+     * @returns Bounded transcript with matched tool calls and results.
+     */
     async loadSession(id: string): Promise<ShapedSession> {
       const row = findThread(id);
       if (!row) throw new Error(`Codex task not found: ${id}`);
@@ -226,6 +324,13 @@ export function makeCodexAdapter(
       const calls = new Map<string, ShapedPart>();
       const imageBudget: ImageBudget = { remaining: maxImageBytes };
       let capWarned = false;
+      /**
+       * Filter injected context and append a message within the session limit.
+       *
+       * @param role - Conversation role.
+       * @param parts - Unfiltered shaped content parts.
+       * @param time - Optional source event timestamp.
+       */
       const pushMessage = (role: 'user' | 'assistant', parts: ShapedPart[], time?: string): void => {
         const shaped = extractReasoningParts(extractSystemParts(parts));
         const kept = role === 'user'

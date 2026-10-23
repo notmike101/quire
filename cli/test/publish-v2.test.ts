@@ -29,6 +29,11 @@ const fakeAdapter = {
   })),
 };
 
+/**
+ * Create a successful sealed-share API double with inspectable upload calls.
+ *
+ * @returns API double and creation/finalization spies.
+ */
 function makeV2Api() {
   const create = vi.fn(async (_body: unknown) => ({
     shareId: 'pub-v2',
@@ -69,7 +74,14 @@ describe('runPublish (unit)', () => {
     const { runPublish } = await import('../src/commands/publish.js');
     const { api, create, finalize } = makeV2Api();
     const lines: string[] = [];
-    await runPublish({ current: true, yes: true }, [], { adapter: fakeAdapter as never, api, out: (l) => lines.push(l) });
+    await runPublish({ current: true, yes: true }, [], { adapter: fakeAdapter as never, api,
+      /**
+       * Capture published URL and summary lines for assertions.
+       *
+       * @param l - CLI output line.
+       * @returns New number of captured lines.
+       */
+      out: (l) => lines.push(l) });
 
     const text = lines.join('\n');
     const published = text.split('\n').find((l) => l.startsWith('Published: '));
@@ -93,7 +105,9 @@ describe('runPublish (unit)', () => {
     await runPublish(
       { current: true, yes: true, preset: 'normal', password: 'hunter2', expires: 'tomorrow' },
       [],
-      { adapter: fakeAdapter as never, api, out: () => {} },
+      { adapter: fakeAdapter as never, api,
+        /** Discard routine status output while inspecting upload options. */
+        out: () => {} },
     );
     const body = create.mock.calls[0]![0] as { preset: string; password: string; expiresAt: string };
     expect(body.preset).toBe('normal');
@@ -151,6 +165,13 @@ describe('runPublish (process)', () => {
     rmSync(tempHome, { recursive: true, force: true });
   });
 
+  /**
+   * Run the CLI against the local protocol server with an isolated home.
+   *
+   * @param args - Arguments after the CLI entry point.
+   * @param timeoutMs - Watchdog delay before killing a hung child.
+   * @returns Actual exit code and captured output streams.
+   */
   function runCli(args: string[], timeoutMs = 30000): Promise<{ code: number | null; stdout: string; stderr: string }> {
     const child = spawn(process.execPath, ['--import', 'tsx', indexTs, ...args], {
       cwd: cliRoot,
@@ -172,6 +193,11 @@ describe('runPublish (process)', () => {
     });
   }
 
+  /**
+   * Write a deterministic two-message OMP export for process-level publication.
+   *
+   * @returns Export path in the isolated home.
+   */
   function ompExport(): string {
     const path = join(tempHome, 'export.html');
     const data = {

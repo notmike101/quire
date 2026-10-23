@@ -9,16 +9,21 @@ const LANGS = [
 
 let highlighterPromise: Promise<Highlighter> | null = null;
 
+/**
+ * Initialize syntax highlighting once and share it across markdown renders.
+ *
+ * @returns Highlighter configured for the viewer's languages and color themes.
+ */
 function getHighlighter(): Promise<Highlighter> {
   highlighterPromise ??= createHighlighter({ themes: ['github-light', 'github-dark'], langs: [...LANGS] });
   return highlighterPromise;
 }
 
 /**
- * Render session markdown. Raw HTML in the source is never rendered
- * (html: false); fenced code blocks are highlighted with Shiki's dual
- * theme — the output uses CSS variables that style.css switches on
- * prefers-color-scheme.
+ * Reject link destinations outside explicit HTTP, HTTPS, and mailto URLs.
+ *
+ * @param href - Candidate link destination before rendering.
+ * @returns Whether the destination has an allowed scheme and no control characters.
  */
 // Round 4: markdown-it emits an explicit `[x](javascript:…)` link as a clickable
 // <a href> (html:false only blocks raw HTML, not markdown links). A malicious
@@ -50,6 +55,12 @@ export function isSafeHref(href: string): boolean {
   return u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:';
 }
 
+/**
+ * Render session markdown without raw HTML or unsafe link and image destinations.
+ *
+ * @param text - Markdown source from a shared message.
+ * @returns HTML with dual-theme syntax highlighting and sanitized destinations.
+ */
 export async function renderMarkdown(text: string): Promise<string> {
   const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
   // Round 9 (D5): markdown-it's built-in data: allowlist (GOOD_DATA_RE =
@@ -61,11 +72,26 @@ export async function renderMarkdown(text: string): Promise<string> {
   // in the renderers — isSafeImageSrc for image tokens, isSafeHref for link
   // tokens (a data: LINK is still dropped, so this opens no link vector).
   const defaultValidate = md.validateLink;
+  /**
+   * Preserve supported embedded images and file labels through markdown parsing.
+   *
+   * @param url - Destination being checked by the parser.
+   * @returns Whether the parser should retain the destination for renderer checks.
+   */
   md.validateLink = (url: string) =>
     /^(?:data:image\/(png|jpeg|jpg|webp|gif|avif);base64,|file:)/i.test(url.trim()) || defaultValidate(url);
   const defaultFence = md.renderer.rules.fence!;
   const hl = await getHighlighter();
   const loaded = hl.getLoadedLanguages();
+  /**
+   * Highlight a code fence, falling back to the default renderer on failure.
+   *
+   * @param tokens - Parsed markdown tokens.
+   * @param idx - Index of the fence being rendered.
+   * @param options - Active renderer options.
+   * @param env - Markdown render environment.
+   * @returns Highlighted or default code-block HTML.
+   */
   md.renderer.rules.fence = (tokens, idx, options, env) => {
     const token = tokens[idx]!;
     const lang = token.info.trim().split(/\s+/)[0] || 'plaintext';
@@ -88,6 +114,16 @@ export async function renderMarkdown(text: string): Promise<string> {
   // by renderToken), so there is no captured default to delegate to. When the
   // href is safe, delegate to slf.renderToken (the built-in renderer) which
   // emits the normal <a href> tag. When unsafe, drop the link entirely.
+  /**
+   * Render only safe link openings and track dropped links for their closing tags.
+   *
+   * @param tokens - Parsed markdown tokens.
+   * @param idx - Index of the opening link token.
+   * @param options - Active renderer options.
+   * @param _env - Unused markdown render environment.
+   * @param slf - Renderer used for allowed links.
+   * @returns Opening anchor HTML, or an empty string for an unsafe destination.
+   */
   md.renderer.rules.link_open = (tokens, idx, options, _env, slf) => {
     const token = tokens[idx]!;
     const href = token.attrGet('href') ?? '';
@@ -100,6 +136,16 @@ export async function renderMarkdown(text: string): Promise<string> {
   };
   // link_close mirrors link_open: when the matching open was dropped, the
   // default renderer would emit a stray </a> with no opening tag — drop it too.
+  /**
+   * Omit closing tags whose corresponding link opening was rejected.
+   *
+   * @param tokens - Parsed markdown tokens.
+   * @param idx - Index of the closing link token.
+   * @param options - Active renderer options.
+   * @param _env - Unused markdown render environment.
+   * @param slf - Renderer used for retained links.
+   * @returns Closing anchor HTML, or an empty string for a dropped link.
+   */
   md.renderer.rules.link_close = (tokens, idx, options, _env, slf) => {
     for (let i = idx - 1; i >= 0; i--) {
       if (tokens[i]!.type === 'link_open') {
@@ -119,6 +165,15 @@ export async function renderMarkdown(text: string): Promise<string> {
   // same-origin /assets/ are kept; anything else is dropped, with the alt text
   // kept as plain text (mirroring the dropped-link behavior).
   const defaultImage = md.renderer.rules.image!;
+  /**
+   * Render allowed images and replace unsafe sources with escaped alt text.
+   *
+   * @param tokens - Parsed markdown tokens.
+   * @param idx - Index of the image token.
+   * @param options - Active renderer options.
+   * @param env - Markdown render environment.
+   * @returns Safe image HTML or its plain-text alternative.
+   */
   md.renderer.rules.image = (tokens, idx, options, env) => {
     const token = tokens[idx]!;
     const src = token.attrGet('src') ?? '';

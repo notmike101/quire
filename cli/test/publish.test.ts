@@ -67,7 +67,14 @@ describe('runPublish (unit)', () => {
       await runPublish(
         { harness: 'omp', preset: 'strict', yes: true },
         [path],
-        { adapter: makeOmpAdapter() as never, api: fakeApi as never, out: (l) => lines.push(l) },
+        { adapter: makeOmpAdapter() as never, api: fakeApi as never,
+          /**
+           * Capture status lines from publishing the exact OMP export.
+           *
+           * @param l - CLI output line.
+           * @returns New number of captured lines.
+           */
+          out: (l) => lines.push(l) },
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -103,7 +110,14 @@ describe('runPublish (unit)', () => {
   it('--current --yes publishes v2 and prints the fragment URL', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
     const lines: string[] = [];
-    await runPublish({ current: true, yes: true }, [], { adapter: fakeAdapter as never, api: fakeApi as never, out: (l) => lines.push(l) });
+    await runPublish({ current: true, yes: true }, [], { adapter: fakeAdapter as never, api: fakeApi as never,
+      /**
+       * Capture publication status and the final sealed-share URL.
+       *
+       * @param l - CLI output line.
+       * @returns New number of captured lines.
+       */
+      out: (l) => lines.push(l) });
     expect(fakeAdapter.resolveCurrent).toHaveBeenCalled();
     expect(fakeApi.createV2Share).toHaveBeenCalledWith(
       expect.objectContaining({ session: expect.objectContaining({ sessionId: 'sess_a' }) }),
@@ -117,13 +131,17 @@ describe('runPublish (unit)', () => {
 
   it('resolves an explicit id by exact match', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
-    await runPublish({ yes: true }, ['sess_a'], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} });
+    await runPublish({ yes: true }, ['sess_a'], { adapter: fakeAdapter as never, api: fakeApi as never,
+      /** Discard routine output while checking exact-ID session resolution. */
+      out: () => {} });
     expect(fakeAdapter.loadSession).toHaveBeenCalledWith('sess_a');
   });
 
   it('resolves a unique prefix', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
-    await runPublish({ yes: true }, ['sess'], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} });
+    await runPublish({ yes: true }, ['sess'], { adapter: fakeAdapter as never, api: fakeApi as never,
+      /** Discard routine output while checking unique-prefix resolution. */
+      out: () => {} });
     expect(fakeAdapter.loadSession).toHaveBeenCalledWith('sess_a');
   });
 
@@ -136,24 +154,37 @@ describe('runPublish (unit)', () => {
       ]),
     };
     const { runPublish } = await import('../src/commands/publish.js');
-    await expect(runPublish({ yes: true }, ['sess'], { adapter: ambiguous as never, api: fakeApi as never, out: () => {} })).rejects.toThrow(/ambiguous/);
+    await expect(runPublish({ yes: true }, ['sess'], { adapter: ambiguous as never, api: fakeApi as never,
+      /** Discard routine output while checking ambiguous-prefix rejection. */
+      out: () => {} })).rejects.toThrow(/ambiguous/);
   });
 
   it('rejects an unknown --expires value', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
-    await expect(runPublish({ yes: true, expires: '24x' }, ['sess_a'], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} })).rejects.toThrow(/invalid --expires/);
+    await expect(runPublish({ yes: true, expires: '24x' }, ['sess_a'], { adapter: fakeAdapter as never, api: fakeApi as never,
+      /** Discard routine output while checking expiry validation. */
+      out: () => {} })).rejects.toThrow(/invalid --expires/);
   });
 
   it('passes the preset through to the v2 create body', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
-    await runPublish({ yes: true, preset: 'normal' }, ['sess_a'], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} });
+    await runPublish({ yes: true, preset: 'normal' }, ['sess_a'], { adapter: fakeAdapter as never, api: fakeApi as never,
+      /** Discard routine output while inspecting the selected redaction preset. */
+      out: () => {} });
     expect(fakeApi.createV2Share).toHaveBeenCalledWith(expect.objectContaining({ preset: 'normal' }));
   });
 
   it('--password random generates a secret, prints it once, and sends it to the v2 create body', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
     const lines: string[] = [];
-    await runPublish({ current: true, yes: true, password: 'random' }, [], { adapter: fakeAdapter as never, api: fakeApi as never, out: (l) => lines.push(l) });
+    await runPublish({ current: true, yes: true, password: 'random' }, [], { adapter: fakeAdapter as never, api: fakeApi as never,
+      /**
+       * Capture output to check that a generated password is printed once.
+       *
+       * @param l - CLI output line.
+       * @returns New number of captured lines.
+       */
+      out: (l) => lines.push(l) });
     const body = fakeApi.createV2Share.mock.lastCall?.[0] as { password?: string };
     expect(body.password).toMatch(/^[A-Za-z0-9_-]{22}$/); // base64url of 16 bytes
     const printed = lines.filter((l) => l.startsWith('Password: '));
@@ -164,7 +195,14 @@ describe('runPublish (unit)', () => {
   it('--password with a literal value is sent as-is and not printed', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
     const lines: string[] = [];
-    await runPublish({ current: true, yes: true, password: 'hunter2' }, [], { adapter: fakeAdapter as never, api: fakeApi as never, out: (l) => lines.push(l) });
+    await runPublish({ current: true, yes: true, password: 'hunter2' }, [], { adapter: fakeAdapter as never, api: fakeApi as never,
+      /**
+       * Capture output to check that a literal password is never printed.
+       *
+       * @param l - CLI output line.
+       * @returns New number of captured lines.
+       */
+      out: (l) => lines.push(l) });
     const body = fakeApi.createV2Share.mock.lastCall?.[0] as { password?: string };
     expect(body.password).toBe('hunter2');
     expect(lines.some((l) => l.startsWith('Password: '))).toBe(false);
@@ -174,14 +212,18 @@ describe('runPublish (unit)', () => {
     const { runPublish } = await import('../src/commands/publish.js');
     const before = fakeApi.createV2Share.mock.calls.length;
     await expect(
-      runPublish({ yes: true }, [], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} }),
+      runPublish({ yes: true }, [], { adapter: fakeAdapter as never, api: fakeApi as never,
+        /** Discard routine output while checking missing-session rejection. */
+        out: () => {} }),
     ).rejects.toThrow(/no session selected/);
     expect(fakeApi.createV2Share.mock.calls.length).toBe(before); // nothing new published
   });
 
   it('--expires tomorrow sends an ISO expiresAt to the v2 create body', async () => {
     const { runPublish } = await import('../src/commands/publish.js');
-    await runPublish({ current: true, yes: true, expires: 'tomorrow' }, [], { adapter: fakeAdapter as never, api: fakeApi as never, out: () => {} });
+    await runPublish({ current: true, yes: true, expires: 'tomorrow' }, [], { adapter: fakeAdapter as never, api: fakeApi as never,
+      /** Discard routine output while inspecting the resolved expiry. */
+      out: () => {} });
     const body = fakeApi.createV2Share.mock.lastCall?.[0] as { expiresAt?: string };
     expect(body.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/); // ISO datetime
   });
@@ -194,7 +236,9 @@ describe('runPublish (unit)', () => {
       finalizeV2Share: vi.fn(),
     };
     await expect(
-      runPublish({ current: true, yes: true, preset: 'none' }, [], { adapter: fakeAdapter as never, api: api as never, out: () => {} }),
+      runPublish({ current: true, yes: true, preset: 'none' }, [], { adapter: fakeAdapter as never, api: api as never,
+        /** Discard routine output while checking forbidden-preset rejection. */
+        out: () => {} }),
     ).rejects.toThrow(/not supported/);
     expect(api.createV2Share).not.toHaveBeenCalled();
   });
@@ -207,7 +251,9 @@ describe('runPublish (unit)', () => {
       finalizeV2Share: vi.fn(),
     };
     await expect(
-      runPublish({ current: true, yes: true, preset: 'none', ...( { confirmRaw: true } as object) }, [], { adapter: fakeAdapter as never, api: api as never, out: () => {} }),
+      runPublish({ current: true, yes: true, preset: 'none', ...( { confirmRaw: true } as object) }, [], { adapter: fakeAdapter as never, api: api as never,
+        /** Discard routine output while checking the removed raw-publish escape. */
+        out: () => {} }),
     ).rejects.toThrow(/not supported/);
     expect(api.createV2Share).not.toHaveBeenCalled();
   });
@@ -224,7 +270,14 @@ describe('runPublish (unit)', () => {
       finalizeV2Share: vi.fn(async (shareId: string) => ({ shareId, publicPath: `/chats/${shareId}`, messageCount: 1, pageCount: 1, bytes: 10, redactions: {} })),
     };
     const lines: string[] = [];
-    await runPublish({ current: true, yes: true }, [], { adapter: fakeAdapter as never, api: leakyApi as never, out: (l) => lines.push(l) });
+    await runPublish({ current: true, yes: true }, [], { adapter: fakeAdapter as never, api: leakyApi as never,
+      /**
+       * Capture output to inspect public URLs for leaked server credentials.
+       *
+       * @param l - CLI output line.
+       * @returns New number of captured lines.
+       */
+      out: (l) => lines.push(l) });
     expect(lines.join('\n')).toContain('https://srv.example.com/chats/');
     expect(lines.join('\n')).not.toContain('user:secret@');
   });
@@ -244,7 +297,14 @@ describe('runPublish (unit)', () => {
       })),
     };
     const lines: string[] = [];
-    await runPublish({ current: true, yes: true }, [], { adapter: evilAdapter as never, api: fakeApi as never, out: (l) => lines.push(l) });
+    await runPublish({ current: true, yes: true }, [], { adapter: evilAdapter as never, api: fakeApi as never,
+      /**
+       * Capture status output to check that raw session titles stay private.
+       *
+       * @param l - CLI output line.
+       * @returns New number of captured lines.
+       */
+      out: (l) => lines.push(l) });
     const sharing = lines.find((l) => l.startsWith('Sharing:'))!;
     expect(sharing).not.toContain(secretTitle);
     expect(sharing).not.toContain('AKIA');
@@ -268,7 +328,9 @@ describe('runPublish (unit)', () => {
         messages: [{ role: 'user', parts: [{ type: 'text', text: 'hi' }] }],
       })),
     };
-    await runPublish({ current: true, yes: true }, [], { adapter: longAdapter as never, api: fakeApi as never, out: () => {} });
+    await runPublish({ current: true, yes: true }, [], { adapter: longAdapter as never, api: fakeApi as never,
+      /** Discard routine output while inspecting metadata wire bounds. */
+      out: () => {} });
     expect(fakeApi.createV2Share).toHaveBeenCalledWith(expect.objectContaining({
       session: expect.objectContaining({
         sessionId: 'x'.repeat(200),
@@ -327,6 +389,14 @@ describe('runPublish (process)', () => {
     rmSync(tempHome, { recursive: true, force: true });
   });
 
+  /**
+   * Run the CLI against the fixture server with scripted confirmation input.
+   *
+   * @param args - Arguments after the CLI entry point.
+   * @param stdin - Input written before closing the child pipe.
+   * @param timeoutMs - Watchdog delay before killing a hung child.
+   * @returns Actual exit code and captured output streams.
+   */
   function runCli(args: string[], stdin: string, timeoutMs = 30000): Promise<{ code: number | null; stdout: string; stderr: string }> {
     const child = spawn(process.execPath, ['--import', 'tsx', indexTs, ...args], {
       cwd: cliRoot,

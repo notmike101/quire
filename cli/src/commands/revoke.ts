@@ -1,6 +1,14 @@
 import { QuireApi } from '../api.js';
 import { confirm } from '../prompt.js';
 
+/**
+ * Confirm and revoke an owned share.
+ *
+ * @param token - Share identifier, required by the command.
+ * @param values - Confirmation options.
+ * @param values.yes - Whether to revoke without an interactive confirmation.
+ * @param api - Authenticated owner API client.
+ */
 export async function runRevoke(
   token: string | undefined,
   values: { yes?: boolean } = {},

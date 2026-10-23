@@ -92,6 +92,17 @@ export const rules: RedactRule[] = [
     // (https://user@host, no colon) has no secret and is left untouched.
     pattern: /\b(postgres(ql)?|mysql|mariadb|mongodb(\+srv)?|redis|amqps?|mssql|oracle|cockroachdb|clickhouse|kafka|valkey|etcd|https?):\/\/[^/\s:@]*:[^@\s]+@|([;&?])(password|passwd|pwd|pass|pw|token|key|secret)s?=[^&#;\s]+/gi,
     presets: ['strict', 'normal'],
+    /**
+     * Preserve connection syntax while replacing its credential portion.
+     *
+     * @param _m - Entire matched credential.
+     * @param scheme - Connection scheme captured for userinfo credentials.
+     * @param _q - Optional PostgreSQL scheme suffix.
+     * @param _s - Optional MongoDB scheme suffix.
+     * @param separator - Query or connection-option separator.
+     * @param credKey - Name of the credential option.
+     * @returns Connection text with the credential replaced.
+     */
     replace: (_m, scheme, _q, _s, separator, credKey) => (scheme ? `${scheme}://[REDACTED:connection-string]@` : `${separator}${credKey}=[REDACTED:connection-string]`),
   },
   {
@@ -150,6 +161,17 @@ export const rules: RedactRule[] = [
     // both CR and LF.
     pattern: /(?<![?&;])\b(api[_-]?key|secret|token|passwd|password|pwd|pass|pw|auth|credential|passphrase|jwt|cookie|dsn)("|'?)([ \t]*[:=][ \t]*)(?:"(?:(?:\\.)|[^"\r\n\\]){1,}"|'(?:(?:\\.)|[^'\r\n\\]){1,}'|"(?:(?:\\.)|[^"\r\n\\]){1,}(?=\r?(?:\n|$))|'(?:(?:\\.)|[^'\r\n\\]){1,}(?=\r?(?:\n|$))|[^'"\s\\](?:(?:\\.)|[^'"\r\n\\])*)/gi,
     presets: ['strict', 'normal'],
+    /**
+     * Keep the secret field name and assignment separator, omitting its value.
+     *
+     * @param _m - Entire matched assignment.
+     * @param key - Secret field name.
+     * @param _kq - Optional closing quote after the field name.
+     * @param sep - Assignment separator and surrounding whitespace.
+     * @param _q - Unused optional capture.
+     * @param _v - Unused optional capture.
+     * @returns The assignment with a generic-secret placeholder.
+     */
     replace: (_m, key, _kq, sep, _q, _v) => `${key}${sep}[REDACTED:generic-secret]`,
   },
   {
@@ -203,6 +225,13 @@ export const rules: RedactRule[] = [
     // (F1-REDOS-1), a synchronous event-loop DoS.
     pattern: /--(api[_-]?key|auth[-_]?token|access[-_]?key|secret[-_]?key|api[-_]?secret|secret|token|passwd|password|pwd|pass|pw|passphrase|auth|credential|jwt|cookie|dsn)(?:(?:[ \t]+)|\=)(?:"(?:(?:\\.)|[^"\\]){1,}"|'(?:(?:\\.)|[^'\\]){1,}'|"(?:(?:\\.)|[^"\r\n\\]){1,}(?=\r?(?:\n|$))|'(?:(?:\\.)|[^'\r\n\\]){1,}(?=\r?(?:\n|$))|[^'"\s\\](?:(?:\\.)|[^'"\s\\])*)/gi,
     presets: ['strict', 'normal'],
+    /**
+     * Preserve a credential flag while removing its argument.
+     *
+     * @param _m - Entire matched command-line flag and value.
+     * @param key - Credential flag name without its leading dashes.
+     * @returns The flag followed by a generic-secret placeholder.
+     */
     replace: (_m, key) => `--${key} [REDACTED:generic-secret]`,
   },
   {
@@ -244,6 +273,15 @@ export const rules: RedactRule[] = [
     // alphanumeric runs, and pass/pw aliases cover compound credential names.
     pattern: /\b((?:[A-Za-z0-9]+[_-]?KEY|[A-Za-z0-9]*[_-]?(?:PASSWORD|PASSWD|PWD|TOKEN|SECRET|AUTH|CREDENTIAL|APIKEY|API_KEY|JWT|COOKIE|DSN|PRIVATE|PASSPHRASE)|[A-Za-z0-9]+[_-](?:PASS|PW)|(?:DB|MYSQL|POSTGRES|PG|SMTP|ADMIN)(?:PASS|PW))[_-]?(?:KEY|TOKEN|SECRET)?)(["']?)([ \t]*[:=][ \t]*)(?:"(?:(?:\\.)|[^"\r\n\\]){1,}"|'(?:(?:\\.)|[^'\r\n\\]){1,}'|"(?:(?:\\.)|[^"\r\n\\]){1,}(?=\r?(?:\n|$))|'(?:(?:\\.)|[^'\r\n\\]){1,}(?=\r?(?:\n|$))|[^'"\s\\](?:(?:\\.)|[^'"\r\n\\])*)/gi,
     presets: ['strict', 'normal'],
+    /**
+     * Preserve a compound secret name and separator while removing its value.
+     *
+     * @param _m - Entire matched assignment.
+     * @param name - Compound environment or field name.
+     * @param _kq - Optional closing quote after the name.
+     * @param sep - Assignment separator and surrounding whitespace.
+     * @returns The compound assignment with a generic-secret placeholder.
+     */
     replace: (_m, name, _kq, sep) => `${name}${sep}[REDACTED:generic-secret]`,
   },
   {
@@ -272,6 +310,15 @@ export const rules: RedactRule[] = [
     // JSX/quoted values, so no new false-positive class is introduced.
     pattern: /\b(key)(\s*[:=]\s*)([A-Za-z0-9][A-Za-z0-9._/+-]{7,})/gi,
     presets: ['strict', 'normal'],
+    /**
+     * Replace a token-like standalone key value without changing its label.
+     *
+     * @param _m - Entire matched key assignment.
+     * @param key - Standalone key label.
+     * @param sep - Assignment separator and surrounding whitespace.
+     * @param _v - Matched credential value.
+     * @returns The key assignment with a key placeholder.
+     */
     replace: (_m, key, sep, _v) => `${key}${sep}[REDACTED:key]`,
   },
   {
@@ -305,6 +352,12 @@ export const rules: RedactRule[] = [
     // key split across parts) is exactly this shape. The old test declined it
     // (neither pure-hex nor g-z), so the fragment leaked. Decline only the
     // exact UUID shape (8-4-4-4-12), which is an identifier, not a secret.
+    /**
+     * Accept token-like runs while sparing the exact UUID identifier shape.
+     *
+     * @param run - Candidate run matched by the bounded bare-token pattern.
+     * @returns Whether the run qualifies for bare-token redaction.
+     */
     test: (run) =>
       /[g-zG-Z]/.test(run) ||
       (/^[0-9a-fA-F._-]{24,}$/.test(run) &&

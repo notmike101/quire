@@ -59,6 +59,12 @@ const finalizeV2BodySchema = z
 
 // The uniform 404. Unknown share, revoked share, and wrong/missing
 // X-Upload-Token all return this exact body — no existence oracle.
+/**
+ * Hide unknown shares and invalid upload credentials behind the same response.
+ *
+ * @param c - Request context used to create the response.
+ * @returns The uniform not-found response.
+ */
 const notFound = (c: Context) => c.json({ error: { code: 'not_found', message: 'Not found' } }, 404);
 
 // Uniform error body for store failures. A store-level 404 (the row was
@@ -66,6 +72,14 @@ const notFound = (c: Context) => c.json({ error: { code: 'not_found', message: '
 // byte-identical to the route-level 404 — no existence oracle. The store
 // carries plain numbers; Hono's json() wants a status-literal type, hence
 // the cast.
+/**
+ * Translate a store failure without changing the uniform not-found body.
+ *
+ * @param c - Request context used to create the response.
+ * @param status - HTTP status reported by the store.
+ * @param code - Machine-readable failure code.
+ * @returns A JSON error response with the requested status.
+ */
 const fail = (c: Context, status: number, code: string) =>
   status === 404
     ? notFound(c)
@@ -74,6 +88,12 @@ const fail = (c: Context, status: number, code: string) =>
 // Read the body exactly once: the raw bytes are both the SHA-256 digest input
 // (byte-exact idempotency) and the JSON parse source. The body stream is
 // consumed by arrayBuffer(), so c.req.json() could not re-read it anyway.
+/**
+ * Parse a request and hash its exact bytes for idempotent-upload comparisons.
+ *
+ * @param c - Request context whose body has not yet been consumed.
+ * @returns Parsed JSON, or null on invalid JSON, together with its SHA-256 digest.
+ */
 async function rawBody(c: Context): Promise<{ body: unknown; digest: string }> {
   const raw = new Uint8Array(await c.req.raw.arrayBuffer());
   const digest = createHash('sha256').update(raw).digest('hex');
@@ -86,6 +106,12 @@ async function rawBody(c: Context): Promise<{ body: unknown; digest: string }> {
   return { body, digest };
 }
 
+/**
+ * Decode a validated base64url content key for encryption operations.
+ *
+ * @param value - Encoded 32-byte content key.
+ * @returns The decoded key bytes.
+ */
 function decodeContentKey(value: string): Uint8Array {
   return new Uint8Array(Buffer.from(value, 'base64url'));
 }
@@ -94,6 +120,13 @@ function decodeContentKey(value: string): Uint8Array {
 // bytes (the stored hash is always a 64-char hex digest), so timingSafeEqual
 // is valid with no length gate — same no-oracle shape as the API-key compare
 // in owner.ts. The length check only guards a corrupt row from a throw.
+/**
+ * Compare the upload-token header with its stored digest in constant time.
+ *
+ * @param uploadTokenHash - Stored hexadecimal SHA-256 digest.
+ * @param c - Request context containing the upload-token header.
+ * @returns Whether the header matches the stored digest.
+ */
 async function uploadTokenOk(uploadTokenHash: string, c: Context): Promise<boolean> {
   const header = c.req.header('x-upload-token');
   if (!header) return false;
@@ -103,6 +136,14 @@ async function uploadTokenOk(uploadTokenHash: string, c: Context): Promise<boole
   return timingSafeEqual(a, b);
 }
 
+/**
+ * Build authenticated create, chunk-upload, and finalize routes for sealed shares.
+ *
+ * @param deps - Owner-route dependencies.
+ * @param deps.db - Database used to persist uploads.
+ * @param deps.config - Server authentication and encryption configuration.
+ * @returns The router mounted under the v2 API prefix.
+ */
 export function ownerV2Routes({ db, config }: OwnerV2Deps): Hono {
   const app = new Hono();
 
@@ -115,6 +156,13 @@ export function ownerV2Routes({ db, config }: OwnerV2Deps): Hono {
 
   app.post('/shares', async (c) => {
     const t0 = Date.now();
+    /**
+     * Record the create request's status, byte count, and elapsed time.
+     *
+     * @param status - HTTP response status.
+     * @param bytes - Accumulated share bytes, when available.
+     * @returns No value; the metric bucket is updated in place.
+     */
     const note = (status: number, bytes?: number) => v2Metrics.record('v2_create', status, { bytes, latencyMs: Date.now() - t0 });
     const { body, digest } = await rawBody(c);
     const parsed = createShareV2BodySchema.safeParse(body);
@@ -166,6 +214,13 @@ export function ownerV2Routes({ db, config }: OwnerV2Deps): Hono {
 
   app.put('/shares/:shareId/source-chunks/:seq', async (c) => {
     const t0 = Date.now();
+    /**
+     * Record the chunk request's status, byte count, and elapsed time.
+     *
+     * @param status - HTTP response status.
+     * @param bytes - Accumulated share bytes, when available.
+     * @returns No value; the metric bucket is updated in place.
+     */
     const note = (status: number, bytes?: number) => v2Metrics.record('v2_chunk', status, { bytes, latencyMs: Date.now() - t0 });
     const seq = Number(c.req.param('seq'));
     if (!Number.isInteger(seq) || seq < 0) {
@@ -243,6 +298,13 @@ export function ownerV2Routes({ db, config }: OwnerV2Deps): Hono {
 
   app.post('/shares/:shareId/finalize', async (c) => {
     const t0 = Date.now();
+    /**
+     * Record the finalize request's status, byte count, and elapsed time.
+     *
+     * @param status - HTTP response status.
+     * @param bytes - Final share bytes, when available.
+     * @returns No value; the metric bucket is updated in place.
+     */
     const note = (status: number, bytes?: number) => v2Metrics.record('v2_finalize', status, { bytes, latencyMs: Date.now() - t0 });
     const { body } = await rawBody(c);
     const parsed = finalizeV2BodySchema.safeParse(body);

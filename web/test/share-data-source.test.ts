@@ -9,6 +9,14 @@ const SHARE_ID = 'share-abc123';
 const KEY = TEST_KEY;
 const FRAGMENT = TEST_FRAGMENT;
 
+/**
+ * Build a text-message fixture for encrypted pagination tests.
+ *
+ * @param seq - Message sequence within the fixture's single chunk.
+ * @param role - Transcript speaker.
+ * @param text - Text content of the message.
+ * @returns Protocol message with a stable identity and no timestamp.
+ */
 const msg = (seq: number, role: 'user' | 'assistant', text: string): ShareMessageV1 => ({
   chunkSeq: 0,
   seq,
@@ -32,6 +40,12 @@ const PAGE0 = { protocol: SHARE_PROTOCOL, shareId: SHARE_ID, seq: 0, messages: [
 const PAGE1 = { protocol: SHARE_PROTOCOL, shareId: SHARE_ID, seq: 1, messages: [msg(3, 'user', 'second page')] };
 const PAGE2 = { protocol: SHARE_PROTOCOL, shareId: SHARE_ID, seq: 2, messages: [msg(4, 'assistant', 'last page')] };
 
+/**
+ * Provide a successful bootstrap route with caller-selected endpoint overrides.
+ *
+ * @param overrides - Routes replacing or extending the default bootstrap.
+ * @returns Public endpoint route table for the fixture share.
+ */
 function v2Routes(overrides: Record<string, V2Route> = {}): Record<string, V2Route> {
   return {
     [`/api/v2/public/shares/${SHARE_ID}/bootstrap`]: {
@@ -42,6 +56,13 @@ function v2Routes(overrides: Record<string, V2Route> = {}): Record<string, V2Rou
   };
 }
 
+/**
+ * Encrypt the fixture manifest, index, and supplied pages into mock blob routes.
+ *
+ * @param manifest - Manifest payload to seal.
+ * @param pages - Message page payloads keyed by page sequence.
+ * @returns Mock routes serving authenticated encrypted blobs.
+ */
 async function v2BlobRoutes(manifest: object = MANIFEST, pages: Record<number, object> = { 0: PAGE0, 1: PAGE1 }): Promise<Record<string, V2Route>> {
   const routes: Record<string, V2Route> = {
     [`/api/v2/public/shares/${SHARE_ID}/blobs/manifest/0`]: { status: 200, blob: await seal(SHARE_ID, KEY, 'manifest', 0, manifest) },
@@ -53,6 +74,12 @@ async function v2BlobRoutes(manifest: object = MANIFEST, pages: Record<number, o
   return routes;
 }
 
+/**
+ * Narrow a successful page response and fail on an unexpected share error.
+ *
+ * @param res - Result returned by the data source.
+ * @returns Successful page response.
+ */
 function ok(res: PageResponse | ShareError): PageResponse {
   if (res instanceof ShareError) throw new Error(`unexpected ShareError: ${res.code}`);
   return res;

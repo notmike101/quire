@@ -19,6 +19,12 @@ export interface AppDeps {
   ipWindow?: IpWindow;
 }
 
+/**
+ * Compose API routes, static viewer routes, and shared security middleware.
+ *
+ * @param deps - Database, configuration, and optional injected rate limiters.
+ * @returns The application ready to handle requests.
+ */
 export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
   app.onError(errorHandler);

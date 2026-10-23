@@ -11,11 +11,23 @@ const open = defineModel<boolean>('open', { default: false });
 const preview = computed(() => toolPreview(props.part));
 const failed = computed(() => toolFailed(props.part));
 
+/**
+ * Format tool arguments for the expanded code block.
+ *
+ * @param part - Tool part containing raw text or structured arguments.
+ * @returns Original text, indented JSON, or an empty string for absent input.
+ */
 function inputText(part: SharePart): string {
   if (part.input === undefined || part.input === null) return '';
   return typeof part.input === 'string' ? part.input : JSON.stringify(part.input, null, 2);
 }
 
+/**
+ * Format attachment sizes for images omitted from a tool result.
+ *
+ * @param n - Original image size in bytes, when known.
+ * @returns Size in B, KB, or MB, or an empty string when unknown.
+ */
 function fmtBytes(n: number | undefined): string {
   if (n === undefined) return '';
   if (n < 1024) return `${n} B`;

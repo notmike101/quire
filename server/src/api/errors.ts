@@ -17,12 +17,25 @@ import { HTTPException } from 'hono/http-exception';
 // pathological error cannot bloat the log. The full object (stack + properties)
 // is never dumped.
 const LOG_MAX_LEN = 500;
+/**
+ * Remove log-control characters and bound the length of an error value.
+ *
+ * @param value - Error detail to render as a single log-line fragment.
+ * @returns Sanitized text truncated to the log limit.
+ */
 function sanitizeForLog(value: unknown): string {
   const s = typeof value === 'string' ? value : String(value ?? '');
   const stripped = s.replace(/[\u0000-\u001f\u007f]/g, ' ');
   return stripped.length > LOG_MAX_LEN ? stripped.slice(0, LOG_MAX_LEN) + '…' : stripped;
 }
 
+/**
+ * Return uniform API errors and log sanitized details for unexpected failures.
+ *
+ * @param err - Exception raised while handling the request.
+ * @param c - Request context used to build the error response.
+ * @returns The HTTP exception response or a generic internal-error response.
+ */
 export const errorHandler: ErrorHandler = (err, c) => {
   if (err instanceof HTTPException) {
     return c.json({ error: { code: 'http', message: err.message } }, err.status);

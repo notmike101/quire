@@ -31,6 +31,14 @@ export interface MessageIdentity {
   seq: number;
 }
 
+/**
+ * Build the DOM anchor for a message's composite identity.
+ *
+ * @param identity - Position of the message within the share.
+ * @param identity.chunkSeq - Chunk containing the message.
+ * @param identity.seq - Message sequence within that chunk.
+ * @returns Stable anchor shared by the transcript and message rail.
+ */
 export function messageAnchorId({ chunkSeq, seq }: MessageIdentity): string {
   return `msg-${chunkSeq}-${seq}`;
 }
@@ -51,8 +59,10 @@ export interface ShareMeta {
   redactions: Record<string, number>;
 }
 
-/** A user message in the full-share rail index: its composite jump target and
- * short preview for the hover tooltip. Present only on the first page. */
+/**
+ * A user message in the full-share rail index, with its jump target and tooltip
+ * preview. Present only on the first page.
+ */
 export interface RailUserEntry extends MessageIdentity {
   preview: string;
 }
@@ -65,7 +75,15 @@ export interface PageResponse {
   nextCursor: string | null;
 }
 
+/** An API failure with the HTTP status and machine-readable share error code. */
 export class ShareError extends Error {
+  /**
+   * Preserve a share API failure for viewer state handling.
+   *
+   * @param status - HTTP response status.
+   * @param code - Error code used to select a viewer state.
+   * @param message - Human-readable failure description.
+   */
   constructor(
     readonly status: number,
     readonly code: string,

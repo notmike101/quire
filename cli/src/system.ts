@@ -46,6 +46,9 @@ export interface SystemSegment {
  * (text before it) — a quote, a compaction summary, or a tool output that is
  * source code containing the tag — is returned as a single `text` segment
  * unchanged. A part with no reminder block is returned unchanged.
+ *
+ * @param text - Raw message-part text.
+ * @returns Ordered system and text segments without reclassifying embedded tags.
  */
 export function splitSystemText(text: string): SystemSegment[] {
   const OPEN = '<system-reminder>';
@@ -84,6 +87,9 @@ export function splitSystemText(text: string): SystemSegment[] {
  * Short, human label for a system block, used as the collapsed chip title.
  * The goal-continuation reminder is the dominant real-world case; everything
  * else falls back to a generic label.
+ *
+ * @param block - Extracted system-block text.
+ * @returns Recognized reminder label or the generic system reminder label.
  */
 export function systemLabel(block: string): string {
   if (block.includes('active session goal')) return 'goal continuation';
@@ -105,6 +111,9 @@ const TODO_REMINDER_PREFIX = "The TodoWrite tool hasn't been used recently.";
  * `system` segment. Returns `null` when the part is not such a reminder (e.g.
  * real user text that merely mentions the tool), so the caller leaves it
  * untouched. The whole part is the reminder; there is no surrounding text.
+ *
+ * @param text - Raw message-part text.
+ * @returns One system segment for the known prefix, otherwise null.
  */
 function splitBareTodoReminder(text: string): SystemSegment[] | null {
   if (!text.startsWith(TODO_REMINDER_PREFIX)) return null;
@@ -117,6 +126,9 @@ function splitBareTodoReminder(text: string): SystemSegment[] | null {
  * system segment (e.g. it only *quotes* the tag in backticks) is left as a
  * single unchanged text part, so it renders as one message rather than
  * fragments.
+ *
+ * @param parts - Message content in source order.
+ * @returns Parts with leading injected reminders separated from ordinary text.
  */
 export function extractSystemParts(parts: ShapedPart[]): ShapedPart[] {
   const out: ShapedPart[] = [];
@@ -142,6 +154,7 @@ export function extractSystemParts(parts: ShapedPart[]): ShapedPart[] {
     // segments (prose around a quoted mention) into a single text part so the
     // user's message stays contiguous instead of fragmenting into bubbles.
     let buf = '';
+    /** Emit any pending ordinary text before the next system segment. */
     const flush = (): void => {
       if (buf !== '') {
         out.push({ type: 'text', text: buf });
@@ -191,6 +204,9 @@ const THINK_CLOSE = '<' + '/' + 'think' + '>';
  * `reasoning` segments. A part that does not start with a think block is
  * returned as a single `text` segment unchanged (embedded/quoted think tags are
  * never treated as reasoning).
+ *
+ * @param text - Raw message-part text.
+ * @returns Ordered reasoning and text segments, preserving unclosed tags as text.
  */
 export function splitThinkText(text: string): ThinkSegment[] {
   // Fast path: no think tag at all, or the part doesn't start with one.
@@ -237,6 +253,9 @@ export function splitThinkText(text: string): ThinkSegment[] {
  * each resulting segment capped: capping first could truncate past the closing
  * tag of an oversized block, leaving an unclosed tag that splitThinkText
  * would fail to split.
+ *
+ * @param parts - Message content after system-part extraction.
+ * @returns Parts with leading reasoning separated and visible text byte-bounded.
  */
 export function extractReasoningParts(parts: ShapedPart[]): ShapedPart[] {
   const out: ShapedPart[] = [];

@@ -9,7 +9,12 @@ import { publishV2 } from '../share-v2/upload.js';
 // --password values that mean "generate one for me" rather than a literal secret.
 export const RANDOM_PASSWORD_WORDS = new Set(['random', 'generate', 'auto']);
 
-/** Returns a generated password when `value` is a "random" keyword, else the literal value. */
+/**
+ * Resolve generated-password keywords without altering literal passwords.
+ *
+ * @param value - Password option, generation keyword, or undefined.
+ * @returns A fresh random password, the literal password, or undefined.
+ */
 export function resolvePassword(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   if (RANDOM_PASSWORD_WORDS.has(value.trim().toLowerCase())) {
@@ -35,6 +40,14 @@ export interface PublishDeps {
 
 const PRESETS = ['strict', 'normal'];
 
+/**
+ * Resolve an explicit session ID, unique prefix, or current-session selection.
+ *
+ * @param adapter - Harness used for discovery and direct loading.
+ * @param values - Parsed publishing options.
+ * @param positionals - Optional session ID or export path.
+ * @returns Selected session metadata retaining its loadable identifier.
+ */
 async function resolveSession(adapter: HarnessAdapter, values: PublishValues, positionals: string[]): Promise<HarnessSessionInfo> {
   if (values.current) return adapter.resolveCurrent();
   const id = positionals[0];
@@ -61,6 +74,13 @@ async function resolveSession(adapter: HarnessAdapter, values: PublishValues, po
   throw new Error('no session selected — pass --current (this session) or a session id');
 }
 
+/**
+ * Load, confirm, and publish a harness session with sealed-share encryption.
+ *
+ * @param values - Parsed publish options.
+ * @param positionals - Optional session ID or export path.
+ * @param deps - Optional adapter, API client, and output overrides.
+ */
 export async function runPublish(values: PublishValues, positionals: string[], deps: PublishDeps = {}): Promise<void> {
   const out = deps.out ?? console.log;
   if (values.harness !== undefined && values.harness !== 'zcode' && values.harness !== 'claude-code' && values.harness !== 'codex' && values.harness !== 'omp') {

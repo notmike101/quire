@@ -5,7 +5,14 @@ export const API_KEY = 'e2e-test-key-0000000000000000000000';
 /** Matches the server's openai-key rule (\bsk-[A-Za-z0-9]{20,}\b) and no earlier rule. */
 export const OPENAI_KEY = 'sk-abcdefghijklmnopqrstuvwxyz0123456789';
 
-/** A shaped session that satisfies shapedSessionSchema (strict) byte-for-byte. */
+/**
+ * Build a strict-schema session with alternating user and assistant messages.
+ *
+ * @param messageCount - Total number of messages to generate.
+ * @param opts - Optional redaction-fixture settings.
+ * @param opts.secret - Include a synthetic OpenAI key in the first message.
+ * @returns A shaped session ready for the owner upload API.
+ */
 export function smallSession(messageCount: number, opts: { secret?: boolean } = {}): object {
   const messages: object[] = [];
   for (let i = 0; i < messageCount; i++) {
@@ -27,7 +34,11 @@ export function smallSession(messageCount: number, opts: { secret?: boolean } = 
   };
 }
 
-/** A session whose user message is a `system` part (harness-injected reminder). */
+/**
+ * Build a session containing a harness-injected system reminder in a user turn.
+ *
+ * @returns A system-reminder fixture followed by an assistant acknowledgment.
+ */
 export function systemNoticeSession(): object {
   return {
     sessionId: 'sess_system',
@@ -48,7 +59,11 @@ export function systemNoticeSession(): object {
   };
 }
 
-/** A session whose assistant message has a `reasoning` part (think block). */
+/**
+ * Build a session containing assistant reasoning before its visible answer.
+ *
+ * @returns A reasoning-block fixture with one user and one assistant message.
+ */
 export function reasoningSession(): object {
   return {
     sessionId: 'sess_reasoning',
@@ -76,7 +91,11 @@ export function reasoningSession(): object {
 export const TINY_PNG_DATA_URI =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-/** A session whose assistant message has an `image` part (embedded data URI). */
+/**
+ * Build a session containing an embedded PNG in the assistant response.
+ *
+ * @returns An image-rendering fixture with a tiny inline screenshot.
+ */
 export function imageSession(): object {
   return {
     sessionId: 'sess_image',
@@ -110,6 +129,8 @@ export function imageSession(): object {
  * A session whose assistant message has a tool part with an attached image
  * (a Read-attachment image). The viewer must render the image inside the tool
  * card's collapsible body, hidden by default and visible on expand.
+ *
+ * @returns A session containing a completed Read tool with an inline image.
  */
 export function toolImageSession(): object {
   return {
@@ -146,6 +167,9 @@ export function toolImageSession(): object {
  * reply of varied length (some short, some with tool chips + code) so the page
  * is genuinely tall. Used to exercise the message rail's viewport anchoring and
  * overflow behavior.
+ *
+ * @param userTurns - Number of user/assistant pairs to generate.
+ * @returns A session with varied response heights for scrolling tests.
  */
 export function longSession(userTurns: number): object {
   const messages: object[] = [];
@@ -193,6 +217,8 @@ export function longSession(userTurns: number): object {
  * percent-encodes the control char before the renderer, so the raw form is only
  * reachable via the isSafeHref unit tests), and an svg data image (svg+xml can
  * carry SMIL and is never a screenshot).
+ *
+ * @returns A session carrying unsafe Markdown and HTML in an assistant text part.
  */
 export function xssSession(): object {
   const payload = [
@@ -248,6 +274,10 @@ export interface CreateV2ShareOptions {
  * key that the test keeps. The key is appended to the returned URL only as a
  * fragment — fragments are never transmitted, so the public endpoints never
  * see it.
+ *
+ * @param request - Playwright request context targeting the test server.
+ * @param options - Session content and optional password or expiry settings.
+ * @returns The finalized share ID, key-fragment viewer URL, content key, and message count.
  */
 export async function createV2Share(
   request: APIRequestContext,
@@ -284,7 +314,13 @@ export async function createV2Share(
   };
 }
 
-/** A v2 sealed share with a long session (for rail + lazy-load tests). */
+/**
+ * Publish a long sealed session for rail navigation and lazy-loading tests.
+ *
+ * @param request - Playwright request context targeting the test server.
+ * @param userTurns - Number of user/assistant pairs in the uploaded session.
+ * @returns The finalized share ID, key-fragment viewer URL, content key, and message count.
+ */
 export async function createV2LongShare(
   request: APIRequestContext,
   userTurns: number,
@@ -295,12 +331,23 @@ export async function createV2LongShare(
 /**
  * A v2 sealed share with two source chunks (chunk 0 in the create body, chunk 1
  * via the source-chunks PUT). Exercises the multi-chunk upload path.
+ *
+ * @param request - Playwright request context targeting the test server.
+ * @param opts - Optional chunk fixture settings.
+ * @param opts.perChunk - Number of messages generated in each of the two chunks.
+ * @returns The finalized share ID, key-fragment viewer URL, and content key.
  */
 export async function createV2ChunkedShare(
   request: APIRequestContext,
   opts: { perChunk?: number } = {},
 ): Promise<{ shareId: string; url: string; contentKey: string }> {
   const perChunk = opts.perChunk ?? 3;
+  /**
+   * Generate alternating-role messages labeled with their source chunk.
+   *
+   * @param chunkSeq - Source chunk number embedded in each message's text.
+   * @returns The configured number of synthetic messages for that chunk.
+   */
   const mkChunk = (chunkSeq: number): object[] => {
     const messages: object[] = [];
     for (let i = 0; i < perChunk; i++) {

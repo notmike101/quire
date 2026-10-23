@@ -2,6 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { chunkMessages, CHUNK_TARGET_BYTES } from '../src/chunk.js';
 import type { ShapedMessage } from '../src/harness/types.js';
 
+/**
+ * Build a minimal user message for chunk-size tests.
+ *
+ * @param text - Message text.
+ * @returns One shaped user message.
+ */
 function msg(text: string): ShapedMessage {
   return { role: 'user', parts: [{ type: 'text', text }] };
 }

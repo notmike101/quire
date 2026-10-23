@@ -18,6 +18,12 @@ const cliRoot = join(dir, '..');
 const indexTs = join(cliRoot, 'src', 'index.ts');
 
 const tempDirs: string[] = [];
+/**
+ * Register a temporary directory for suite cleanup.
+ *
+ * @param d - Newly created directory.
+ * @returns The same directory path.
+ */
 function trackTemp(d: string): string {
   tempDirs.push(d);
   return d;
@@ -132,10 +138,22 @@ describe('installOmpShareHandler', () => {
 });
 
  describe('runSetup (process)', () => {
+   /**
+    * Create an isolated home directory for a setup process.
+    *
+    * @returns Home directory registered for cleanup.
+    */
    function freshHome(): string {
      return trackTemp(mkdtempSync(join(tmpdir(), 'quire-setup-proc-')));
    }
 
+   /**
+    * Run setup without inheriting the user's OMP agent-directory override.
+    *
+    * @param args - Arguments after the CLI entry point.
+    * @param home - Isolated home used by the child process.
+    * @returns Actual exit code and captured output streams.
+    */
    function runCli(args: string[], home: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
      const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
      delete env.PI_CODING_AGENT_DIR;

@@ -29,6 +29,7 @@ beforeAll(async () => {
   // postgres.js console.logs NOTICE lines; migrateDb against an already-migrated
   // container emits "already exists, skipping". Silence so output stays clean.
   const origLog = console.log;
+  /** Ignore expected migration notices during test setup. */
   console.log = () => {};
   try {
     await migrateDb(db);
@@ -51,16 +52,46 @@ afterAll(async () => {
 // The content key is test-only material (random per test, never persisted or
 // logged). Helpers build small clean sessions; the strict preset is used
 // everywhere so redaction counts are deterministic.
+/**
+ * Generate isolated content-key material for a test upload.
+ *
+ * @returns A random 32-byte AES key.
+ */
 const newKey = (): Uint8Array => randomBytes(32);
 
+/**
+ * Build a minimal text message for store and redaction assertions.
+ *
+ * @param role - User or assistant role.
+ * @param text - Text to include in the message's only part.
+ * @returns A shaped text message.
+ */
 function textMsg(role: 'user' | 'assistant', text: string): ShapedMessage {
   return { role, parts: [{ type: 'text', text }] };
 }
 
+/**
+ * Wrap shaped messages in the fixed synthetic test session.
+ *
+ * @param messages - Initial upload messages.
+ * @param title - Session title, defaulting to clean fixture text.
+ * @returns A shaped session ready for upload or preparation.
+ */
 function sessionOf(messages: ShapedMessage[], title = 'v2 share'): ShapedSession {
   return { sessionId: 'sess_v2', title, messages };
 }
 
+/**
+ * Create an unfinished upload with optional chunk, expiration, and payload overrides.
+ *
+ * @param uploadRequestId - Idempotency identifier for the upload.
+ * @param opts - Optional fixture overrides.
+ * @param opts.sourceChunkCount - Declared source chunk count, defaulting to one.
+ * @param opts.expiresAt - ISO expiration timestamp, or null for no expiration.
+ * @param opts.contentKey - Content key to reuse instead of generating one.
+ * @param opts.messages - Initial messages instead of the default greeting.
+ * @returns The created upload summary and its in-memory content key.
+ */
 async function makeShare(
   uploadRequestId: string,
   opts: { sourceChunkCount?: number; expiresAt?: string | null; contentKey?: Uint8Array; messages?: ShapedMessage[] } = {},

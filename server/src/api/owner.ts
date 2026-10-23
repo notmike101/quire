@@ -10,6 +10,13 @@ export interface OwnerDeps {
   config: Config;
 }
 
+/**
+ * Authenticate a Bearer API key using constant-time digest comparison.
+ *
+ * @param c - Request context containing the authorization header.
+ * @param config - Server configuration containing the expected API key.
+ * @returns Whether the request supplies the configured Bearer key.
+ */
 export function apiKeyOk(c: Context, config: Config): boolean {
   const [scheme, value] = (c.req.header('authorization') ?? '').split(' ');
   if (scheme !== 'Bearer' || !value) return false;
@@ -26,6 +33,14 @@ export function apiKeyOk(c: Context, config: Config): boolean {
   return timingSafeEqual(a, b);
 }
 
+/**
+ * Build authenticated owner-management routes for existing sealed shares.
+ *
+ * @param deps - Owner-route dependencies.
+ * @param deps.db - Database used to read and update shares.
+ * @param deps.config - Server configuration containing the owner API key.
+ * @returns The owner list, inspect, update, and revoke router.
+ */
 export function ownerRoutes({ db, config }: OwnerDeps): Hono {
   const app = new Hono();
 

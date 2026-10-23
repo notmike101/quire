@@ -11,9 +11,13 @@ import { mockFetch, seal, TEST_FRAGMENT, TEST_KEY, type V2Route } from './v2-hel
 // the v2 gunzip path (share-v2/crypto.ts) needs a spec-compliant Blob.
 globalThis.Blob = NodeBlob as typeof Blob;
 
+/** Replace browser visibility observation without triggering automatic pagination. */
 class FakeIntersectionObserver {
+  /** Accept target registration without emitting visibility events. */
   observe(): void {}
+  /** Accept removal of a target without maintaining browser observer state. */
   unobserve(): void {}
+  /** Accept observer teardown without browser resources to release. */
   disconnect(): void {}
 }
 
@@ -35,6 +39,14 @@ const MESSAGES = [
 ];
 const USER_INDEX = [{ chunkSeq: 0, seq: 1, preview: 'hello from user' }];
 
+/**
+ * Seal the fixture transcript into the public endpoints consumed by App.
+ *
+ * @param messages - Messages placed on the first page.
+ * @param userIndex - Full-share navigation entries.
+ * @param remainingPages - Additional message pages in pagination order.
+ * @returns Mock route table containing bootstrap, manifest, index, and pages.
+ */
 async function v2Routes(messages: object[], userIndex: object[], remainingPages: object[][] = []): Promise<Record<string, V2Route>> {
   const base = `/api/v2/public/shares/${SHARE_ID}`;
   const routes: Record<string, V2Route> = {
@@ -71,6 +83,12 @@ describe('App', () => {
   });
 
   it('groups calls across assistant messages and chunks without crossing user turns', async () => {
+    /**
+     * Build a read-call fixture for grouping across storage boundaries.
+     *
+     * @param path - File target shown in the tool preview.
+     * @returns Read tool part with the requested path.
+     */
     const tool = (path: string) => ({ type: 'tool', tool: 'read', input: { path } });
     mockFetch(await v2Routes([
       { chunkSeq: 0, seq: 1, role: 'user', time: null, parts: [{ type: 'text', text: 'Inspect files' }] },
@@ -92,15 +110,40 @@ describe('App', () => {
 
   it('retains completed assistant props while extending only the trailing run across pages', async () => {
     let loadNextPage!: () => void;
-    vi.stubGlobal('IntersectionObserver', class extends FakeIntersectionObserver {
+    vi.stubGlobal('IntersectionObserver', /** Capture visibility notifications for test-controlled pagination. */ class extends FakeIntersectionObserver {
+      /**
+       * Expose the observer callback through the test's pagination trigger.
+       *
+       * @param callback - App callback that responds to a visible loading sentinel.
+       */
       constructor(callback: (entries: { isIntersecting: boolean }[]) => void) {
         super();
+        /**
+         * Simulate the loading sentinel becoming visible.
+         *
+         * @returns The observer callback's void result.
+         */
         loadNextPage = () => callback([{ isIntersecting: true }]);
       }
     });
+    /**
+     * Build a stable message for testing grouped assistant prop identities.
+     *
+     * @param seq - Sequence within the fixture's single chunk.
+     * @param role - Transcript speaker.
+     * @param parts - Message content in display order.
+     * @returns Timestamp-free message with the requested identity.
+     */
     const message = (seq: number, role: ShareMessage['role'], parts: ShareMessage['parts']): ShareMessage => ({
       chunkSeq: 0, seq, role, time: null, parts,
     });
+    /**
+     * Build a read result whose expanded details can be checked after pagination.
+     *
+     * @param path - File target displayed in the preview.
+     * @param output - Full result displayed after expansion.
+     * @returns Read tool part with arguments and output.
+     */
     const tool = (path: string, output: string) => ({ type: 'tool' as const, tool: 'read', input: { path }, output });
     mockFetch(await v2Routes([
       message(1, 'user', [{ type: 'text', text: 'First question' }]),

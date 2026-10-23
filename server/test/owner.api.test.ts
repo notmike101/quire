@@ -18,9 +18,20 @@ const contentKey = randomBytes(32).toString('base64url');
 let db: Db;
 let app: Hono;
 
-/** Response.json() is typed Promise<unknown> under @types/node (no DOM lib); cast to a plain object. */
+/**
+ * Decode a JSON response into an assertion-friendly object.
+ *
+ * @param r - HTTP response returned by the test application.
+ * @returns Parsed response fields with the test's plain-object typing.
+ */
 const json = (r: Response): Promise<Record<string, any>> => r.json() as Promise<Record<string, any>>;
 
+/**
+ * Build a valid owner upload with a synthetic credential for redaction assertions.
+ *
+ * @param over - Top-level request fields to override.
+ * @returns The create request using this file's content key.
+ */
 const createBody = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   protocol: 'quire-share-v1',
   uploadRequestId: 'req-owner-api',
@@ -39,9 +50,20 @@ const createBody = (over: Record<string, unknown> = {}): Record<string, unknown>
   ...over,
 });
 
+/**
+ * Serialize a source-chunk request using this file's content key.
+ *
+ * @param messages - Messages to send in the chunk.
+ * @returns The protocol chunk request JSON.
+ */
 const chunkBody = (messages: unknown[]) => JSON.stringify({ protocol: 'quire-share-v1', contentKey, messages });
 
-/** Runs the full v2 lifecycle (create -> every chunk -> finalize) and returns the share id. */
+/**
+ * Run create, every declared chunk, and finalize for an owner-management fixture.
+ *
+ * @param over - Top-level create fields to override.
+ * @returns The finalized share's public identifier.
+ */
 async function createFinalizedShare(over: Record<string, unknown> = {}): Promise<string> {
   const res = await app.request('/api/v2/shares', { method: 'POST', headers: auth, body: JSON.stringify(createBody(over)) });
   expect(res.status).toBe(201);
@@ -70,6 +92,7 @@ beforeAll(async () => {
   // already-migrated test container emits "already exists, skipping". Silence
   // them so this file's output stays clean.
   const origLog = console.log;
+  /** Ignore expected migration notices during test setup. */
   console.log = () => {};
   try {
     await migrateDb(db);
@@ -181,6 +204,11 @@ describe('create', () => {
 });
 
 describe('chunk', () => {
+  /**
+   * Create an unfinished share expecting one additional source chunk.
+   *
+   * @returns Public share ID and upload credential for chunk assertions.
+   */
   async function createTwoChunkShare(): Promise<{ shareId: string; uploadToken: string }> {
     const res = await app.request('/api/v2/shares', {
       method: 'POST',
@@ -283,6 +311,11 @@ describe('chunk', () => {
 });
 
 describe('finalize', () => {
+  /**
+   * Create a share and upload both source chunks without finalizing.
+   *
+   * @returns Public share ID and upload credential for finalize assertions.
+   */
   async function completeUpload(): Promise<{ shareId: string; uploadToken: string }> {
     const res = await app.request('/api/v2/shares', {
       method: 'POST',

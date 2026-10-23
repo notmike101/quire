@@ -20,6 +20,14 @@ export interface LockoutStore {
  */
 export class RateLimiter {
   private hits = new Map<string, { count: number; lockedUntil: number }>();
+  /**
+   * Configure the failure threshold and optional persistent source of truth.
+   *
+   * @param maxFails - Failures required to start a lockout.
+   * @param lockMs - Lockout duration in milliseconds.
+   * @param _unused - Unused compatibility argument.
+   * @param store - Optional persistence backend used instead of in-memory counters.
+   */
   constructor(
     private readonly maxFails = 5,
     private readonly lockMs = 15 * 60 * 1000,
@@ -27,12 +35,25 @@ export class RateLimiter {
     private readonly store?: LockoutStore,
   ) {}
 
+  /**
+   * Check whether a key currently has an active lockout.
+   *
+   * @param key - Share or share-and-IP limiter key.
+   * @param now - Current epoch time in milliseconds.
+   * @returns Whether the key is locked beyond the supplied time.
+   */
   async isLocked(key: string, now: number = Date.now()): Promise<boolean> {
     if (this.store) return this.store.isLocked(key, now);
     const e = this.hits.get(key);
     return !!e && e.lockedUntil > now;
   }
 
+  /**
+   * Count a failed attempt and lock the key when its threshold is reached.
+   *
+   * @param key - Share or share-and-IP limiter key.
+   * @param now - Failure time in epoch milliseconds.
+   */
   async recordFailure(key: string, now: number = Date.now()): Promise<void> {
     if (this.store) {
       await this.store.recordFailure(key, now);
@@ -48,6 +69,11 @@ export class RateLimiter {
     this.hits.set(key, e);
   }
 
+  /**
+   * Clear a key's failures and lockout after successful authentication.
+   *
+   * @param key - Limiter key to remove.
+   */
   async reset(key: string): Promise<void> {
     if (this.store) {
       await this.store.reset(key);
@@ -56,6 +82,11 @@ export class RateLimiter {
     this.hits.delete(key);
   }
 
+  /**
+   * Reclaim expired locks and sub-threshold counters when the map is large.
+   *
+   * @param now - Epoch time in milliseconds used to identify expired entries.
+   */
   private prune(now: number): void {
     if (this.hits.size < 10_000) return;
     // Drop expired lockouts AND idle sub-threshold counters so an adversary
@@ -85,6 +116,15 @@ export class RateLimiter {
  * EXPIRED lockouts and keeps sub-threshold counters so a slow attack accumulates.
  */
 export class PostgresLockoutStore implements LockoutStore {
+  /**
+   * Configure persistent lockouts and namespace-scoped opportunistic pruning.
+   *
+   * @param db - Database containing the lockout table.
+   * @param maxFails - Failure threshold for an existing counter.
+   * @param lockMs - Lockout duration and idle-pruning window in milliseconds.
+   * @param keyPrefix - Namespace separating limiter dimensions in the shared table.
+   * @param pruneSubThreshold - Whether idle counters below the threshold may be deleted.
+   */
   constructor(
     private readonly db: Db,
     private readonly maxFails = 5,
@@ -93,12 +133,25 @@ export class PostgresLockoutStore implements LockoutStore {
     private readonly pruneSubThreshold = true,
   ) {}
 
+  /**
+   * Read the persisted lockout deadline for a namespaced key.
+   *
+   * @param key - Limiter key before the store prefix is applied.
+   * @param now - Current epoch time in milliseconds.
+   * @returns Whether the stored deadline is later than the supplied time.
+   */
   async isLocked(key: string, now: number): Promise<boolean> {
     const rows = await this.db.select().from(unlockLockouts).where(eq(unlockLockouts.key, this.keyPrefix + key)).limit(1);
     const r = rows[0];
     return !!r && r.lockedUntil !== null && r.lockedUntil.getTime() > now;
   }
 
+  /**
+   * Prune eligible rows and atomically increment or lock a namespaced counter.
+   *
+   * @param key - Limiter key before the store prefix is applied.
+   * @param now - Failure time in epoch milliseconds.
+   */
   async recordFailure(key: string, now: number): Promise<void> {
     // Prune opportunistically so the table does not grow without bound under a
     // (token, IP) cycling attack. Scoped to this store's keyPrefix so the
@@ -164,6 +217,11 @@ export class PostgresLockoutStore implements LockoutStore {
     );
   }
 
+  /**
+   * Delete the namespaced persisted counter and lockout.
+   *
+   * @param key - Limiter key before the store prefix is applied.
+   */
   async reset(key: string): Promise<void> {
     await this.db.delete(unlockLockouts).where(eq(unlockLockouts.key, this.keyPrefix + key));
   }
@@ -172,6 +230,13 @@ export class PostgresLockoutStore implements LockoutStore {
 /** Fixed 60-second window, 120 requests per IP, for the public content endpoint. */
 export class IpWindow {
   private windows = new Map<string, { start: number; count: number }>();
+  /**
+   * Configure fixed-window request limits and bounded IP tracking.
+   *
+   * @param maxPerWindow - Maximum accepted requests per IP in each window.
+   * @param windowMs - Duration of each window in milliseconds.
+   * @param maxEntries - Maximum number of tracked IP windows.
+   */
   constructor(
     private readonly maxPerWindow = 120,
     private readonly windowMs = 60 * 1000,
@@ -179,6 +244,13 @@ export class IpWindow {
     private readonly maxEntries = 10_000,
   ) {}
 
+  /**
+   * Count a request, opening a new window or evicting old entries as needed.
+   *
+   * @param ip - Client address used as the window key.
+   * @param now - Request time in epoch milliseconds.
+   * @returns Whether the request fits within its IP's allowance.
+   */
   allow(ip: string, now: number = Date.now()): boolean {
     const w = this.windows.get(ip);
     if (!w || now - w.start >= this.windowMs) {

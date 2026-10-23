@@ -10,12 +10,25 @@ export interface InstallOmpOptions {
   source?: string;
 }
 
+/**
+ * Locate OMP's agent configuration directory.
+ *
+ * @param env - Environment containing an optional directory override.
+ * @param home - Home directory used when no override is present.
+ * @returns Agent directory for installing the share handler.
+ */
 export function ompAgentDir(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
   return env.PI_CODING_AGENT_DIR || join(home, '.omp', 'agent');
 }
 
 const OMP_SHARE_CANDIDATES = ['share.ts', 'share.js', 'share.mjs'] as const;
 
+/**
+ * Explain how to resolve an existing OMP share handler without overwriting it.
+ *
+ * @param existing - Path of the conflicting handler.
+ * @returns Actionable conflict message.
+ */
 function conflictMessage(existing: string): string {
   return [
     `OMP share handler conflict: ${existing} already exists.`,
@@ -24,6 +37,12 @@ function conflictMessage(existing: string): string {
   ].join('\n');
 }
 
+/**
+ * Install Quire's OMP handler, preserving any different existing handler.
+ *
+ * @param options - Environment, home directory, and handler-source overrides.
+ * @returns Handler path and whether identical contents were already installed.
+ */
 export async function installOmpShareHandler(options: InstallOmpOptions = {}): Promise<{ path: string; unchanged: boolean }> {
   const source = options.source ?? OMP_SHARE_HANDLER_SOURCE;
   const dir = ompAgentDir(options.env, options.home);
@@ -59,6 +78,12 @@ export async function installOmpShareHandler(options: InstallOmpOptions = {}): P
   return { path: target, unchanged: false };
 }
 
+/**
+ * Print fresh server credentials or install the requested harness integration.
+ *
+ * @param positionals - Optional setup target, currently only omp.
+ * @param options - Overrides used when installing the OMP handler.
+ */
 export async function runSetup(positionals: string[] = [], options: InstallOmpOptions = {}): Promise<void> {
   if (positionals.length > 1) {
     throw new Error('usage: quire setup [omp]');

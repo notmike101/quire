@@ -24,6 +24,11 @@ await migrateDb(db);
 // this reclaims the rows). Run once at startup and then hourly; a cleanup
 // failure must not take the server down. The SQL is static (no bound
 // parameters), so an error message cannot carry user content.
+/**
+ * Run both retention jobs without letting cleanup failures stop the server.
+ *
+ * @returns The cleanup results, or undefined after logging a failure.
+ */
 const runCleanup = () =>
   Promise.all([cleanupStaleV2Uploads(db), cleanupExpiredV2(db)]).catch((e) =>
     console.error('cleanup failed:', e instanceof Error ? e.message : e),

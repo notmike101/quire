@@ -41,7 +41,10 @@ describe('truncateInput', () => {
     // engines for pathologically deep structures). The cap must not crash the
     // publish; the input is kept as-is (the server's iterative walkStrings
     // still redacts it).
-    const evil: unknown = { toJSON: () => { throw new Error('boom'); } };
+    const evil: unknown = {
+      /** Throw during serialization to exercise the unchanged-input fallback. */
+      toJSON: () => { throw new Error('boom'); },
+    };
     expect(() => JSON.stringify(evil)).toThrow();
     expect(truncateInput(evil)).toBe(evil);
   });

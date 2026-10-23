@@ -37,6 +37,7 @@ Format reference: https://pnpm.io/lockfile.
 | Task | Command |
 |---|---|
 | Install | `pnpm install` |
+| Documentation lint | `pnpm lint` (JavaScript, TypeScript, Vue; `--max-warnings 0`) |
 | Typecheck all | `pnpm typecheck` (`tsc` / `vue-tsc --noEmit` per package) |
 | Test all | `pnpm test` (unit for all packages + e2e; e2e needs Docker) |
 | Build all | `pnpm build` |
@@ -47,6 +48,7 @@ Format reference: https://pnpm.io/lockfile.
 **The full green gate** — the repo's completion bar, run before pushing:
 
 ```bash
+pnpm lint                                       # zero documentation errors or warnings
 pnpm typecheck                                  # 4/4 packages
 pnpm --filter @quire/cli test                   # unit
 pnpm --filter @quire/server test                # unit (needs db:test:up)

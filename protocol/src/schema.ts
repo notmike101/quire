@@ -9,21 +9,48 @@ import {
   type SharePageV1,
 } from './model.js';
 
+/** Identifies malformed fields in decoded share protocol objects. */
 export class ProtocolError extends Error {
+  /**
+   * Create an error describing a rejected protocol field.
+   *
+   * @param message - Validation context and the invalid field name.
+   */
   constructor(message: string) {
     super(message);
     this.name = 'ProtocolError';
   }
 }
 
+/**
+ * Reject an invalid protocol field with its containing object's location.
+ *
+ * @param where - Path or object name used to locate the invalid value.
+ * @param field - Field that failed validation.
+ * @throws {ProtocolError} Always throws the contextual validation error.
+ */
 function fail(where: string, field: string): never {
   throw new ProtocolError(`${where}: invalid ${field}`);
 }
 
+/**
+ * Test whether an unknown value is a nonnegative integer.
+ *
+ * @param v - Value to test before using it as a count or sequence number.
+ * @returns Whether the value is a number, an integer, and at least zero.
+ */
 function isNonNegInt(v: unknown): v is number {
   return typeof v === 'number' && Number.isInteger(v) && v >= 0;
 }
 
+/**
+ * Validate a message's protocol fields without interpreting its parts.
+ *
+ * @param m - Untrusted decoded message.
+ * @param where - Message path included in validation errors.
+ * @returns A message containing the validated fields and original parts array.
+ * @throws {ProtocolError} If a required message field is malformed.
+ */
 function messageFields(m: unknown, where: string): ShareMessageV1 {
   if (typeof m !== 'object' || m === null) fail(where, 'message');
   const rec = m as Record<string, unknown>;
@@ -38,6 +65,14 @@ function messageFields(m: unknown, where: string): ShareMessageV1 {
   };
 }
 
+/**
+ * Validate the sequence coordinates and preview for a user-message rail entry.
+ *
+ * @param e - Untrusted decoded rail entry.
+ * @param where - Entry path included in validation errors.
+ * @returns The validated rail entry fields.
+ * @throws {ProtocolError} If an entry field is malformed.
+ */
 function entryFields(e: unknown, where: string): RailUserEntryV1 {
   if (typeof e !== 'object' || e === null) fail(where, 'entry');
   const rec = e as Record<string, unknown>;
@@ -48,6 +83,13 @@ function entryFields(e: unknown, where: string): RailUserEntryV1 {
   };
 }
 
+/**
+ * Validate a decoded share page and its bounded, nonempty message array.
+ *
+ * @param v - Untrusted decoded page object.
+ * @returns A page with validated protocol metadata and message fields.
+ * @throws {ProtocolError} If metadata, message fields, or message count are invalid.
+ */
 export function parseSharePage(v: unknown): SharePageV1 {
   if (typeof v !== 'object' || v === null) fail('page', 'root');
   const root = v as Record<string, unknown>;
@@ -66,6 +108,13 @@ export function parseSharePage(v: unknown): SharePageV1 {
   };
 }
 
+/**
+ * Validate a decoded manifest's metadata, counts, and redaction totals.
+ *
+ * @param v - Untrusted decoded manifest object.
+ * @returns The manifest's validated fields.
+ * @throws {ProtocolError} If a required field or redaction count is invalid.
+ */
 export function parseShareManifest(v: unknown): ShareManifestV1 {
   if (typeof v !== 'object' || v === null) fail('manifest', 'root');
   const root = v as Record<string, unknown>;
@@ -91,6 +140,13 @@ export function parseShareManifest(v: unknown): ShareManifestV1 {
   };
 }
 
+/**
+ * Validate a decoded rail index segment and its bounded entry array.
+ *
+ * @param v - Untrusted decoded index segment object.
+ * @returns A segment with validated protocol metadata and user-message entries.
+ * @throws {ProtocolError} If metadata, entry fields, or entry count are invalid.
+ */
 export function parseShareIndexSegment(v: unknown): ShareIndexSegmentV1 {
   if (typeof v !== 'object' || v === null) fail('index', 'root');
   const root = v as Record<string, unknown>;

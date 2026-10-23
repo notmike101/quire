@@ -3,6 +3,12 @@ import postgres from 'postgres';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import * as schema from './schema.js';
 
+/**
+ * Create a schema-aware database handle backed by a ten-connection pool.
+ *
+ * @param databaseUrl - PostgreSQL connection URL.
+ * @returns The Drizzle database handle.
+ */
 export function makeDb(databaseUrl: string) {
   const client = postgres(databaseUrl, { max: 10 });
   return drizzle(client, { schema });
@@ -10,6 +16,11 @@ export function makeDb(databaseUrl: string) {
 
 export type Db = ReturnType<typeof makeDb>;
 
+/**
+ * Apply pending migrations from the server working directory's drizzle folder.
+ *
+ * @param db - Database handle to migrate.
+ */
 export async function migrateDb(db: Db): Promise<void> {
   // CWD-relative (not import.meta.url-relative): the server is bundled by tsup
   // into a single dist/index.js, so a URL relative to the source file would

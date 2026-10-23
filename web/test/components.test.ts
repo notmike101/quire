@@ -14,14 +14,23 @@ import type { ShareMessage, SharePart, RailUserEntry } from '../src/api';
 // Capturing IntersectionObserver: records every constructed instance so a
 // test can fire its callback against real (stubbed) entries.
 let ioCapture: unknown[] = [];
+/** Capture observer callbacks so rail visibility changes can be driven explicitly. */
 class CapturingIntersectionObserver {
   readonly cb: IntersectionObserverCallback;
+  /**
+   * Register the instance and retain its callback for test-controlled notifications.
+   *
+   * @param cb - Visibility callback supplied by the mounted component.
+   */
   constructor(cb: IntersectionObserverCallback) {
     this.cb = cb;
     ioCapture.push(this);
   }
+  /** Accept target observation without scheduling browser visibility events. */
   observe(): void {}
+  /** Accept target removal without maintaining native observation state. */
   unobserve(): void {}
+  /** Accept teardown of the resource-free observer stub. */
   disconnect(): void {}
 }
 
@@ -433,9 +442,13 @@ describe('ImagePart', () => {
   });
 });
 
-// Build a full-share user index (seq + preview) plus the matching loaded
-// messages. `loadedCount` controls how many user messages are actually in the
-// DOM (the rest are in the index but not yet loaded — the lazy-load case).
+/**
+ * Build a full rail index and a configurable prefix of loaded user/reply pairs.
+ *
+ * @param userTexts - User turns in transcript order.
+ * @param loadedCount - Number of user turns whose messages are initially loaded.
+ * @returns Full navigation index and the loaded prefix of transcript messages.
+ */
 function railFixture(userTexts: string[], loadedCount = userTexts.length) {
   const userIndex: RailUserEntry[] = [];
   const messages: ShareMessage[] = [];
@@ -451,6 +464,13 @@ function railFixture(userTexts: string[], loadedCount = userTexts.length) {
   return { userIndex, messages: loaded };
 }
 
+/**
+ * Adapt a fixture to rail props with an optional pagination simulation.
+ *
+ * @param fixture - Navigation entries and currently loaded messages.
+ * @param ensure - Callback that makes an unloaded target available.
+ * @returns Rail props with a no-op loader when all relevant targets already exist.
+ */
 function railProps(fixture: ReturnType<typeof railFixture>, ensure?: (target: { chunkSeq: number; seq: number }) => Promise<void>) {
   return {
     userIndex: fixture.userIndex,
@@ -486,6 +506,7 @@ describe('MessageRail', () => {
     });
     let scrolled: Element | null = null;
     const orig = Element.prototype.scrollIntoView;
+    /** Record the element selected as the composite-identity scroll target. */
     Element.prototype.scrollIntoView = function (this: Element) { scrolled = this; };
     const w = mount(MessageRail, {
       props: {
@@ -535,6 +556,11 @@ describe('MessageRail', () => {
     let scrolled: Element | null = null;
     let opts: ScrollToOptions | undefined;
     const orig = Element.prototype.scrollIntoView;
+    /**
+     * Capture the selected message and the requested scroll behavior.
+     *
+     * @param o - Scroll options passed by the rail.
+     */
     Element.prototype.scrollIntoView = function (this: Element, o?: ScrollToOptions) {
       scrolled = this;
       opts = o;
@@ -563,6 +589,7 @@ describe('MessageRail', () => {
     });
     let scrolled: Element | null = null;
     const orig = Element.prototype.scrollIntoView;
+    /** Record which newly loaded message the rail scrolls into view. */
     Element.prototype.scrollIntoView = function (this: Element) {
       scrolled = this;
     };

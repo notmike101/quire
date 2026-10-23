@@ -18,9 +18,21 @@ export default defineConfig({
     {
       name: 'node-sqlite-shim',
       enforce: 'pre',
+      /**
+       * Route SQLite builtin imports around Vite's incomplete builtin inventory.
+       *
+       * @param id - Requested module identifier.
+       * @returns Virtual SQLite identifier for matching imports, otherwise undefined.
+       */
       resolveId(id) {
         if (id === 'node:sqlite' || id === 'sqlite' || id === SQLITE_ID) return SQLITE_ID;
       },
+      /**
+       * Load the virtual SQLite module through Node's native require.
+       *
+       * @param id - Resolved module identifier.
+       * @returns Module source for the SQLite shim, otherwise undefined.
+       */
       load(id) {
         if (id !== SQLITE_ID) return;
         return [

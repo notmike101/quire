@@ -3,7 +3,12 @@ import type { Db } from './client.js';
 import { deleteExpiredV2 } from '../share-v2/store.js';
 import { v2Metrics } from '../metrics.js';
 
-/** Hourly: hard-delete v2 uploads abandoned before finalize (state 'uploading', >24h old). */
+/**
+ * Hard-delete unfinished uploads older than 24 hours and record the cleanup count.
+ *
+ * @param db - Database containing uploading shares.
+ * @returns The number of deleted uploads.
+ */
 export async function cleanupStaleV2Uploads(db: Db): Promise<number> {
   const rows = await db.execute(sql`delete from shares_v2 where state = 'uploading' and created_at < now() - interval '24 hours' returning 1`);
   const n = rows.count ?? 0;
@@ -16,6 +21,12 @@ export async function cleanupStaleV2Uploads(db: Db): Promise<number> {
 // an expired share from the moment it expires; this reclaims the rows within
 // an hour. Recorded under v2_stale_cleanup (status 0 = non-HTTP job run; the
 // deleted share count rides in `count`).
+/**
+ * Delete expired shares and record the count and elapsed cleanup time.
+ *
+ * @param db - Database containing sealed shares and cascading child rows.
+ * @returns The number of deleted shares.
+ */
 export async function cleanupExpiredV2(db: Db): Promise<number> {
   const t0 = Date.now();
   const n = await deleteExpiredV2(db);
