@@ -37,7 +37,7 @@ export function systemNoticeSession(): object {
       {
         role: 'user',
         time: new Date(Date.UTC(2026, 0, 1, 12, 0)).toISOString(),
-        parts: [{ type: 'system', text: 'Continue working toward the active session goal.\n\nhidden objective body' }],
+        parts: [{ type: 'system', text: 'Continue working toward the active session goal.\n\n' + 'Verify the changed behavior before finishing. '.repeat(8) + '\n\nhidden objective body' }],
       },
       {
         role: 'assistant',

@@ -303,13 +303,16 @@ test.describe('sealed share (v2) viewer', () => {
     await expect(page.getByText('chunk1 message 3', { exact: true })).toBeVisible();
   });
 
-  test('a system part renders as a collapsed notice, not a user bubble', async ({ page, request }) => {
+  test('system notices show a short preview and expand their full content', async ({ page, request }) => {
     const { url } = await createV2Share(request, { session: systemNoticeSession() });
     await page.goto(url);
     await expect(page.getByRole('heading', { name: 'System Notice Session' })).toBeVisible();
-    await expect(page.getByText('goal continuation', { exact: true })).toBeVisible({ timeout: 15000 });
+    const notice = page.getByRole('button', { name: /Continue working toward the active session goal/ });
+    await expect(notice).toBeVisible({ timeout: 15000 });
+    await expect(notice).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByText('hidden objective body')).toHaveCount(0);
-    await page.getByRole('button', { name: /goal continuation/ }).click();
+    await notice.click();
+    await expect(notice).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByText('hidden objective body')).toBeVisible();
   });
 
@@ -340,11 +343,12 @@ test.describe('sealed share (v2) viewer', () => {
     await page.goto(url);
     await expect(page.getByRole('heading', { name: 'Tool Image Session' })).toBeVisible();
     await expect(page.getByText('Here is what the file shows.')).toBeVisible();
-    const toolCard = page.locator('div.rounded-lg.border');
+    const toolCard = page.getByRole('button', { name: /1 image/ });
     await expect(toolCard).toBeVisible({ timeout: 15000 });
-    await expect(toolCard.getByText('1 image')).toBeVisible();
+    await expect(toolCard).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.tool-group')).toHaveCount(0);
     await expect(page.locator('img.image-part-img')).toHaveCount(0);
-    await toolCard.getByRole('button').click();
+    await toolCard.click();
     const img = page.locator('img.image-part-img');
     await expect(img).toHaveCount(1);
     await expect(img).toHaveAttribute('src', TINY_PNG_DATA_URI);
