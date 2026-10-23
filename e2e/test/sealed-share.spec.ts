@@ -293,6 +293,98 @@ test.describe('sealed share (v2) viewer', () => {
     await expect(page.getByText('Message 119', { exact: true })).toBeVisible({ timeout: 15000 });
   });
 
+  test('an opened tool output stays visible when more calls load and the group is reopened', async ({ page, request }) => {
+    const firstOutput = '  <output data-kind="pagination">& first result</output>\n    indented line  \n\n';
+    const secondOutput = 'Second call output stays collapsed.';
+    const { url } = await createV2Share(request, {
+      session: {
+        sessionId: 'sess_paginated_tools',
+        title: 'Paginated Tool Session',
+        model: 'test-model',
+        messages: [
+          ...Array.from({ length: 49 }, (_, i) => ({
+            role: i === 0 ? 'user' : 'assistant',
+            time: new Date(Date.UTC(2026, 0, 1, 12, i)).toISOString(),
+            parts: [{ type: 'text', text: i === 0 ? 'Inspect both files.' : `Context message ${i}.` }],
+          })),
+          {
+            role: 'assistant',
+            time: '2026-01-01T12:49:00.000Z',
+            parts: [{
+              type: 'tool',
+              tool: 'Read',
+              callID: 'first-read',
+              status: 'completed',
+              input: { file_path: 'src/first.ts' },
+              output: firstOutput,
+            }],
+          },
+          {
+            role: 'assistant',
+            time: '2026-01-01T12:50:00.000Z',
+            parts: [{
+              type: 'tool',
+              tool: 'Read',
+              callID: 'second-read',
+              status: 'completed',
+              input: { file_path: 'src/second.ts' },
+              output: secondOutput,
+            }],
+          },
+          {
+            role: 'assistant',
+            time: '2026-01-01T12:51:00.000Z',
+            parts: [{ type: 'text', text: 'Both files inspected.' }],
+          },
+        ],
+      },
+    });
+    const { promise: pageReleased, resolve: releasePage } = Promise.withResolvers<void>();
+    await page.route('**/blobs/page/1', async (route) => {
+      await pageReleased;
+      await route.continue();
+    });
+    const pageRequested = page.waitForRequest('**/blobs/page/1');
+    try {
+      await page.goto(url);
+      await expect(page.getByRole('heading', { name: 'Paginated Tool Session' })).toBeVisible();
+      const firstCall = page.getByRole('button', { name: /^Read file Read · src\/first\.ts$/ });
+      const output = page.locator('pre').filter({ hasText: '<output data-kind="pagination">' });
+      await expect(firstCall).toHaveAttribute('aria-expanded', 'false');
+      await expect(output).toHaveCount(0);
+      await expect(page.locator('.tool-group')).toHaveCount(0);
+      await Promise.all([
+        pageRequested,
+        page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)),
+      ]);
+      await firstCall.click();
+      await expect(output).toBeVisible();
+      await expect.poll(() => output.textContent()).toBe(firstOutput);
+
+      releasePage();
+      const group = page.locator('.tool-group');
+      const groupButton = group.getByRole('button', { name: /2 calls/ });
+      const secondCall = group.getByRole('button', { name: /^Read file Read · src\/second\.ts$/ });
+      await expect(groupButton).toHaveAttribute('aria-expanded', 'true');
+      await expect(firstCall).toHaveAttribute('aria-expanded', 'true');
+      await expect(output).toBeVisible();
+      await expect.poll(() => output.textContent()).toBe(firstOutput);
+      await expect(secondCall).toHaveAttribute('aria-expanded', 'false');
+      await expect(group.locator('pre').filter({ hasText: secondOutput })).toHaveCount(0);
+      await expect(page.getByText('Both files inspected.', { exact: true })).toBeVisible();
+
+      await groupButton.click();
+      await expect(groupButton).toHaveAttribute('aria-expanded', 'false');
+      await expect(output).toBeHidden();
+      await groupButton.click();
+      await expect(firstCall).toHaveAttribute('aria-expanded', 'true');
+      await expect(output).toBeVisible();
+      await expect(secondCall).toHaveAttribute('aria-expanded', 'false');
+    } finally {
+      releasePage();
+    }
+  });
+
   test('a two-chunk v2 share renders messages from both chunks in order', async ({ page, request }) => {
     const { url } = await createV2ChunkedShare(request, { perChunk: 3 });
     await page.goto(url);

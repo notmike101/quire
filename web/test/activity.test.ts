@@ -51,15 +51,31 @@ describe('activity panels', () => {
     w.unmount();
   });
 
-  it('updates an existing expanded group as more calls arrive', async () => {
+  it('preserves opened output and individual disclosure choices as calls arrive', async () => {
     const w = mount(AssistantMessage, { props: { message: message([read]) } });
     await flushPromises();
     await w.findComponent(ToolCard).find('button').trigger('click');
+    expect(w.text()).toContain('private full source');
     await w.setProps({ message: message([read, failed]) });
     await flushPromises();
     expect(w.findAll('.tool-group')).toHaveLength(1);
     expect(w.findAllComponents(ToolCard)).toHaveLength(2);
     expect(w.find('.tool-group').text()).toContain('1 failed');
+    expect(w.text()).toContain('private full source');
+    expect(w.findAllComponents(ToolCard)[0]!.find('button').attributes('aria-expanded')).toBe('true');
+    expect(w.findAllComponents(ToolCard)[1]!.find('button').attributes('aria-expanded')).toBe('false');
+
+    await w.find('.tool-group > button').trigger('click');
+    expect(w.text()).not.toContain('private full source');
+    await w.find('.tool-group > button').trigger('click');
+    expect(w.text()).toContain('private full source');
+
+    await w.findAllComponents(ToolCard)[0]!.find('button').trigger('click');
+    await w.findAllComponents(ToolCard)[1]!.find('button').trigger('click');
+    await w.find('.tool-group > button').trigger('click');
+    await w.find('.tool-group > button').trigger('click');
+    expect(w.text()).not.toContain('private full source');
+    expect(w.text()).toContain('Full diagnostic details');
     w.unmount();
   });
 

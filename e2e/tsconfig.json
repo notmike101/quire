@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.base.json",
-  "compilerOptions": { "module": "ESNext", "moduleResolution": "Bundler", "lib": ["ES2022", "DOM", "DOM.Iterable"] },
+  "compilerOptions": { "module": "ESNext", "moduleResolution": "Bundler", "lib": ["ES2022", "ES2024.Promise", "DOM", "DOM.Iterable"] },
   "include": ["src", "test", "playwright.config.ts"]
 }

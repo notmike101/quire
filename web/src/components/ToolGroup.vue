@@ -6,6 +6,8 @@ import ToolCard from './ToolCard.vue';
 
 const props = defineProps<{ parts: SharePart[] }>();
 const open = ref(false);
+// Runs grow by appending calls; keep disclosure state outside remounted cards.
+const expandedCalls = ref<boolean[]>([]);
 const previews = computed(() => props.parts.map(toolPreview));
 const title = computed(() => {
   const titles = [...new Set(previews.value.map((preview) => preview.title))];
@@ -16,7 +18,7 @@ const failures = computed(() => props.parts.filter(toolFailed));
 </script>
 
 <template>
-  <ToolCard v-if="parts.length === 1" v-model:open="open" :part="parts[0]!" />
+  <ToolCard v-if="parts.length === 1" v-model:open="open" :part="parts[0]!" @update:open="expandedCalls[0] = $event" />
   <div v-else class="tool-group my-3 overflow-hidden rounded-lg border border-neutral-200 text-sm dark:border-neutral-800" :class="{ 'border-red-300 dark:border-red-900': failures.length }">
     <button class="block w-full text-left" :aria-expanded="open" @click="open = !open">
       <span class="flex min-w-0 items-start gap-2 px-3 py-2.5">
@@ -32,7 +34,7 @@ const failures = computed(() => props.parts.filter(toolFailed));
       </span>
     </button>
     <div v-if="open" class="border-t border-neutral-200 px-3 py-1 dark:border-neutral-800">
-      <ToolCard v-for="(part, i) in parts" :key="part.callID ?? i" :part="part" />
+      <ToolCard v-for="(part, i) in parts" :key="part.callID ?? i" v-model:open="expandedCalls[i]" :part="part" />
     </div>
   </div>
 </template>
