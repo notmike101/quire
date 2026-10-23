@@ -5,11 +5,17 @@ to Codex desktop and CLI. Both are thin wrappers around the `quire` CLI.
 
 ## Prerequisites
 
-1. Build and link the CLI so `quire` is on your PATH:
+1. From the repository root, build and link the CLI so `quire` is on your PATH:
    ```sh
    pnpm --filter @quire/cli build
-   pnpm --filter @quire/cli link --global   # or: npm i -g @quire/cli once published
+   pnpm add --global "link:./cli"
    ```
+   This uses `add --global` because newer pnpm versions do not support
+   `link --global`. For an absolute path on Windows, use
+   `pnpm add --global "link:D:/quire/cli"` instead.
+   If pnpm reports a missing global bin directory, run `pnpm setup`, reopen
+   your terminal, and retry. Rebuild after CLI source changes; no relinking
+   is needed while the repository stays at the same path.
 2. Point the CLI at your Quire server:
    ```sh
    export QUIRE_SERVER_URL=https://<your-host>

@@ -100,6 +100,9 @@ required; `PORT` defaults to `8787`.
 
 ## CLI
 
+For CLI build and global-link instructions, see the
+[plugin README prerequisites](plugin/README.md#prerequisites).
+
 ```bash
 quire setup                # prints the server .env block + a config example
 quire publish --current    # shape session, confirm, publish

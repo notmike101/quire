@@ -23,4 +23,4 @@ quire publish --current --harness codex <inferred flags> --yes
 
 If the user supplies a real task ID, replace `--current` with that ID. Never pass the user's free-text request as a positional argument. Always include `--harness codex` and `--yes`; do not ask the user to relay or answer a CLI prompt.
 
-Report the published URL, generated password when present, expiration when set, and redaction summary. If `quire` is unavailable, tell the user to install it with `npm i -g @quire/cli` (or link this repository's CLI package) and stop.
+Report the published URL, generated password when present, expiration when set, and redaction summary. If `quire` is unavailable, point the user to the build and global-link instructions in `plugin/README.md#prerequisites` (`pnpm --filter @quire/cli build`, then `pnpm add --global "link:./cli"` from the repository root) and stop.

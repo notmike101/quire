@@ -23,4 +23,4 @@ Share the current session using the Quire CLI. You drive this end-to-end — **d
 
 3. **Report the result to the user:** the share URL, the generated password (if one was created), the expiration (if set), and the redaction summary. Do not ask for confirmation — the share is already live.
 
-4. If the `quire` CLI is not on PATH, tell the user to install it (`npm i -g @quire/cli` after publishing, or `pnpm link --global` from the repo's `cli/` package) and stop.
+4. If the `quire` CLI is not on PATH, point the user to the build and global-link instructions in `plugin/README.md#prerequisites` (`pnpm --filter @quire/cli build`, then `pnpm add --global "link:./cli"` from the repository root) and stop.
