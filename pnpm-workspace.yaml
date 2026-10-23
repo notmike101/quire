@@ -5,3 +5,10 @@ packages:
   - e2e
   - plugin
   - protocol
+
+overrides:
+  esbuild: 0.28.2
+
+allowBuilds:
+  argon2: true
+  esbuild: true
