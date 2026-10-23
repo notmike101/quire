@@ -87,7 +87,7 @@ Operational runbook — migration, metrics, rollback, backup/restore:
 
 ## Quick start (local dev)
 
-Use Node 22.18+, Node 24.11+, or Node 26+ and the pnpm version pinned in
+Use Node 22.22.2+, Node 24.15.0+, or Node 26+ and the pnpm version pinned in
 `package.json`. pnpm settings (dependency overrides and native-build approvals)
 live in `pnpm-workspace.yaml`.
 
