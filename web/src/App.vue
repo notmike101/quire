@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useMessages } from './composables/useMessages';
 import { messageAnchorId, type ShareMessage, type SharePart } from './api';
 import { createDataSource } from './share-data-source';
@@ -16,6 +16,21 @@ const shareId = window.location.pathname.split('/').filter(Boolean).pop() ?? '';
 const fragment = window.location.hash.replace(/^#/, '');
 const { state, meta, messages, userIndex, loadingMore, errorMessage, passwordError, loadFirst, loadMore, ensureLoadedThrough, submitPassword } =
   useMessages(createDataSource(shareId, fragment));
+
+// Assistant message boundaries are harness storage details, not activity boundaries.
+// Recompute over loaded pages so a run can continue when the next page arrives.
+const displayMessages = computed(() => {
+  const out: ShareMessage[] = [];
+  for (const message of messages.value) {
+    const last = out[out.length - 1];
+    if (last?.role === 'assistant' && message.role === 'assistant') {
+      for (const part of message.parts) last.parts.push(part);
+    } else {
+      out.push(message.role === 'assistant' ? { ...message, parts: [...message.parts] } : message);
+    }
+  }
+  return out;
+});
 
 const sentinel = ref<HTMLElement | null>(null);
 const observer = new IntersectionObserver(
@@ -85,7 +100,7 @@ function userParts(message: ShareMessage): SharePart[] {
       <div class="mx-auto flex w-full max-w-[800px] items-stretch">
         <MessageRail :user-index="userIndex" :messages="messages" :ensure-loaded-through="ensureLoadedThrough" />
         <main class="min-w-0 flex-1 px-4 pb-16">
-          <template v-for="message in messages" :key="messageAnchorId(message)">
+          <template v-for="message in displayMessages" :key="messageAnchorId(message)">
             <div v-if="message.role === 'user'" :id="messageAnchorId(message)" class="msg-target">
               <UserMessage :parts="userParts(message)" />
             </div>

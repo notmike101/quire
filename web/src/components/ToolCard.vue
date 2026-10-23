@@ -1,18 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import CodeBlock from './CodeBlock.vue';
-import type { ShareImage, SharePart } from '../api';
+import type { SharePart } from '../api';
 import { isSafeImageSrc } from '../lib/imgsrc';
+import { toolPreview, toolFailed, toolErrorPreview } from '../lib/tool-preview';
 
 const props = defineProps<{ part: SharePart }>();
-const open = ref(false);
+const open = defineModel<boolean>('open', { default: false });
 
-const statusClass = computed(() => {
-  const s = props.part.status;
-  if (s === 'completed') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300';
-  if (s === 'error') return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300';
-  return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300';
-});
+const preview = computed(() => toolPreview(props.part));
+const failed = computed(() => toolFailed(props.part));
 
 function inputText(part: SharePart): string {
   if (part.input === undefined || part.input === null) return '';
@@ -28,14 +25,16 @@ function fmtBytes(n: number | undefined): string {
 </script>
 
 <template>
-  <div class="my-2 rounded-lg border border-neutral-200 text-sm dark:border-neutral-800">
-    <button class="flex w-full items-center gap-2 px-3 py-2 text-left" @click="open = !open">
-      <span class="font-mono text-xs text-neutral-500 dark:text-neutral-400">{{ open ? '▾' : '▸' }}</span>
-      <span class="font-medium">{{ part.tool ?? 'tool' }}</span>
-      <span class="rounded-full px-2 py-0.5 text-xs" :class="statusClass">{{ part.status ?? 'pending' }}</span>
-      <span v-if="part.images && part.images.length > 0" class="ml-auto text-xs text-neutral-400 dark:text-neutral-500">
-        {{ part.images.length }} image{{ part.images.length > 1 ? 's' : '' }}
+  <div class="my-2 overflow-hidden rounded-lg border text-sm" :class="failed ? 'border-red-300 bg-red-50/70 dark:border-red-800 dark:bg-red-950/30' : 'border-neutral-200 dark:border-neutral-800'">
+    <button class="flex w-full items-start gap-2 px-3 py-2 text-left" :aria-expanded="open" @click="open = !open">
+      <span class="pt-0.5 font-mono text-xs text-neutral-500 dark:text-neutral-400" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
+      <span class="min-w-0 flex-1">
+        <span class="block break-words font-medium">{{ preview.title }}</span>
+        <span class="mt-0.5 block break-all font-mono text-xs text-neutral-500 dark:text-neutral-400">{{ part.tool ?? 'tool' }}<template v-if="preview.detail"> · {{ preview.detail }}</template></span>
+        <span v-if="failed" class="mt-1 block break-words text-xs text-red-800 dark:text-red-200">{{ toolErrorPreview(part) }}</span>
+        <span v-if="part.images?.length" class="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">{{ part.images.length }} image{{ part.images.length > 1 ? 's' : '' }}</span>
       </span>
+      <span v-if="failed" class="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/60 dark:text-red-200">Failed</span>
     </button>
     <div v-if="open" class="space-y-2 border-t border-neutral-200 p-3 dark:border-neutral-800">
       <CodeBlock v-if="inputText(part)" :code="inputText(part)" />

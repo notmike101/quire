@@ -63,6 +63,26 @@ describe('App', () => {
     expect(w.html()).toContain('hello from user');
   });
 
+  it('groups calls across assistant messages and chunks without crossing user turns', async () => {
+    const tool = (path: string) => ({ type: 'tool', tool: 'read', input: { path } });
+    mockFetch(await v2Routes([
+      { chunkSeq: 0, seq: 1, role: 'user', time: null, parts: [{ type: 'text', text: 'Inspect files' }] },
+      { chunkSeq: 0, seq: 2, role: 'assistant', time: null, parts: [tool('first.ts')] },
+      { chunkSeq: 1, seq: 1, role: 'assistant', time: null, parts: [tool('second.ts')] },
+      { chunkSeq: 1, seq: 2, role: 'user', time: null, parts: [{ type: 'text', text: 'Next turn' }] },
+      { chunkSeq: 1, seq: 3, role: 'assistant', time: null, parts: [tool('third.ts')] },
+    ], USER_INDEX));
+    const w = mount(App);
+    await vi.waitFor(() => expect(w.findAll('.tool-group')).toHaveLength(1));
+    expect(w.findAll('.tool-group')[0]!.text()).toContain('2 calls');
+    expect(w.find('#msg-1-2').text()).toContain('Next turn');
+    await w.find('.tool-group button').trigger('click');
+    expect(w.find('.tool-group').text()).toContain('first.ts');
+    expect(w.find('.tool-group').text()).toContain('second.ts');
+    expect(w.find('.tool-group').text()).not.toContain('third.ts');
+    w.unmount();
+  });
+
   it('shows the password gate when the share is protected', async () => {
     mockFetch({
       [`/api/v2/public/shares/${SHARE_ID}/bootstrap`]: { status: 401, body: { error: { code: 'needs_password', message: 'This share is password protected' } } },

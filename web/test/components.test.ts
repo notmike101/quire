@@ -55,12 +55,10 @@ describe('renderMarkdown', () => {
     expect(html2).not.toContain('<a ');
   });
 
-  it('keeps http/https/mailto/relative links (Round 4)', async () => {
+  it('keeps explicit web and email links', async () => {
     expect(await renderMarkdown('[a](https://example.com)')).toContain('href="https://example.com"');
     expect(await renderMarkdown('[a](http://example.com)')).toContain('href="http://example.com"');
     expect(await renderMarkdown('[a](mailto:x@example.com)')).toContain('href="mailto:x@example.com"');
-    expect(await renderMarkdown('[a](/relative/path)')).toContain('href="/relative/path"');
-    expect(await renderMarkdown('[a](#fragment)')).toContain('href="#fragment"');
   });
 
   it('drops obfuscated javascript: links (entity-encoded colon) (Round 4)', async () => {
@@ -90,9 +88,6 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('<a ');
     expect(html).not.toContain('href="//');
     expect(html).toContain('x');
-    // A same-origin path with `//` mid-path is still allowed.
-    const ok = await renderMarkdown('[a](/a//b)');
-    expect(ok).toContain('href="/a//b"');
   });
 
   it('drops /assets/ traversal image srcs in the viewer (Round 8)', async () => {
@@ -175,14 +170,10 @@ describe('isSafeHref (Round 5 guard hardening)', () => {
     expect(isSafeHref(String.fromCharCode(0x9f) + 'javascript:alert(1)')).toBe(false);
   });
 
-  it('still allows http/https/mailto and same-origin relative URLs', () => {
+  it('allows explicit http/https/mailto URLs', () => {
     expect(isSafeHref('https://example.com')).toBe(true);
     expect(isSafeHref('http://example.com')).toBe(true);
     expect(isSafeHref('mailto:x@example.com')).toBe(true);
-    expect(isSafeHref('/relative/path')).toBe(true);
-    expect(isSafeHref('./rel/path')).toBe(true);
-    expect(isSafeHref('#fragment')).toBe(true);
-    expect(isSafeHref('?q=1')).toBe(true);
   });
 
   it('still rejects other executable schemes and empty', () => {
@@ -209,9 +200,6 @@ describe('isSafeHref (Round 5 guard hardening)', () => {
     expect(isSafeHref('\\\\evil.example')).toBe(false);
   });
 
-  it('still allows a same-origin path that contains // mid-path (Round 8)', () => {
-    expect(isSafeHref('/a//b')).toBe(true);
-  });
 });
 
 describe('isSafeImageSrc (Round 8 /assets/ traversal)', () => {
@@ -251,37 +239,19 @@ describe('UserMessage', () => {
       props: {
         parts: [
           { type: 'text', text: 'real user text' },
-          { type: 'system', text: 'Continue working toward the active session goal.\nobjective body' },
+          { type: 'system', text: 'Continue working toward the active session goal.\n' + 'Detailed instructions. '.repeat(20) },
         ],
       },
     });
     expect(w.text()).toContain('real user text');
-    // The notice chip is collapsed by default: its label shows, the body does not.
-    expect(w.text()).toContain('goal continuation');
-    expect(w.text()).not.toContain('objective body');
+    const fullText = 'Continue working toward the active session goal.\n' + 'Detailed instructions. '.repeat(20).trimEnd();
+    expect(w.text()).not.toContain(fullText);
     await w.find('button').trigger('click');
-    expect(w.text()).toContain('objective body');
+    expect(w.text()).toContain(fullText);
+    w.unmount();
   });
 });
 
-describe('SystemNotice', () => {
-  it('is collapsed by default and expands on click', async () => {
-    const w = mount(SystemNotice, { props: { text: 'hidden harness note' } });
-    expect(w.text()).not.toContain('hidden harness note');
-    await w.find('button').trigger('click');
-    expect(w.text()).toContain('hidden harness note');
-  });
-
-  it('labels goal-continuation reminders', () => {
-    const w = mount(SystemNotice, { props: { text: 'Continue working toward the active session goal.' } });
-    expect(w.text()).toContain('goal continuation');
-  });
-
-  it('falls back to a generic label', () => {
-    const w = mount(SystemNotice, { props: { text: 'some other note' } });
-    expect(w.text()).toContain('system reminder');
-  });
-});
 
 describe('ToolCard', () => {
   const part: SharePart = { type: 'tool', tool: 'Bash', status: 'completed', input: { command: 'ls' }, output: 'file1\nfile2' };
@@ -289,15 +259,17 @@ describe('ToolCard', () => {
   it('is collapsed by default and expands on click', async () => {
     const w = mount(ToolCard, { props: { part: { ...part } } });
     expect(w.text()).toContain('Bash');
-    expect(w.text()).toContain('completed');
     expect(w.text()).not.toContain('file1');
     await w.find('button').trigger('click');
     expect(w.text()).toContain('file1');
   });
 
-  it('shows an error chip for failed tools', () => {
-    const w = mount(ToolCard, { props: { part: { ...part, status: 'error' } } });
-    expect(w.find('span.rounded-full').classes()).toContain('bg-red-100');
+  it('shows failure details without exposing the entire output', () => {
+    const w = mount(ToolCard, { props: { part: { ...part, status: 'error', output: 'Permission denied\nLong diagnostic body' } } });
+    expect(w.find('button').text()).toContain('Permission denied');
+    expect(w.text()).not.toContain('Long diagnostic body');
+    expect(w.find('button').attributes('aria-expanded')).toBe('false');
+    w.unmount();
   });
 
   it('renders attached images inside the collapsible body', async () => {
@@ -377,18 +349,16 @@ describe('AssistantMessage', () => {
     expect(w.text()).toContain('Read');
   });
 
-  it('renders a system part as a collapsed notice', async () => {
-    const message: ShareMessage = {
-      chunkSeq: 0,
-      seq: 2,
-      role: 'assistant',
-      time: null,
-      parts: [{ type: 'system', text: 'Continue working toward the active session goal.\nhidden body' }],
-    };
-    const w = mount(AssistantMessage, { props: { message } });
+  it('keeps full system content collapsed behind its preview', async () => {
+    const text = 'Continue working toward the active session goal.\n' + 'Detailed harness instructions. '.repeat(20);
+    const w = mount(AssistantMessage, { props: { message: {
+      chunkSeq: 0, seq: 2, role: 'assistant', time: null, parts: [{ type: 'system', text }],
+    } } });
     await flushPromises();
-    expect(w.text()).toContain('goal continuation');
-    expect(w.text()).not.toContain('hidden body');
+    expect(w.text()).not.toContain(text);
+    await w.find('button').trigger('click');
+    expect(w.text()).toContain(text.trimEnd());
+    w.unmount();
   });
 
   it('renders a reasoning part as a collapsed thinking chip', async () => {

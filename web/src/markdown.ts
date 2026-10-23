@@ -24,40 +24,31 @@ function getHighlighter(): Promise<Highlighter> {
 // Round 4: markdown-it emits an explicit `[x](javascript:…)` link as a clickable
 // <a href> (html:false only blocks raw HTML, not markdown links). A malicious
 // session owner could craft a transcript with such a link and the reader would
-// execute it on click. Only http/https/mailto/relative URLs are allowed; any
-// other scheme (javascript:, data:, vbscript:, file:) is stripped.
+// execute it on click. Only explicit http/https/mailto URLs are allowed; local
+// paths and all other schemes are stripped, preserving the label.
 // Round 5: harden the guard so it no longer depends on markdown-it's normalizeLink
 // to neutralize scheme-hiding. The old regex treated any href WITHOUT a matching
 // `scheme:` prefix as "relative" — so a C0-control-prefixed `javascript:`
 // (e.g. "\u0001javascript:…", which trim() does not strip) fell through to the
 // relative branch and was allowed; only markdown-it percent-encoding the control
 // char downstream stopped it, and that is third-party behavior this app neither
-// controls nor tests. Now: reject any control character outright, then resolve
-// with the browser's own URL parser and allow only http/https/mailto or a
-// same-origin relative result. Exported for direct unit testing of the guard
+// controls nor tests. Reject control characters outright, then parse without a
+// base so relative destinations cannot become web URLs. Exported for direct
+// unit testing of the guard
 // (markdown-it normalizes hrefs before the renderer sees them, so the raw
 // control-char bypass can only be exercised against the function itself).
 export function isSafeHref(href: string): boolean {
   const h = href.trim();
   if (h === '') return false;
-  // A real relative path or allowed scheme never contains a control char; its
-  // presence is the signature of a hidden-scheme attempt.
+  // An allowed URL never contains a control char; its presence can hide a scheme.
   if (/[\u0000-\u001f\u007f-\u009f]/.test(h)) return false;
-  // Round 8 (D1): a protocol-relative URL (`//evil.example/x`) resolves against
-  // the base below to https://evil.example/x and would pass the https: allow —
-  // it leaves the origin. The WHATWG parser also treats a leading `\\` as an
-  // authority in special schemes, so both forms are rejected. A same-origin
-  // relative path never STARTS with either (a `//` mid-path is fine).
-  if (h.startsWith('//') || h.startsWith('\\\\')) return false;
   let u: URL;
   try {
-    u = new URL(h, 'https://invalid.invalid');
+    u = new URL(h);
   } catch {
     return false;
   }
-  if (u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:') return true;
-  // Same-origin relative URL (resolved against the opaque base above).
-  return u.origin === 'https://invalid.invalid';
+  return u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:';
 }
 
 export async function renderMarkdown(text: string): Promise<string> {
@@ -66,12 +57,13 @@ export async function renderMarkdown(text: string): Promise<string> {
   // gif|png|jpeg|webp) lacks the `jpg` and `avif` aliases isSafeImageSrc
   // accepts, so ![x](data:image/jpg;base64,…) was parsed with an emptied src
   // and dropped to literal alt text. Accept exactly the data URIs the viewer
-  // renders and delegate everything else to the default. The final gates stay
+  // renders and local file links (so their labels survive without anchors), and
+  // delegate everything else to the default. The final gates stay
   // in the renderers — isSafeImageSrc for image tokens, isSafeHref for link
   // tokens (a data: LINK is still dropped, so this opens no link vector).
   const defaultValidate = md.validateLink;
   md.validateLink = (url: string) =>
-    /^data:image\/(png|jpeg|jpg|webp|gif|avif);base64,/i.test(url.trim()) || defaultValidate(url);
+    /^(?:data:image\/(png|jpeg|jpg|webp|gif|avif);base64,|file:)/i.test(url.trim()) || defaultValidate(url);
   const defaultFence = md.renderer.rules.fence!;
   const hl = await getHighlighter();
   const loaded = hl.getLoadedLanguages();
