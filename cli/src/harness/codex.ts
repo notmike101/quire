@@ -79,6 +79,38 @@ function stringifyOutput(value: unknown): string {
   }
 }
 
+function resultFailed(value: unknown, commandResult = false): boolean {
+  const result = commandResult ? parseJsonOrString(value) : value;
+  if (Array.isArray(result)) {
+    // Codex exec wraps command envelopes in text blocks; never inspect read/file content.
+    return commandResult && result.some((item: unknown) => {
+      if (!item || typeof item !== 'object') return false;
+      const block = item as Record<string, unknown>;
+      if (!['input_text', 'output_text', 'text'].includes(String(block.type)) || typeof block.text !== 'string') return false;
+      const envelope = parseJsonOrString(block.text);
+      if (envelope && typeof envelope === 'object' && !Array.isArray(envelope)) {
+        const command = envelope as Record<string, unknown>;
+        return typeof command.chunk_id === 'string' && typeof command.wall_time_seconds === 'number' && resultFailed(command);
+      }
+      return resultFailed(block.text, true);
+    });
+  }
+  if (result && typeof result === 'object') {
+    const record = result as Record<string, unknown>;
+    if (record.is_error === true || record.isError === true) return true;
+    if (typeof record.status === 'string' && /^(?:error|failed|failure)$/i.test(record.status)) return true;
+    if (typeof record.exit_code === 'number' && Number.isFinite(record.exit_code) && record.exit_code !== 0) return true;
+    if (record.metadata && typeof record.metadata === 'object') {
+      const { exit_code } = record.metadata as Record<string, unknown>;
+      if (typeof exit_code === 'number' && Number.isFinite(exit_code) && exit_code !== 0) return true;
+    }
+    return false;
+  }
+  if (!commandResult || typeof result !== 'string') return false;
+  const exit = /^Chunk ID: [^\r\n]+\r?\nWall time: [^\r\n]+\r?\nProcess exited with code (-?\d+)\r?\n(?:Final output|Output):(?:\r?\n|$)/.exec(result);
+  return exit !== null && Number(exit[1]) !== 0;
+}
+
 function contentParts(content: unknown, budget: ImageBudget, taskRoot: string): ShapedPart[] {
   if (!Array.isArray(content)) return [];
   const parts: ShapedPart[] = [];
@@ -225,7 +257,7 @@ export function makeCodexAdapter(
             pushMessage(payload.role, contentParts(payload.content, imageBudget, row.cwd), event.timestamp);
           } else if (payload.type === 'reasoning') {
             const text = reasoningSummary(payload.summary);
-            if (text) pushMessage('assistant', [{ type: 'reasoning', text }], event.timestamp);
+            pushMessage('assistant', [{ type: 'reasoning', text: text ?? '' }], event.timestamp);
           } else if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
             const callID = typeof payload.call_id === 'string' ? payload.call_id : undefined;
             const name = typeof payload.name === 'string' ? payload.name : '?';
@@ -239,12 +271,17 @@ export function makeCodexAdapter(
               input: truncateInput(parseJsonOrString(rawInput)),
             };
             if (typeof payload.status === 'string') part.status = payload.status;
+            if (payload.is_error === true || payload.isError === true) part.status = 'error';
             pushMessage('assistant', [part], event.timestamp);
             if (callID) calls.set(callID, part);
           } else if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') {
             const callID = typeof payload.call_id === 'string' ? payload.call_id : undefined;
             const part = callID ? calls.get(callID) : undefined;
-            if (part) part.output = truncateOutput(stringifyOutput(payload.output));
+            if (part) {
+              const commandResult = /(?:^|\.)(?:exec|exec_command|write_stdin|shell|shell_command)$/.test(part.tool ?? '');
+              if (resultFailed(payload) || resultFailed(payload.output, commandResult)) part.status = 'error';
+              part.output = truncateOutput(stringifyOutput(payload.output));
+            }
           }
         }
       } catch {

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { makeCodexAdapter } from '../src/harness/codex.js';
 
 const tempDirs: string[] = [];
 
@@ -221,6 +222,140 @@ describe('Codex rollout shaping', () => {
     expect(JSON.stringify(session)).not.toContain('hidden developer');
     expect(JSON.stringify(session)).not.toContain('hidden reasoning');
     expect(JSON.stringify(session)).not.toContain('internal agent traffic');
+  });
+
+  it.each([{ summary: [] }, { summary: [{ type: 'summary_text', text: '' }] }, { summary: undefined }])('keeps an empty thinking marker without exposing encrypted reasoning ($summary)', async ({ summary }) => {
+    const { dbPath, parentRollout } = makeStateDb();
+    writeFileSync(parentRollout, [
+      event({ type: 'reasoning', summary, encrypted_content: 'unpublished encrypted reasoning' }),
+      event({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Visible answer' }] }),
+    ].join('\n'));
+    const session = await makeCodexAdapter(dbPath, {}).loadSession('parent-new');
+    expect(session.messages[0]?.parts).toEqual([{ type: 'reasoning', text: '' }]);
+    expect(session.messages[1]?.parts).toEqual([{ type: 'text', text: 'Visible answer' }]);
+    expect(JSON.stringify(session)).not.toContain('unpublished encrypted reasoning');
+  });
+
+  it.each([
+    ['result status', { status: 'failed', output: 'denied' }],
+    ['snake-case error flag', { is_error: true, output: 'denied' }],
+    ['camel-case error flag', { isError: true, output: 'denied' }],
+    ['result exit code', { exit_code: -1, output: 'command failed' }],
+    ['result metadata', { metadata: { exit_code: 1 }, output: 'command failed' }],
+    ['structured output status', { output: { status: 'error', content: 'denied' } }],
+    ['JSON output error flag', { output: '{"is_error":true,"content":"denied"}' }],
+    ['structured output error flag', { output: { isError: true, content: 'denied' } }],
+    ['command exit code', { output: { exit_code: 2, output: 'command failed' } }],
+    ['command metadata', { output: '{"output":"command failed","metadata":{"exit_code":1}}' }],
+  ])('marks explicit failure from %s', async (_name, result) => {
+    const { dbPath, parentRollout } = makeStateDb();
+    writeFileSync(parentRollout, [
+      event({ type: 'function_call', call_id: 'failed', name: 'exec_command', arguments: '{"cmd":"false"}', status: 'completed' }),
+      event({ type: 'function_call_output', call_id: 'failed', ...result }),
+    ].join('\n'));
+
+    const session = await makeCodexAdapter(dbPath, {}).loadSession('parent-new');
+
+    expect(session.messages[0]?.parts[0]?.status).toBe('error');
+  });
+
+  it.each([{ isError: true }, { is_error: true }, { status: 'failed' }])('keeps native read result failure metadata %#', async (output) => {
+    const { dbPath, parentRollout } = makeStateDb();
+    writeFileSync(parentRollout, [
+      event({ type: 'function_call', call_id: 'read', name: 'read_file', arguments: '{}' }),
+      event({ type: 'function_call_output', call_id: 'read', output }),
+    ].join('\n'));
+
+    const session = await makeCodexAdapter(dbPath, {}).loadSession('parent-new');
+
+    expect(session.messages[0]?.parts[0]?.status).toBe('error');
+  });
+
+  it.each(['is_error', 'isError'])('keeps explicit %s call failures without a result', async (flag) => {
+    const { dbPath, parentRollout } = makeStateDb();
+    writeFileSync(parentRollout, event({
+      type: 'function_call', call_id: 'failed', name: 'read_file', arguments: '{}', [flag]: true,
+    }));
+
+    const session = await makeCodexAdapter(dbPath, {}).loadSession('parent-new');
+
+    expect(session.messages[0]?.parts[0]?.status).toBe('error');
+  });
+
+  it('recognizes structured command envelopes inside Codex exec text blocks', async () => {
+    const { dbPath, parentRollout } = makeStateDb();
+    writeFileSync(parentRollout, [
+      event({ type: 'custom_tool_call', call_id: 'exec', name: 'exec', input: 'tools.exec_command({"cmd":"false"})' }),
+      event({ type: 'custom_tool_call_output', call_id: 'exec', output: [
+        { type: 'input_text', text: 'Script completed\nWall time 0.1 seconds\nOutput:\n' },
+        { type: 'input_text', text: '{"chunk_id":"abc","wall_time_seconds":0.1,"exit_code":1,"output":"denied"}' },
+      ] }),
+    ].join('\n'));
+
+    const session = await makeCodexAdapter(dbPath, {}).loadSession('parent-new');
+
+    expect(session.messages[0]?.parts[0]?.status).toBe('error');
+  });
+
+  it('reads command failure envelopes before truncating output', async () => {
+    const { dbPath, parentRollout } = makeStateDb();
+    writeFileSync(parentRollout, [
+      event({ type: 'function_call', call_id: 'exec', name: 'exec_command', arguments: '{"cmd":"false"}' }),
+      event({ type: 'function_call_output', call_id: 'exec', output: {
+        output: 'x'.repeat(30_000),
+        metadata: { exit_code: 1 },
+      } }),
+      event({ type: 'function_call', call_id: 'wait', name: 'write_stdin', arguments: '{"session_id":1,"chars":""}' }),
+      event({ type: 'function_call_output', call_id: 'wait', output: 'Chunk ID: abc\nWall time: 0.1 seconds\nProcess exited with code 2\nFinal output:\ndenied' }),
+    ].join('\n'));
+
+    const session = await makeCodexAdapter(dbPath, {}).loadSession('parent-new');
+
+    expect(session.messages.map((message) => message.parts[0]?.status)).toEqual(['error', 'error']);
+    expect(session.messages[0]?.parts[0]?.output).toContain('[truncated ');
+    expect(session.messages[0]?.parts[0]?.output).not.toContain('exit_code');
+  });
+
+  it.each([
+    ['read_file', 'error: failed to parse the example'],
+    ['read_file', '{"isError":true}'],
+    ['read_file', '{"is_error":true}'],
+    ['read_file', '{"exit_code":1}'],
+    ['read_file', '{"metadata":{"exit_code":1}}'],
+    ['read_file', '{"status":"error"}'],
+    ['read_file', { data: { isError: true, metadata: { exit_code: 1 }, status: 'error' } }],
+    ['read_file', { content: '{"isError":true}', path: 'example.json' }],
+    ['read_file', 'Chunk ID: abc\nWall time: 0.1 seconds\nProcess exited with code 1\nFinal output:\nquoted documentation'],
+    ['read_file', [{ type: 'input_text', text: '{"exit_code":1,"output":"quoted documentation"}' }]],
+    ['exec_command', 'Process exited with code 1'],
+    ['exec_command', 'Chunk ID: abc\nWall time: 0.1 seconds\nProcess exited with code 0\nFinal output:\nProcess exited with code 1\nerror: failed example'],
+    ['exec_command', { exit_code: 0, output: 'error: a message in a successful command' }],
+    ['exec_command', { metadata: { exit_code: null }, output: 'unknown result' }],
+    ['exec_command', { exit_code: 'unknown', is_error: false, isError: false, output: 'unknown result' }],
+    ['exec_command', null],
+    ['read_file', { content: [{ type: 'text', text: '{"isError":true}' }] }],
+  ])('does not infer failure for nonfailure %s result %#', async (name, output) => {
+    const { dbPath, parentRollout } = makeStateDb();
+    writeFileSync(parentRollout, [
+      event({ type: 'function_call', call_id: 'ok', name, arguments: '{}' }),
+      event({ type: 'function_call_output', call_id: 'ok', output }),
+    ].join('\n'));
+
+    const session = await makeCodexAdapter(dbPath, {}).loadSession('parent-new');
+
+    expect(session.messages[0]?.parts[0]?.status).toBeUndefined();
+  });
+
+  it('preserves an explicitly failed call when a later output reports success', async () => {
+    const { dbPath, parentRollout } = makeStateDb();
+    writeFileSync(parentRollout, [
+      event({ type: 'function_call', call_id: 'failed', name: 'exec_command', arguments: '{}', status: 'failed' }),
+      event({ type: 'function_call_output', call_id: 'failed', status: 'completed', is_error: false, output: { exit_code: 0 } }),
+    ].join('\n'));
+
+    const session = await makeCodexAdapter(dbPath, {}).loadSession('parent-new');
+
+    expect(session.messages[0]?.parts[0]?.status).toBe('failed');
   });
 
   it('skips malformed JSONL lines and keeps later valid events', async () => {
