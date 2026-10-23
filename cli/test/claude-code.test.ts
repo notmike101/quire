@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { makeClaudeCodeAdapter } from '../src/harness/claude-code.js';
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const projectsDir = join(dir, 'fixtures'); // contains sample-session.jsonl directly
@@ -39,6 +40,37 @@ describe('claude-code adapter', () => {
     expect(a5.parts.map((p) => p.type)).toEqual(['reasoning', 'text']);
     expect(a5.parts[0]!.text).toBe('\nI should double-check the path.\n');
     expect(a5.parts[1]!.text).toBe('\nDone.');
+  });
+
+  it.each([
+    { flag: true, status: 'error' },
+    { flag: false, status: undefined },
+    { flag: undefined, status: undefined },
+  ])('preserves explicit tool failure $flag without changing output', async ({ flag, status }) => {
+    const tmp = mkdtempSync(join(tmpdir(), 'quire-cc-result-'));
+    try {
+      const output = '  Error: Permission denied\n    diagnostic details  \n\n';
+      const events = [
+        {
+          type: 'assistant', timestamp: '2026-01-01T12:00:00.000Z',
+          message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_result', name: 'Bash', input: { command: 'npm run check' } }] },
+        },
+        {
+          type: 'user', timestamp: '2026-01-01T12:00:01.000Z',
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_result', content: output, is_error: flag }] },
+        },
+      ];
+      writeFileSync(join(tmp, 'result-session.jsonl'), events.map((event) => JSON.stringify(event)).join('\n'));
+      const session = await makeClaudeCodeAdapter(tmp).loadSession('result-session');
+      expect(session.messages).toHaveLength(1);
+      const tool = session.messages[0]!.parts[0]!;
+      expect(tool.type).toBe('tool');
+      expect(tool.callID).toBe('toolu_result');
+      expect(tool.status).toBe(status);
+      expect(tool.output).toBe('  Error: Permission denied\n    diagnostic details  \n\n');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('splits a <system-reminder> user turn into a system part', async () => {

@@ -21,9 +21,10 @@ server before anything is stored or sent.
   syntax highlighting, infinite-scroll lazy loading (50 messages per page),
   and automatic dark mode via `prefers-color-scheme`. Consecutive tool calls
   form collapsible activity panels across message/page boundaries, with short
-  file/command previews and visible failure summaries. A single call has only
-  one disclosure. Opened tool details persist through pagination and group
-  reopening; completed assistant Markdown is retained when later pages load.
+  file/command previews and visible failure summaries, including explicit Claude
+  Code tool-result errors. A single call has only one disclosure. Opened tool
+  details persist through pagination and group reopening; completed assistant
+  Markdown is retained when later pages load.
   System reminders show a short preview; full tool and reminder
   details expand on demand. Empty thinking remains a plain label, not an empty
   dropdown. Raw tool output retains its original whitespace without renderer-added

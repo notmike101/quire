@@ -25,6 +25,7 @@ interface CcBlock {
   name?: string;
   input?: unknown;
   tool_use_id?: string;
+  is_error?: boolean;
   content?: unknown;
   source?: CcImageSource;
 }
@@ -243,6 +244,7 @@ function headEvents(file: string, maxLines: number, maxBytes = 256 * 1024): CcEv
               const part = lastAssistant?.parts.find((p) => p.type === 'tool' && p.callID === r.tool_use_id);
               if (part && part.type === 'tool') {
                 part.output = truncateOutput(toolResultText(r));
+                if (r.is_error === true) part.status = 'error';
                 // Images the tool returned (e.g. a screenshot) — emit after the
                 // tool part so the viewer shows the card, then the image.
                 const imgs = imagePartsFromToolResult(r, imageBudget);

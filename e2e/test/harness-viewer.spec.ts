@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { makeClaudeCodeAdapter } from '../../cli/src/harness/claude-code.js';
 import { makeCodexAdapter } from '../../cli/src/harness/codex.js';
 import { makeOmpAdapter } from '../../cli/src/harness/omp.js';
 import { createV2Share } from './helpers.js';
@@ -104,11 +105,44 @@ async function ompSession(dir: string) {
   return makeOmpAdapter().loadSession(exportPath);
 }
 
-for (const harness of ['Codex', 'OMP'] as const) {
+async function claudeCodeSession(dir: string) {
+  const sessionPath = join(dir, 'claude-viewer.jsonl');
+  const events: object[] = [{ type: 'summary', summary: 'Claude Code adapter viewer' }];
+  const message = (role: string, content: string | object[]) => {
+    events.push({ type: role, timestamp, message: { role, content, model: 'synthetic-model' } });
+  };
+  const text = (value: string) => ({ type: 'text', text: value });
+  const call = (id: string, name: string, input: object) => ({ type: 'tool_use', id, name, input });
+  const result = (tool_use_id: string, content: string, is_error = false) => ({ type: 'tool_result', tool_use_id, content, is_error });
+  message('user', 'Inspect the synthetic files.');
+  message('assistant', [
+    { type: 'thinking', thinking: 'Consider the synthetic fixture carefully.' },
+    { type: 'thinking', thinking: '' },
+    text('Before singleton.'),
+    call('single', 'Read', { file_path: 'src/singleton.ts', i: 'Inspect singleton output' }),
+  ]);
+  message('user', [result('single', singletonOutput)]);
+  message('assistant', [
+    text('Between singleton and batch.'),
+    call('batch-read', 'Read', { file_path: 'src/batch.ts' }),
+    call('batch-failed', 'Bash', { command: 'npm run check' }),
+  ]);
+  message('user', [
+    result('batch-read', 'Batch file contents'),
+    result('batch-failed', '  Error: Permission denied\n    diagnostic details  \n\n', true),
+  ]);
+  message('assistant', [text('After batch.')]);
+  message('user', 'Keep the final answer visible.');
+  message('assistant', [text(finalText)]);
+  writeFileSync(sessionPath, events.map((event) => JSON.stringify(event)).join('\n') + '\n');
+  return makeClaudeCodeAdapter(dir).loadSession('claude-viewer');
+}
+
+for (const [harness, loadSession] of [['Codex', codexSession], ['OMP', ompSession], ['Claude Code', claudeCodeSession]] as const) {
   test(`${harness} adapter output survives sealed ingestion and keeps activity disclosures local`, async ({ page, request }) => {
     const dir = mkdtempSync(join(tmpdir(), 'quire-harness-viewer-'));
     try {
-      const session = await (harness === 'Codex' ? codexSession(dir) : ompSession(dir));
+      const session = await loadSession(dir);
       const { url } = await createV2Share(request, { session });
       await page.goto(url);
       await expect(page.getByRole('heading', { name: `${harness} adapter viewer` })).toBeVisible();
@@ -117,6 +151,7 @@ for (const harness of ['Codex', 'OMP'] as const) {
       const group = page.locator('.tool-group');
       await expect(singleton).toBeVisible();
       await expect(singleton).toHaveAttribute('aria-expanded', 'false');
+      await expect(singleton).not.toContainText('Failed');
       await expect(group.getByRole('button', { name: /Inspect singleton output/ })).toHaveCount(0);
       await expect(group).toHaveCount(1);
       const groupButton = group.getByRole('button');
@@ -155,10 +190,13 @@ for (const harness of ['Codex', 'OMP'] as const) {
       await singleton.click();
 
       await groupButton.click();
-      const batchRead = group.getByRole('button', { name: /^Read file (?:workspace\.read_file|read) · src\/batch\.ts$/ });
+      const batchRead = group.getByRole('button', { name: /^Read file (?:workspace\.read_file|read|Read) · src\/batch\.ts$/ });
       const batchFailure = group.getByRole('button', { name: /Run command.*npm run check.*Failed/ });
       await expect(batchRead).toHaveAttribute('aria-expanded', 'false');
       await expect(batchFailure).toHaveAttribute('aria-expanded', 'false');
+      await expect(batchRead).not.toContainText('Failed');
+      await expect(batchFailure.getByText('Failed', { exact: true })).toBeVisible();
+      await expect(batchFailure.getByText('Error: Permission denied', { exact: true })).toBeVisible();
       await expect(group.locator('pre')).toHaveCount(0);
       await expect(page.getByText('Final answer stays visible.', { exact: false })).toBeVisible();
     } finally {
