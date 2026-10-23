@@ -87,12 +87,18 @@ Operational runbook — migration, metrics, rollback, backup/restore:
 
 ## Quick start (local dev)
 
-Use Node ≥22 and the pnpm version pinned in `package.json`. pnpm settings
-(dependency overrides and native-build approvals) live in `pnpm-workspace.yaml`.
+Use Node 22.18+, Node 24.11+, or Node 26+ and the pnpm version pinned in
+`package.json`. pnpm settings (dependency overrides and native-build approvals)
+live in `pnpm-workspace.yaml`.
 
 The pinned pnpm 12 writes a [two-document lockfile](https://pnpm.io/lockfile):
 package-manager metadata first, project dependencies last. Keep both documents
 and use the pinned package manager rather than a global older pnpm.
+
+Dependencies use current stable releases. The viewer alone uses TypeScript
+6.0.3: current `vue-tsc` 3.3.13 imports `typescript/lib/tsc`, which TypeScript 7
+no longer exports. Other packages use TypeScript 7; upgrade the viewer when
+`vue-tsc` supports it.
 
 ```bash
 pnpm install

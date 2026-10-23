@@ -1,8 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { blobAad, layoutBlob, parseBlob, type BlobKind } from '@quire/protocol';
-// @types/node 22 keeps BufferSource inside the webcrypto namespace; alias the standard definition.
-type BufferSource = ArrayBufferView | ArrayBuffer;
+type BufferSource = NodeJS.BufferSource;
 const subtle = globalThis.crypto.subtle;
 async function importKey(key: Uint8Array) {
   return subtle.importKey('raw', key as BufferSource, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);

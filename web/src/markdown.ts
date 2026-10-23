@@ -1,5 +1,4 @@
 import MarkdownIt from 'markdown-it';
-import type { Token, RendererRule } from 'markdown-it';
 import { createHighlighter, type Highlighter } from 'shiki';
 import { isSafeImageSrc } from './lib/imgsrc';
 
@@ -89,16 +88,10 @@ export async function renderMarkdown(text: string): Promise<string> {
   // by renderToken), so there is no captured default to delegate to. When the
   // href is safe, delegate to slf.renderToken (the built-in renderer) which
   // emits the normal <a href> tag. When unsafe, drop the link entirely.
-  md.renderer.rules.link_open = (
-    tokens: Token[],
-    idx: number,
-    options: object,
-    _env: unknown,
-    slf: { renderToken: (tokens: Token[], idx: number, options: object) => string },
-  ): string => {
+  md.renderer.rules.link_open = (tokens, idx, options, _env, slf) => {
     const token = tokens[idx]!;
     const href = token.attrGet('href') ?? '';
-    if (!isSafeHref(href)) {
+    if (typeof href !== 'string' || !isSafeHref(href)) {
       // Drop the link entirely: render the label as plain text (no <a>).
       droppedLinks.add(idx);
       return '';
@@ -107,13 +100,7 @@ export async function renderMarkdown(text: string): Promise<string> {
   };
   // link_close mirrors link_open: when the matching open was dropped, the
   // default renderer would emit a stray </a> with no opening tag — drop it too.
-  md.renderer.rules.link_close = (
-    tokens: Token[],
-    idx: number,
-    options: object,
-    _env: unknown,
-    slf: { renderToken: (tokens: Token[], idx: number, options: object) => string },
-  ): string => {
+  md.renderer.rules.link_close = (tokens, idx, options, _env, slf) => {
     for (let i = idx - 1; i >= 0; i--) {
       if (tokens[i]!.type === 'link_open') {
         if (droppedLinks.has(i)) {
@@ -135,7 +122,7 @@ export async function renderMarkdown(text: string): Promise<string> {
   md.renderer.rules.image = (tokens, idx, options, env) => {
     const token = tokens[idx]!;
     const src = token.attrGet('src') ?? '';
-    if (!isSafeImageSrc(src)) {
+    if (typeof src !== 'string' || !isSafeImageSrc(src)) {
       return md.utils.escapeHtml(token.content);
     }
     return defaultImage(tokens, idx, options, env, md.renderer);
