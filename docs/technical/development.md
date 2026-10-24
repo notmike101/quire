@@ -51,7 +51,7 @@ For the test database created by `pnpm db:test:up`, use `postgres://quire:quire@
 
 ## Tests and builds
 
-- Unit tests: `pnpm --filter @quire/<server|cli|web|plugin> test` (substitute one package name).
+- Unit tests: `pnpm --filter @quire/<server|cli|web|plugin|protocol> test` (substitute one package name).
 - Server tests require the test database; stop it with `pnpm db:test:down` when finished. Test files run serially because database tests destructively reset tables.
 - E2E: `pnpm --filter @quire/e2e test` builds and drives `docker-compose.yml` plus `docker-compose.e2e.yml` on port `8790`, then tears the stack down. It uses a separate database from the server unit tests.
 - Builds: `pnpm build`, or select `@quire/cli`, `@quire/server`, or `@quire/web` with `--filter`.
@@ -67,6 +67,7 @@ pnpm --filter @quire/cli test
 pnpm --filter @quire/server test
 pnpm --filter @quire/web test
 pnpm --filter @quire/plugin test
+pnpm --filter @quire/protocol test
 pnpm --filter @quire/cli build
 pnpm --filter @quire/server build
 pnpm --filter @quire/web build
