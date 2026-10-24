@@ -9,8 +9,8 @@ import vueParser from 'vue-eslint-parser';
 
 const javascriptFiles = ['**/*.{js,mjs,cjs}'];
 
-// eslint-plugin-import@2.32.0 rule code calls SourceCode methods that
-/* ESLint 10 removed (getTokenOrCommentBefore and friends); fixupPluginRules
+/* eslint-plugin-import@2.32.0 rule code calls SourceCode methods that
+   ESLint 10 removed (getTokenOrCommentBefore and friends); fixupPluginRules
    restores them so a rule violation reports a diagnostic instead of crashing. */
 const fixedImportPlugin = fixupPluginRules(importPlugin);
 
@@ -99,14 +99,14 @@ export default [
     ...scopeToJavaScript(configJsdoc),
     {
         /* All JavaScript sources in this repo are Node scripts; the package
-           defaults to browser globals outside scripts/bin, so declare Node */
-        // globals for the Node helper scripts that live outside that convention.
+           defaults to browser globals outside scripts/bin, so declare Node
+           globals for the Node helper scripts that live outside that convention. */
         files: ['**/test/fixtures/**/*.{js,mjs,cjs}'],
         languageOptions: { globals: globals.nodeBuiltin },
     },
     {
-        // eslint-plugin-import@2.32.0's default resolver predates exports
-        /* maps: it cannot see ESM-only packages installed under pnpm (no
+        /* eslint-plugin-import@2.32.0's default resolver predates exports
+           maps: it cannot see ESM-only packages installed under pnpm (no
            "main" field), so no-unresolved false-positives on imports that
            Node itself resolves fine. */
         files: javascriptFiles,
