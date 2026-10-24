@@ -15,9 +15,18 @@
     "db:test:down": "node scripts/test-db.mjs down"
   },
   "devDependencies": {
+    "@eslint/compat": "2.1.1",
+    "@eslint/js": "^10.0.1",
+    "@notmike101/eslint-config-js": "file:vendor/eslint-configs/notmike101-eslint-config-js-4.1.0.tgz",
+    "@notmike101/eslint-config-jsdoc": "file:vendor/eslint-configs/notmike101-eslint-config-jsdoc-1.0.1.tgz",
+    "@stylistic/eslint-plugin": "^5.10.0",
     "@typescript-eslint/parser": "^8.72.0",
     "eslint": "^10.13.0",
+    "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-jsdoc": "^65.4.1",
+    "eslint-plugin-sort-class-members": "^1.22.1",
+    "eslint-plugin-unicorn": "64.0.0",
+    "globals": "^17.13.0",
     "vue-eslint-parser": "^10.4.1"
   }
 }
