@@ -21,21 +21,92 @@ const preview = computed(() => compactPreview(
 </script>
 
 <template>
-  <div class="my-2">
+  <div class="sys-notice">
     <button
-      class="flex w-full items-start gap-2 rounded-lg border border-neutral-200 px-3 py-2 text-left text-xs text-neutral-500 hover:text-neutral-700 dark:border-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
+      class="sys-toggle"
       :aria-expanded="open"
       @click="open = !open"
     >
-      <span class="font-mono" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
-      <span class="min-w-0">
-        <span class="block font-medium">{{ label }}</span>
-        <span v-if="preview" class="mt-1 block break-words">{{ preview }}</span>
+      <span class="sys-icon" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
+      <span class="sys-text">
+        <span class="sys-label">{{ label }}</span>
+        <span v-if="preview" class="sys-preview">{{ preview }}</span>
       </span>
     </button>
     <div
       v-if="open"
-      class="mt-1.5 whitespace-pre-wrap rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-xs leading-relaxed text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/40 dark:text-neutral-400"
+      class="sys-body"
     >{{ text }}</div>
   </div>
 </template>
+<style scoped>
+.sys-notice {
+  margin-block: 0.5rem;
+}
+.sys-toggle {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-neutral-200);
+  padding-inline: 0.75rem;
+  padding-block: 0.5rem;
+  text-align: left;
+  font-size: 0.75rem;
+  line-height: var(--lh-xs);
+  color: var(--color-neutral-500);
+}
+.sys-text {
+  min-width: 0;
+}
+@media (hover: hover) {
+  .sys-toggle:hover {
+    color: var(--color-neutral-700);
+  }
+}
+.sys-icon {
+  font-family: var(--font-mono);
+}
+.sys-label {
+  display: block;
+  font-weight: 500;
+}
+.sys-preview {
+  margin-top: 0.25rem;
+  display: block;
+  overflow-wrap: break-word;
+}
+.sys-body {
+  margin-top: 0.375rem;
+  white-space: pre-wrap;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-neutral-200);
+  background-color: var(--color-neutral-50);
+  padding: 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1.625;
+  color: var(--color-neutral-500);
+}
+@media (prefers-color-scheme: dark) {
+  .sys-toggle {
+    border-color: var(--color-neutral-800);
+    color: var(--color-neutral-400);
+  }
+  @media (hover: hover) {
+    .sys-toggle:hover {
+      color: var(--color-neutral-200);
+    }
+  }
+  .sys-body {
+    border-color: var(--color-neutral-800);
+    background-color: #17171766;
+    color: var(--color-neutral-400);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    .sys-body {
+      background-color: color-mix(in oklab, var(--color-neutral-900) 40%, transparent);
+    }
+  }
+}
+</style>

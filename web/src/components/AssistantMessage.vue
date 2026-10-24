@@ -42,7 +42,7 @@ watch(() => props.message.parts, async (source, _previous, onCleanup) => {
 </script>
 
 <template>
-  <div class="my-4 text-sm leading-relaxed">
+  <div class="assistant-body">
     <template v-for="(item, i) in parts" :key="i">
       <div v-if="item.kind === 'html'" class="prose-quire" v-html="item.html" />
       <ToolGroup v-else-if="item.kind === 'tools'" :parts="item.parts" />
@@ -52,3 +52,10 @@ watch(() => props.message.parts, async (source, _previous, onCleanup) => {
     </template>
   </div>
 </template>
+<style scoped>
+.assistant-body {
+  margin-block: 1rem;
+  font-size: 0.875rem;
+  line-height: 1.625;
+}
+</style>

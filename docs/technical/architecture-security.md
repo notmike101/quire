@@ -9,7 +9,7 @@ Quire is a pnpm workspace monorepo.
 | `server/` | Hono + Drizzle (Postgres) API, redaction engine, and access controls; serves the built viewer |
 | `cli/` | Publisher CLI with adapters for ZCode, Claude Code, Codex, and OMP |
 | `plugin/` | Claude Code/ZCode `/share` command and native Codex `$share` skill |
-| `web/` | Vue 3 + Vite + Tailwind CSS v4 read-only viewer |
+| `web/` | Vue 3 + Vite + hand-written scoped CSS read-only viewer |
 | `protocol/` | Shared sealed-share wire format and validation |
 | `e2e/` | Playwright full-stack tests against the Docker stack |
 

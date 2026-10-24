@@ -1,14 +1,242 @@
-@import "tailwindcss";
+/* Design tokens: the custom properties Tailwind's @theme used to emit; the
+   names are preserved because the rules below reference them. */
+:root {
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --lh-xs: calc(1 / 0.75);
+  --lh-sm: calc(1.25 / 0.875);
+  --lh-lg: calc(1.75 / 1.125);
+  --lh-xl: calc(2 / 1.25);
+  --color-red-50: oklch(97.1% .013 17.38);
+  --color-red-100: oklch(93.6% .032 17.717);
+  --color-red-200: oklch(88.5% .062 18.334);
+  --color-red-300: oklch(80.8% .114 19.571);
+  --color-red-400: oklch(70.4% .191 22.216);
+  --color-red-600: oklch(57.7% .245 27.325);
+  --color-red-800: oklch(44.4% .177 26.899);
+  --color-red-900: oklch(39.6% .141 25.723);
+  --color-red-950: oklch(25.8% .092 26.042);
+  --color-amber-100: oklch(96.2% .059 95.617);
+  --color-amber-300: oklch(87.9% .169 91.605);
+  --color-amber-400: oklch(82.8% .189 84.429);
+  --color-amber-600: oklch(66.6% .179 58.318);
+  --color-amber-700: oklch(55.5% .163 48.998);
+  --color-amber-900: oklch(41.4% .112 45.904);
+  --color-neutral-50: oklch(98.5% 0 none);
+  --color-neutral-100: oklch(97% 0 none);
+  --color-neutral-200: oklch(92.2% 0 none);
+  --color-neutral-300: oklch(87% 0 none);
+  --color-neutral-400: oklch(70.8% 0 none);
+  --color-neutral-500: oklch(55.6% 0 none);
+  --color-neutral-600: oklch(43.9% 0 none);
+  --color-neutral-700: oklch(37.1% 0 none);
+  --color-neutral-800: oklch(26.9% 0 none);
+  --color-neutral-900: oklch(20.5% 0 none);
+  --color-neutral-950: oklch(14.5% 0 none);
+  --color-white: #fff;
+}
 
-/* Tailwind v4's `dark:` variant is media-based by default: it tracks the
+/* Reset: transcribed from Tailwind v4.3.3 Preflight, kept first in the file so
+   every rule below overrides it. Dropped on purpose: the @layer plumbing, the
+   @property --tw-* registrations and their fallback block — nothing here reads
+   --tw-* variables any more. The dark theme stays media-based: it tracks the
    reader's `prefers-color-scheme` — no JS, no toggle (spec §7). */
+*,
+*::before,
+*::after,
+::backdrop {
+  box-sizing: border-box;
+  border: 0 solid;
+  margin: 0;
+  padding: 0;
+}
+::file-selector-button {
+  box-sizing: border-box;
+  border: 0 solid;
+  margin: 0;
+  padding: 0;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  tab-size: 4;
+  line-height: 1.5;
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+hr {
+  height: 0;
+  color: inherit;
+  border-top-width: 1px;
+}
+abbr:where([title]) {
+  text-decoration: underline dotted;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-size: inherit;
+  font-weight: inherit;
+}
+a {
+  color: inherit;
+  text-decoration: inherit;
+}
+b,
+strong {
+  font-weight: bolder;
+}
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+  font-size: 1em;
+}
+small {
+  font-size: 80%;
+}
+sub,
+sup {
+  vertical-align: baseline;
+  font-size: 75%;
+  line-height: 0;
+  position: relative;
+}
+sub {
+  bottom: -0.25em;
+}
+sup {
+  top: -0.5em;
+}
+table {
+  text-indent: 0;
+  border-color: inherit;
+  border-collapse: collapse;
+}
+::-moz-focusring:where(:not(iframe)) {
+  outline: auto;
+}
+progress {
+  vertical-align: baseline;
+}
+summary {
+  display: list-item;
+}
+ol,
+ul,
+menu {
+  list-style: none;
+}
+img,
+svg,
+video,
+canvas,
+audio,
+iframe,
+embed,
+object {
+  vertical-align: middle;
+  display: block;
+}
+img,
+video {
+  max-width: 100%;
+  height: auto;
+}
+button,
+input,
+select,
+optgroup,
+textarea {
+  font: inherit;
+  font-feature-settings: inherit;
+  font-variation-settings: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  opacity: 1;
+  background-color: transparent;
+  border-radius: 0;
+}
+::file-selector-button {
+  font: inherit;
+  font-feature-settings: inherit;
+  font-variation-settings: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  opacity: 1;
+  background-color: transparent;
+  border-radius: 0;
+  margin-inline-end: 4px;
+}
+:where(select:is([multiple], [size])) optgroup {
+  font-weight: bolder;
+}
+:where(select:is([multiple], [size])) optgroup option {
+  padding-inline-start: 20px;
+}
+::placeholder {
+  opacity: 1;
+  color: currentColor;
+}
+@supports (color: color-mix(in lab, red, red)) {
+  ::placeholder {
+    color: color-mix(in oklab, currentColor 50%, transparent);
+  }
+}
+textarea {
+  resize: vertical;
+}
+::-webkit-search-decoration {
+  -webkit-appearance: none;
+}
+::-webkit-date-and-time-value {
+  min-height: 1lh;
+  text-align: inherit;
+}
+::-webkit-datetime-edit {
+  display: inline-flex;
+  padding-block: 0;
+}
+::-webkit-datetime-edit-fields-wrapper {
+  padding: 0;
+}
+::-webkit-datetime-edit-year-field,
+::-webkit-datetime-edit-month-field,
+::-webkit-datetime-edit-day-field,
+::-webkit-datetime-edit-hour-field,
+::-webkit-datetime-edit-minute-field,
+::-webkit-datetime-edit-second-field,
+::-webkit-datetime-edit-millisecond-field,
+::-webkit-datetime-edit-meridiem-field {
+  padding-block: 0;
+}
+::-webkit-calendar-picker-indicator {
+  line-height: 1;
+}
+::-moz-ui-invalid {
+  box-shadow: none;
+}
+button,
+input:where([type="button"], [type="reset"], [type="submit"]) {
+  appearance: button;
+}
+:-webkit-inner-spin-button,
+:-webkit-outer-spin-button {
+  height: auto;
+}
+[hidden]:where(:not([hidden="until-found"])) {
+  display: none !important;
+}
 
-/* Paint html/body with the same theme-aware background as the min-h-screen
-   root so the browser canvas never shows through in the overscroll region or
-   the top margin of the short full-page states (password gate, expired,
-   not-found, error). Without this, dark-mode readers see a white band at the
-   top: the root div is dark but body/html are transparent, so the UA default
-   white canvas bleeds into the mt-24 margin above the card. */
+/* Paint html/body with the same theme-aware background as the root .app-shell
+   so the browser canvas never shows through in the overscroll region or the
+   top margin of the short full-page states (password gate, expired, not-found,
+   error). Without this, dark-mode readers see a white band at the top: the
+   root div is dark but body/html are transparent, so the UA default white
+   canvas bleeds through. */
 html,
 body {
   background-color: #ffffff;
@@ -16,13 +244,44 @@ body {
 @media (prefers-color-scheme: dark) {
   html,
   body {
-    background-color: #0a0a0a; /* neutral-950, matches the root div's dark:bg-neutral-950 */
+    background-color: #0a0a0a; /* matches the root .app-shell dark background */
   }
 }
 
-@theme {
-  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+/* Card shell shared by the password gate and the full-page states
+   (expired / not-found / error). */
+.page-wrap {
+  margin-inline: auto;
+  margin-top: 6rem;
+  width: 100%;
+  max-width: 24rem;
+  padding-inline: 1rem;
+}
+.page-card {
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-neutral-200);
+  padding: 1.5rem;
+}
+@media (prefers-color-scheme: dark) {
+  .page-card {
+    border-color: var(--color-neutral-800);
+  }
+}
+.page-title {
+  margin-bottom: 0.25rem;
+  font-size: 1.125rem;
+  line-height: var(--lh-lg);
+  font-weight: 600;
+}
+.page-sub {
+  font-size: 0.875rem;
+  line-height: var(--lh-sm);
+  color: var(--color-neutral-500);
+}
+@media (prefers-color-scheme: dark) {
+  .page-sub {
+    color: var(--color-neutral-400);
+  }
 }
 
 /* Shiki dual theme (github-light / github-dark). The renderer inlines
@@ -227,6 +486,11 @@ body {
   .rail-tip { display: none; }
 }
 
+
+/* Skeleton breathing animation (matches Tailwind's old animate-pulse). */
+@keyframes pulse {
+  50% { opacity: 0.5; }
+}
 
 /* Targeted user message: lands below the sticky header after a jump, and
    flashes briefly to confirm the jump landed. */

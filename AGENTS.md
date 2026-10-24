@@ -16,7 +16,7 @@ pnpm-workspace monorepo, five packages:
 | `server/` | Hono + Drizzle (Postgres) API, redaction engine, security layer; serves the built viewer |
 | `cli/` | `quire` publisher CLI with harness adapters (ZCode, Claude Code, Codex, OMP) |
 | `plugin/` | Claude Code/ZCode `/share` command and native Codex `$share` skill |
-| `web/` | Vue 3 + Vite + Tailwind v4 read-only viewer |
+| `web/` | Vue 3 + Vite + hand-written scoped CSS read-only viewer |
 | `e2e/` | Playwright full-stack tests (drives the Docker stack) |
 
 **Key security boundary:** the CLI *shapes* (size/relevance); the server

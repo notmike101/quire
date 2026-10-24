@@ -37,29 +37,183 @@ function fmtBytes(n: number | undefined): string {
 </script>
 
 <template>
-  <div class="my-2 overflow-hidden rounded-lg border text-sm" :class="failed ? 'border-red-300 bg-red-50/70 dark:border-red-800 dark:bg-red-950/30' : 'border-neutral-200 dark:border-neutral-800'">
-    <button class="flex w-full items-start gap-2 px-3 py-2 text-left" :aria-expanded="open" @click="open = !open">
-      <span class="pt-0.5 font-mono text-xs text-neutral-500 dark:text-neutral-400" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
-      <span class="min-w-0 flex-1">
-        <span class="block break-words font-medium">{{ preview.title }}</span>
-        <span class="mt-0.5 block break-all font-mono text-xs text-neutral-500 dark:text-neutral-400">{{ part.tool ?? 'tool' }}<template v-if="preview.detail"> · {{ preview.detail }}</template></span>
-        <span v-if="failed" class="mt-1 block break-words text-xs text-red-800 dark:text-red-200">{{ toolErrorPreview(part) }}</span>
-        <span v-if="part.images?.length" class="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">{{ part.images.length }} image{{ part.images.length > 1 ? 's' : '' }}</span>
+  <div class="tool-card" :class="{ failed }">
+    <button class="tool-head" :aria-expanded="open" @click="open = !open">
+      <span class="card-caret" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
+      <span class="tool-summary">
+        <span class="tool-name">{{ preview.title }}</span>
+        <span class="tool-target">{{ part.tool ?? 'tool' }}<template v-if="preview.detail"> · {{ preview.detail }}</template></span>
+        <span v-if="failed" class="tool-error">{{ toolErrorPreview(part) }}</span>
+        <span v-if="part.images?.length" class="tool-image-count">{{ part.images.length }} image{{ part.images.length > 1 ? 's' : '' }}</span>
       </span>
-      <span v-if="failed" class="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/60 dark:text-red-200">Failed</span>
+      <span v-if="failed" class="failed-badge">Failed</span>
     </button>
-    <div v-if="open" class="space-y-2 border-t border-neutral-200 p-3 dark:border-neutral-800">
+    <div v-if="open" class="tool-body">
       <CodeBlock v-if="inputText(part)" :code="inputText(part)" />
       <CodeBlock v-if="part.output" :code="part.output" />
-      <div v-if="part.images && part.images.length > 0" class="space-y-2 pt-1">
+      <div v-if="part.images && part.images.length > 0" class="tool-images">
         <div v-for="(img, i) in part.images" :key="i" class="image-part">
           <img v-if="isSafeImageSrc(img.src)" :src="img.src" :alt="img.alt ?? 'image'" loading="lazy" class="image-part-img" />
-          <div v-else class="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/40 dark:text-neutral-400">
+          <div v-else class="image-placeholder">
             <span>📷</span>
-            <span class="italic">image too large to embed{{ img.bytes ? ` (${fmtBytes(img.bytes)})` : '' }}</span>
+            <span class="placeholder-note">image too large to embed{{ img.bytes ? ` (${fmtBytes(img.bytes)})` : '' }}</span>
           </div>
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.tool-card {
+  margin-block: 0.5rem;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-neutral-200);
+  font-size: 0.875rem;
+  line-height: var(--lh-sm);
+}
+.tool-card.failed {
+  border-color: var(--color-red-300);
+  background-color: #fef2f2b3;
+}
+@supports (color: color-mix(in lab, red, red)) {
+  .tool-card.failed {
+    background-color: color-mix(in oklab, var(--color-red-50) 70%, transparent);
+  }
+}
+.tool-head {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding-inline: 0.75rem;
+  padding-block: 0.5rem;
+  text-align: left;
+}
+.card-caret {
+  padding-top: 0.125rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: var(--lh-xs);
+  color: var(--color-neutral-500);
+}
+.tool-summary {
+  min-width: 0;
+  flex: 1;
+}
+.tool-name {
+  display: block;
+  overflow-wrap: break-word;
+  font-weight: 500;
+}
+.tool-target {
+  margin-top: 0.125rem;
+  display: block;
+  word-break: break-all;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: var(--lh-xs);
+  color: var(--color-neutral-500);
+}
+.tool-error {
+  margin-top: 0.25rem;
+  display: block;
+  overflow-wrap: break-word;
+  font-size: 0.75rem;
+  line-height: var(--lh-xs);
+  color: var(--color-red-800);
+}
+.tool-image-count {
+  margin-top: 0.25rem;
+  display: block;
+  font-size: 0.75rem;
+  line-height: var(--lh-xs);
+  color: var(--color-neutral-500);
+}
+.failed-badge {
+  flex-shrink: 0;
+  border-radius: 2147483647px;
+  background-color: var(--color-red-100);
+  padding-inline: 0.5rem;
+  padding-block: 0.125rem;
+  font-size: 0.75rem;
+  line-height: var(--lh-xs);
+  font-weight: 500;
+  color: var(--color-red-800);
+}
+.tool-body {
+  border-color: var(--color-neutral-200);
+  border-top: 1px solid var(--color-neutral-200);
+  padding: 0.75rem;
+}
+.tool-body > :not(:last-child) {
+  margin-block-end: 0.5rem;
+}
+.tool-images {
+  padding-top: 0.25rem;
+}
+.tool-images > :not(:last-child) {
+  margin-block-end: 0.5rem;
+}
+.image-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-neutral-200);
+  background-color: var(--color-neutral-50);
+  padding-inline: 0.75rem;
+  padding-block: 0.5rem;
+  font-size: 0.75rem;
+  line-height: var(--lh-xs);
+  color: var(--color-neutral-500);
+}
+.placeholder-note {
+  font-style: italic;
+}
+@media (prefers-color-scheme: dark) {
+  .tool-card {
+    border-color: var(--color-neutral-800);
+  }
+  .tool-card.failed {
+    border-color: var(--color-red-800);
+    background-color: #4608094d;
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    .tool-card.failed {
+      background-color: color-mix(in oklab, var(--color-red-950) 30%, transparent);
+    }
+  }
+  .card-caret,
+  .tool-target,
+  .tool-image-count {
+    color: var(--color-neutral-400);
+  }
+  .tool-error {
+    color: var(--color-red-200);
+  }
+  .failed-badge {
+    background-color: #82181a99;
+    color: var(--color-red-200);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    .failed-badge {
+      background-color: color-mix(in oklab, var(--color-red-900) 60%, transparent);
+    }
+  }
+  .tool-body {
+    border-color: var(--color-neutral-800);
+  }
+  .image-placeholder {
+    border-color: var(--color-neutral-800);
+    background-color: #17171766;
+    color: var(--color-neutral-400);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    .image-placeholder {
+      background-color: color-mix(in oklab, var(--color-neutral-900) 40%, transparent);
+    }
+  }
+}
+</style>

@@ -497,7 +497,7 @@ test.describe('sealed share (v2) viewer', () => {
       await page.goto(url);
       await expect(page.getByRole('heading', { name: 'E2E Session' })).toBeVisible();
       const bg = await page.evaluate(() => {
-        const el = document.querySelector('div.min-h-screen');
+        const el = document.querySelector('div.app-shell');
         return el ? getComputedStyle(el).backgroundColor : null;
       });
       expect(bg, 'themed root element not found').not.toBeNull();
