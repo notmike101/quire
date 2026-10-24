@@ -4,6 +4,8 @@
 FROM node:22-alpine AS web-build
 WORKDIR /app
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+# The lockfile's file: tarball deps must exist even for filtered installs.
+COPY vendor/eslint-configs/ vendor/eslint-configs/
 COPY protocol/package.json protocol/
 COPY web/package.json web/
 RUN corepack enable && pnpm install --frozen-lockfile --filter @quire/web...
@@ -17,6 +19,8 @@ WORKDIR /app
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY protocol/package.json protocol/
 COPY server/package.json server/
+# The lockfile's file: tarball deps must exist even for filtered installs.
+COPY vendor/eslint-configs/ vendor/eslint-configs/
 RUN corepack enable && pnpm install --frozen-lockfile --filter @quire/server...
 COPY protocol/ protocol/
 COPY server/ server/
