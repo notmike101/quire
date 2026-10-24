@@ -12,22 +12,79 @@ function submit(): void {
 </script>
 
 <template>
-  <div class="mx-auto mt-24 w-full max-w-sm px-4">
-    <form class="rounded-xl border border-neutral-200 p-6 dark:border-neutral-800" @submit.prevent="submit">
-      <h1 class="mb-1 text-lg font-semibold">Password required</h1>
-      <p class="mb-4 text-sm text-neutral-500 dark:text-neutral-400">This share is password protected.</p>
+  <div class="page-wrap">
+    <form class="page-card" @submit.prevent="submit">
+      <h1 class="page-title">Password required</h1>
+      <p class="page-sub gate-intro">This share is password protected.</p>
       <input
         v-model="password"
         type="password"
-        class="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+        class="gate-input"
         placeholder="Password"
         autocomplete="off"
       />
-      <p v-if="error" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ error }}</p>
+      <p v-if="error" class="gate-error">{{ error }}</p>
       <button
         type="submit"
-        class="mt-4 w-full rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
+        class="gate-submit"
       >Unlock</button>
     </form>
   </div>
 </template>
+
+<style scoped>
+.gate-intro {
+  margin-bottom: 1rem;
+}
+.gate-input {
+  width: 100%;
+  border-radius: 0.375rem;
+  border: 1px solid var(--color-neutral-300);
+  background-color: var(--color-white);
+  padding-inline: 0.75rem;
+  padding-block: 0.5rem;
+  font-size: 0.875rem;
+  line-height: calc(1.25 / 0.875);
+}
+.gate-error {
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  line-height: calc(1.25 / 0.875);
+  color: var(--color-red-600);
+}
+.gate-submit {
+  margin-top: 1rem;
+  width: 100%;
+  border-radius: 0.375rem;
+  background-color: var(--color-neutral-900);
+  padding-inline: 1rem;
+  padding-block: 0.5rem;
+  font-size: 0.875rem;
+  line-height: calc(1.25 / 0.875);
+  font-weight: 500;
+  color: var(--color-white);
+}
+@media (hover: hover) {
+  .gate-submit:hover {
+    background-color: var(--color-neutral-700);
+  }
+}
+@media (prefers-color-scheme: dark) {
+  .gate-input {
+    border-color: var(--color-neutral-700);
+    background-color: var(--color-neutral-900);
+  }
+  .gate-error {
+    color: var(--color-red-400);
+  }
+  .gate-submit {
+    background-color: var(--color-neutral-100);
+    color: var(--color-neutral-900);
+  }
+  @media (hover: hover) {
+    .gate-submit:hover {
+      background-color: var(--color-white);
+    }
+  }
+}
+</style>
