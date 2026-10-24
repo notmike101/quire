@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f3ed" />
+    <meta
+      name="description"
+      content="Turn AI coding sessions into readable, shareable links. Quire works with Claude Code, Codex, ZCode, and Oh My Pi. Self-hosted, with redaction and access controls."
+    />
+    <meta
+      property="og:title"
+      content="Quire — Share the work behind the code."
+    />
+    <meta
+      property="og:description"
+      content="Your coding conversation, ready for someone else to read. Share sessions from Claude Code, Codex, ZCode, and Oh My Pi."
+    />
+    <meta property="og:type" content="website" />
+    <title>Quire — Share the work behind the code.</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header wrap">
+      <a class="wordmark" href="./" aria-label="Quire home"
+        ><span class="mark" aria-hidden="true">q</span>quire<span
+          class="wordmark-dot"
+          >.</span
+        ></a
+      >
+      <nav aria-label="Main navigation">
+        <a href="#experience">The experience</a>
+        <a href="https://github.com/notmike101/quire/tree/main/docs/technical"
+          >Docs</a
+        >
+        <a class="nav-github" href="https://github.com/notmike101/quire"
+          >GitHub <span aria-hidden="true">↗</span></a
+        >
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">
+            <span class="status-dot"></span> A good conversation deserves a
+            better link
+          </p>
+          <h1 id="hero-title">Share the work<br />behind <em>the code.</em></h1>
+          <p class="lede">
+            The bug hunt. The breakthrough. The explanation worth keeping. Turn
+            your AI coding sessions into a page someone else can actually
+            follow.
+          </p>
+          <div class="actions">
+            <a class="button" href="#start"
+              >Start sharing <span aria-hidden="true">↗</span></a
+            ><a class="text-link" href="#experience"
+              >Take a closer look <span aria-hidden="true">↓</span></a
+            >
+          </div>
+          <div class="hero-command">
+            <span aria-hidden="true">$</span
+            ><code>quire publish --current</code>
+          </div>
+          <p class="small-note">
+            Your server. Your conversations. A browser is all they need.
+          </p>
+        </div>
+
+        <div class="hero-art">
+          <div class="sheet-back" aria-hidden="true"></div>
+          <article
+            class="conversation"
+            aria-label="Illustrative shared conversation"
+          >
+            <div class="conversation-top">
+              <span
+                ><span class="tiny-mark" aria-hidden="true">q</span> quire /
+                shared conversation</span
+              ><span class="read-only">Read-only</span>
+            </div>
+            <div class="conversation-body">
+              <p class="eyebrow">A little context goes a long way</p>
+              <h2>Fixing a search that forgets</h2>
+              <p class="conversation-meta">
+                Claude Code <span>·</span> An example session
+              </p>
+              <div class="prompt">
+                My filters disappear when I go back. Can we make the search
+                shareable, too?
+              </div>
+              <p>
+                The filters only live in component state. I’ll put them in the
+                URL so going back restores the same search.
+              </p>
+              <details class="activity">
+                <summary>
+                  <span>Read file + 1 more</span
+                  ><small>2 calls · src/search/filters.ts</small>
+                </summary>
+                <div class="activity-output">
+                  <code
+                    >Read src/search/filters.ts<br />Run pnpm test --
+                    search-filters</code
+                  >
+                  <p>Store the selected filters in URL search parameters.</p>
+                </div>
+              </details>
+              <h3>Filters now travel with the link.</h3>
+              <pre><code><span class="code-keyword">const</span> params = <span class="code-keyword">new</span> URLSearchParams(
+  location.search
+);
+<span class="code-keyword">const</span> query = params.get(<span class="code-string">"q"</span>) ?? <span class="code-string">""</span>;</code></pre>
+              <p class="conversation-end">
+                Same search. Same context. Ready to pass along.
+              </p>
+            </div>
+            <div class="conversation-bottom">
+              <span class="status-dot"></span> A conversation, made
+              readable.<span aria-hidden="true">↗</span>
+            </div>
+          </article>
+          <p class="art-caption">
+            <span aria-hidden="true">↳</span> From your terminal to their next
+            open tab.
+          </p>
+        </div>
+      </section>
+
+      <section class="integrations wrap" aria-label="Supported coding tools">
+        <p class="eyebrow">Works where you already work</p>
+        <div class="tool-list">
+          <a
+            href="https://github.com/notmike101/quire/blob/main/plugin/README.md#install"
+            ><span class="tool-symbol" aria-hidden="true">✳</span>Claude Code
+            <code>/share</code></a
+          >
+          <a
+            href="https://github.com/notmike101/quire/blob/main/plugin/README.md#install"
+            ><span class="tool-symbol" aria-hidden="true">⌘</span>Codex
+            <code>$share</code></a
+          >
+          <a
+            href="https://github.com/notmike101/quire/blob/main/plugin/README.md#install"
+            ><span class="tool-symbol" aria-hidden="true">z_</span>ZCode
+            <code>/share</code></a
+          >
+          <a
+            href="https://github.com/notmike101/quire/blob/main/docs/technical/cli.md#oh-my-pi-omp"
+            ><span class="tool-symbol" aria-hidden="true">π</span>Oh My Pi
+            <code>/share</code></a
+          >
+        </div>
+      </section>
+
+      <section id="experience" class="experience wrap section">
+        <div class="section-heading">
+          <p class="eyebrow">01 / Made for the person reading</p>
+          <h2>The whole story.<br /><em>At a human pace.</em></h2>
+          <p>
+            Give a teammate the path to the answer, with the detail they need to
+            pick up where you left off.
+          </p>
+        </div>
+        <div class="product-frame">
+          <div class="frame-bar">
+            <span class="frame-dots" aria-hidden="true">● ● ●</span
+            ><span>Fixing a search that forgets your filters</span
+            ><span class="frame-label">Quire viewer</span>
+          </div>
+          <a
+            href="./assets/conversation.png"
+            aria-label="Open full-size screenshot of a shared Quire conversation"
+            ><img
+              src="./assets/conversation.png"
+              width="1250"
+              height="1025"
+              loading="lazy"
+              alt="Quire's viewer showing a search-filter bug report, an assistant's explanation, collapsed tool activity, and syntax-highlighted code."
+          /></a>
+        </div>
+        <div class="feature-notes">
+          <div>
+            <span class="note-number">01</span>
+            <h3>Read the conversation</h3>
+            <p>
+              Prompts, answers, Markdown, and highlighted code stay together in
+              order.
+            </p>
+          </div>
+          <div>
+            <span class="note-number">02</span>
+            <h3>Follow the details</h3>
+            <p>
+              Tool activity stays compact. Expand it when the command or output
+              matters.
+            </p>
+          </div>
+          <div>
+            <span class="note-number">03</span>
+            <h3>Keep going</h3>
+            <p>
+              Long sessions load as you scroll. The viewer follows your system’s
+              light or dark appearance.
+            </p>
+          </div>
+        </div>
+        <details class="screenshot-details">
+          <summary>
+            See what expanded tool activity looks like
+            <span aria-hidden="true">↗</span>
+          </summary>
+          <img
+            src="./assets/tool-details.png"
+            width="1250"
+            height="1150"
+            loading="lazy"
+            alt="Expanded Quire tool activity showing the file read and command output within a conversation."
+          />
+        </details>
+        <p class="small-note screenshot-note">
+          Product screenshots use a synthetic conversation. No private sessions
+          are shown.
+        </p>
+      </section>
+
+      <section id="controls" class="controls section">
+        <div class="wrap controls-grid">
+          <div class="section-heading">
+            <p class="eyebrow">02 / Share on your terms</p>
+            <h2>A link you send.<br /><em>Controls you keep.</em></h2>
+            <p>
+              Run Quire on your own infrastructure and choose which
+              conversations leave your machine.
+            </p>
+            <a
+              class="text-link"
+              href="https://github.com/notmike101/quire/blob/main/docs/technical/architecture-security.md"
+              >Read the security guide <span aria-hidden="true">↗</span></a
+            >
+          </div>
+          <div class="control-list">
+            <article>
+              <span aria-hidden="true">↗</span>
+              <div>
+                <h3>Publish with intent</h3>
+                <p>
+                  Installing Quire uploads nothing. Share a session when you’re
+                  ready; in-tool share commands publish immediately.
+                </p>
+              </div>
+            </article>
+            <article>
+              <span aria-hidden="true">⌑</span>
+              <div>
+                <h3>Set the boundaries</h3>
+                <p>
+                  Add a password, choose an expiration, or revoke a link when it
+                  has served its purpose.
+                </p>
+              </div>
+            </article>
+            <article>
+              <span aria-hidden="true">▤</span>
+              <div>
+                <h3>Redact before storage</h3>
+                <p>
+                  Your server removes recognized secrets before storing
+                  encrypted transcripts. Recipients decrypt them in their
+                  browser.
+                </p>
+              </div>
+            </article>
+            <p class="security-note">
+              Use a server you trust: it processes the original upload. Review
+              sensitive material before publishing; automated redaction cannot
+              catch everything or inspect image pixels.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="start" class="start wrap section">
+        <div class="section-heading">
+          <p class="eyebrow">03 / From session to shared page</p>
+          <h2>Good work travels.<br /><em>Give it a link.</em></h2>
+          <p>
+            Quire is self-hosted. Set it up once, then share from the tools you
+            use every day.
+          </p>
+        </div>
+        <ol class="steps">
+          <li>
+            <span class="step-number">1</span>
+            <h3>Give it a home</h3>
+            <p>
+              Run the Quire server with Docker Compose, configure your secrets,
+              and put it behind HTTPS.
+            </p>
+            <a
+              class="text-link"
+              href="https://github.com/notmike101/quire/blob/main/docs/technical/setup.md#1-run-the-server"
+              >Server setup <span aria-hidden="true">↗</span></a
+            >
+          </li>
+          <li>
+            <span class="step-number">2</span>
+            <h3>Connect your tools</h3>
+            <p>
+              Build the publisher CLI from the repository, connect it to your
+              server, and install your tool’s integration.
+            </p>
+            <a
+              class="text-link"
+              href="https://github.com/notmike101/quire/blob/main/docs/technical/setup.md#2-install-the-publisher-cli"
+              >Install the CLI <span aria-hidden="true">↗</span></a
+            >
+          </li>
+          <li>
+            <span class="step-number">3</span>
+            <h3>Pass it along</h3>
+            <p>
+              Publish a session and send the complete link, including its key
+              after <code>#</code>. Send any password separately.
+            </p>
+            <a
+              class="text-link"
+              href="https://github.com/notmike101/quire/blob/main/docs/technical/cli.md"
+              >Sharing guide <span aria-hidden="true">↗</span></a
+            >
+          </li>
+        </ol>
+        <div class="terminal">
+          <div class="terminal-title">
+            <span class="terminal-dots" aria-hidden="true">● ● ●</span> After
+            setup · from an active supported session
+          </div>
+          <pre><code><span class="terminal-comment"># Publish your current conversation</span>
+<span class="terminal-prompt">$</span> quire publish --current
+
+<span class="terminal-comment"># Or generate a password and expire the link in 7 days</span>
+<span class="terminal-prompt">$</span> quire publish --current --password auto --expires 7d</code></pre>
+          <p>
+            The CLI asks for confirmation. For Oh My Pi, install its handler
+            with <code>quire setup omp</code> and use <code>/share</code>.
+          </p>
+        </div>
+      </section>
+
+      <section class="faq wrap section" aria-labelledby="faq-title">
+        <div>
+          <p class="eyebrow">A few useful details</p>
+          <h2 id="faq-title">Before you share.</h2>
+        </div>
+        <div class="faq-list">
+          <details>
+            <summary>Do recipients need Quire?</summary>
+            <p>
+              No. They need a browser, the complete share link, and the password
+              if you set one. Shared pages are read-only.
+            </p>
+          </details>
+          <details>
+            <summary>Can I host Quire on GitHub Pages?</summary>
+            <p>
+              This project website runs on GitHub Pages. Quire itself needs its
+              application server and Postgres database to publish, store, and
+              serve shared conversations. Follow the
+              <a
+                href="https://github.com/notmike101/quire/blob/main/docs/technical/setup.md"
+                >self-hosting guide</a
+              >.
+            </p>
+          </details>
+          <details>
+            <summary>What happens to secrets in a conversation?</summary>
+            <p>
+              The server redacts recognized secrets during ingestion, before
+              persisting transcript content. Review what you share: rules cannot
+              catch every sensitive detail, and text redaction does not inspect
+              image pixels. The ingestion server sees the original upload, so
+              this is not end-to-end encryption against the server.
+            </p>
+          </details>
+          <details>
+            <summary>Can I take a shared conversation down?</summary>
+            <p>
+              Yes. Revoke the link using the CLI, or set an expiration. This
+              stops future access through your server; it cannot erase
+              screenshots or copies someone has already saved.
+            </p>
+          </details>
+          <details>
+            <summary>Which coding tools are supported?</summary>
+            <p>
+              Claude Code, Codex, ZCode, and Oh My Pi. Claude Code and ZCode use
+              <code>/share</code>; Codex uses <code>$share</code>. Oh My Pi uses
+              <code>/share</code> after installing its Quire handler. See the
+              <a
+                href="https://github.com/notmike101/quire/blob/main/docs/technical/cli.md"
+                >integration guide</a
+              >
+              for setup and per-tool behavior.
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <section class="closing wrap">
+        <span class="mark" aria-hidden="true">q</span>
+        <h2>Worth sharing.<br /><em>Easy to follow.</em></h2>
+        <a
+          class="button"
+          href="https://github.com/notmike101/quire/blob/main/docs/technical/setup.md"
+          >Set up Quire <span aria-hidden="true">↗</span></a
+        >
+      </section>
+    </main>
+    <footer class="footer wrap">
+      <a class="wordmark" href="./">quire<span class="wordmark-dot">.</span></a>
+      <p>A place for the conversation behind the code.</p>
+      <nav aria-label="Footer navigation">
+        <a href="https://github.com/notmike101/quire"
+          >Source <span aria-hidden="true">↗</span></a
+        ><a href="https://github.com/notmike101/quire/tree/main/docs/technical"
+          >Documentation <span aria-hidden="true">↗</span></a
+        >
+      </nav>
+    </footer>
+  </body>
+</html>

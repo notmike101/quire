@@ -175,4 +175,7 @@ The standing process for this repo (specs and plans are committed under `docs/su
   stores (`*.sqlite`, `*.jsonl` — synthetic fixtures excepted), coverage, `.playwright-mcp/`.
 - The root contains untracked scratch screenshots (`quire-*.png`, `rail-*.png`) from
   live-verification — working material, not repo content; do not commit them.
-- No CI: there is no `.github/`; the green gate is run locally before pushing.
+- `.github/workflows/pages.yml` deploys the standalone `site/` landing page to
+  GitHub Pages on relevant `main` pushes. It packages only public site assets
+  with `node scripts/build-site.mjs`; it does not run application CI. The
+  application green gate is still run locally before pushing application changes.
