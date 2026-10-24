@@ -9,18 +9,18 @@ describe('ReasoningBlock details', () => {
     expect(w.isVisible()).toBe(true);
     expect(w.text()).toContain('thinking…');
     expect(w.find('button').exists()).toBe(false);
-    expect(w.find('.whitespace-pre-wrap').exists()).toBe(false);
+    expect(w.find('.reasoning-body').exists()).toBe(false);
     w.unmount();
   });
 
   it('opens and closes the actual nonempty reasoning body', async () => {
     const text = '  Compare both options.\n    Keep the original indentation.\n';
     const w = mount(ReasoningBlock, { props: { text } });
-    expect(w.find('.whitespace-pre-wrap').exists()).toBe(false);
+    expect(w.find('.reasoning-body').exists()).toBe(false);
     await w.get('button').trigger('click');
-    expect(w.get('.whitespace-pre-wrap').element.textContent).toBe(text);
+    expect(w.get('.reasoning-body').element.textContent).toBe(text);
     await w.get('button').trigger('click');
-    expect(w.find('.whitespace-pre-wrap').exists()).toBe(false);
+    expect(w.find('.reasoning-body').exists()).toBe(false);
     expect(w.text()).toContain('thinking…');
     w.unmount();
   });
@@ -29,9 +29,9 @@ describe('ReasoningBlock details', () => {
     const w = mount(ReasoningBlock, { props: { text: '' } });
     expect(w.find('button').exists()).toBe(false);
     await w.setProps({ text: 'New reasoning content' });
-    expect(w.find('.whitespace-pre-wrap').exists()).toBe(false);
+    expect(w.find('.reasoning-body').exists()).toBe(false);
     await w.get('button').trigger('click');
-    expect(w.get('.whitespace-pre-wrap').element.textContent).toBe('New reasoning content');
+    expect(w.get('.reasoning-body').element.textContent).toBe('New reasoning content');
     w.unmount();
   });
 });
