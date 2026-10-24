@@ -1,208 +1,54 @@
 # Quire
 
-Share AI coding-harness chat sessions (ZCode, Claude Code, Codex, Oh My Pi) over the web as
-read-only, password-protectable, expiring links — with secrets redacted on the
-server before anything is stored or sent.
+Share your AI coding conversations as readable links.
 
-## Features
+Show a teammate how you found a bug, pass along an implementation walkthrough,
+or share a useful conversation without asking someone to read your terminal history.
+Quire turns sessions from **Claude Code, Codex, ZCode, and Oh My Pi** into
+read-only pages that anyone with the link can open in a browser.
 
-- **Opt-in publishing.** Nothing is shared until the owner runs `quire publish`.
-- **Password protection** (optional per share) with argon2id hashing and a
-  stateless, per-share unlock cookie (`HttpOnly`, `Secure`, `SameSite=Strict`,
-  30-minute TTL).
-- **Expiration.** An expired share returns `410` and can never be read again.
-- **Server-side redaction.** Ordered rules cover private keys, JWTs, provider
-  API keys, authorization credentials, connection strings, secret assignments
-  and CLI arguments, bare tokens, private IPs, local paths, and encoded or
-  embedded secret-bearing content. Redaction is authoritative at ingestion:
-  only redacted content is persisted, and the viewer's browser never receives
-  a secret.
-- **Long-session friendly viewer.** Vue 3 + Tailwind CSS v4, markdown + Shiki
-  syntax highlighting, infinite-scroll lazy loading (50 messages per page),
-  and automatic dark mode via `prefers-color-scheme`. Consecutive tool calls
-  form collapsible activity panels across message/page boundaries, with short
-  file/command previews and visible failure summaries, including explicit Claude
-  Code tool-result errors. A single call has only one disclosure. Opened tool
-  details persist through pagination and group reopening; completed assistant
-  Markdown is retained when later pages load.
-  System reminders show a short preview; full tool and reminder
-  details expand on demand. Empty thinking remains a plain label, not an empty
-  dropdown. Raw tool output retains its original whitespace without renderer-added
-  indentation. Local file references render as text, not navigable links;
-  web/email links remain active.
-- **No existence oracle.** Unknown and revoked tokens return byte-identical
-  `404`s.
-- **Rate limiting.** 5 failed unlocks → 15-minute lockout per token+IP;
-  120 requests/minute per IP across the public API.
+![A shared coding conversation in Quire, with a prompt, formatted answer, and syntax-highlighted code](docs/images/conversation.png)
 
-## Architecture
+[Set up Quire](docs/technical/setup.md) · [CLI and integrations](docs/technical/cli.md) · [Technical documentation](docs/technical/README.md)
 
-pnpm workspace monorepo:
+## Keep the conversation readable
 
-| Package         | What it is                                                        |
-| --------------- | ----------------------------------------------------------------- |
-| `server/`       | Hono + Drizzle (Postgres) API, redaction engine, security layer  |
-| `cli/`          | `quire` publisher CLI with adapters for ZCode, Claude Code, Codex, and OMP |
-| `plugin/`       | `/share` for Claude Code/ZCode plus a native Codex `$share` skill    |
-| `web/`          | Vue 3 + Vite + Tailwind v4 read-only viewer                      |
-| `e2e/`          | Playwright full-stack tests (drives the Docker stack)            |
+Recipients see the conversation in order, with formatted Markdown and
+syntax-highlighted code. Tool activity stays compact until they want the details,
+so they can follow the answer first and inspect the work behind it afterward.
+Long sessions load as they scroll, and the viewer follows their system's light
+or dark appearance.
 
-Data flow: harness session → adapter and CLI shape it → owner confirms (or
-the agent passes `--yes`) → the CLI generates an in-memory content key and
-uploads the raw shaped chunks over authenticated HTTPS → the server performs
-authoritative redaction and seals each chunk as an AES-256-GCM ciphertext
-envelope → the viewer's browser fetches the envelopes and decrypts them
-locally. The content key never reaches the server: it rides in the
-authenticated upload HTTP, then in the share URL's fragment (`#<key>`), which
-the CLI appends locally.
+![Expanded tool activity in Quire showing the command and its output alongside the conversation](docs/images/tool-details.png)
 
-Shares live under `/chats/<shareId>#<key>` (viewer) and
-`/api/v2/public/shares/:shareId/*` (API). Share ids are 128-bit
-crypto-random; session ids never appear in URLs.
+*Screenshots use a synthetic example conversation, not a private session.*
 
-## Security model
+## Choose what you share
 
-- Single `QUIRE_API_KEY` (Bearer, constant-time compare) guards owner routes.
-- Unlock cookies are HMAC-SHA256 over `<token>|<expiry>`, signed with
-  `UNLOCK_SECRET` — no server-side session state.
-- Strict CSP, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
-  `nosniff`, HSTS. Uniform error bodies `{error:{code,message}}`.
-- 20 MB request cap (`413`). No secrets in logs.
-- See `docs/superpowers/specs/2026-08-23-zcode-session-sharing-design.md` for
-  the full design and threat reasoning.
+- Publish when you decide to share. Installing Quire does not upload your conversations.
+- Add a password or an expiration date when a link should have limited access.
+- List your shares, change an expiration date, or revoke a link when you no longer need it.
+- Automatically redact recognized secrets before conversation content is stored.
+  Review sensitive material before publishing; automated redaction cannot catch everything.
 
-## Sealed shares
+Quire is self-hosted: you or your team run the server and choose where shared
+conversations live. Recipients only need a browser, the complete link, and a
+password if you set one. Your server processes the conversation during publishing;
+read the [security guide](docs/technical/architecture-security.md) if you plan to
+share sensitive work.
 
-Sealed shares encrypt the redacted content with AES-256-GCM in the browser:
-the content key appears only in the authenticated upload HTTP and then in the
-share URL's fragment (`#<key>`), never in the server's storage, logs, or
-public HTTP. The server stores ciphertext envelopes in plain Postgres and
-serves them; only the browser holding the key can decrypt. The fragment is
-required — a link without it shows a missing-key error page and makes no
-network call. `GET /metrics` exposes the safe pipeline counters
-(counts/bytes/latency/status only).
+## Start sharing
 
-Operational runbook — migration, metrics, rollback, backup/restore:
-`docs/operations/sealed-shares.md`.
+1. [Set up your Quire server and publisher CLI](docs/technical/setup.md).
+2. Connect your coding tool. Claude Code and ZCode use `/share`, Codex uses
+   `$share`, and Oh My Pi uses `/share` after installing its Quire handler.
+   You can also publish with the CLI.
+3. Send the resulting link. Your recipient can read the conversation and expand
+   code and tool details without installing Quire.
 
-## Quick start (local dev)
+The [CLI and integration guide](docs/technical/cli.md) covers per-tool setup,
+passwords, expiration, and managing published shares. In-tool share commands
+publish immediately; the CLI normally asks for confirmation.
 
-Use Node 22.22.2+, Node 24.15.0+, or Node 26+ and the pnpm version pinned in
-`package.json`. pnpm settings (dependency overrides and native-build approvals)
-live in `pnpm-workspace.yaml`.
-
-The pinned pnpm 12 writes a [two-document lockfile](https://pnpm.io/lockfile):
-package-manager metadata first, project dependencies last. Keep both documents
-and use the pinned package manager rather than a global older pnpm.
-
-Dependencies use current stable releases. The viewer alone uses TypeScript
-6.0.3: current `vue-tsc` 3.3.13 imports `typescript/lib/tsc`, which TypeScript 7
-no longer exports. Other packages use TypeScript 7; upgrade the viewer when
-`vue-tsc` supports it.
-
-```bash
-pnpm install
-pnpm db:test:up            # Postgres on :54329 for tests
-pnpm lint                  # documentation lint; zero errors or warnings allowed
-pnpm typecheck
-pnpm test                  # unit tests for all packages + E2E (needs Docker)
-```
-
-Documentation lint uses `eslint-plugin-jsdoc` across JavaScript, TypeScript,
-and Vue script blocks. `eslint.config.mjs` adapts the syntax and coverage rules
-from `@notmike101/eslint-config-jsdoc`; TypeScript comments describe behavior
-without repeating parameter or return types. `pnpm lint` enforces
-`--max-warnings 0`, including warning-level documentation rules.
-
-Run the server against a local Postgres:
-
-```bash
-cp .env.example .env       # fill in QUIRE_API_KEY / UNLOCK_SECRET
-pnpm --filter @quire/web build
-pnpm --filter @quire/server build
-cd server
-node --env-file=../.env dist/index.js
-```
-
-Run the built server from `server/` so its `./drizzle` migrations directory
-resolves correctly. `DATABASE_URL`, `QUIRE_API_KEY`, and `UNLOCK_SECRET` are
-required; `PORT` defaults to `8787`.
-
-## CLI
-
-For CLI build and global-link instructions, see the
-[plugin README prerequisites](plugin/README.md#prerequisites).
-
-```bash
-quire setup                # prints the server .env block + a config example
-quire publish --current    # shape session, confirm, publish
-quire publish --current --password random --expires tomorrow --yes
-                           # agent path: random password (printed once),
-                           # expires at next midnight, no confirmation prompt
-quire list                 # list shares (id, title, created, expires, state)
-quire revoke <token> --yes # hard delete (rows gone immediately), no prompt
-quire update <token> --expires 2026-09-01
-quire setup omp            # installs the OMP /share handler (interactive TUI only)
-```
-
-`--password random` (or `generate`/`auto`) generates a random secret and prints
-it once. `--expires` accepts an ISO datetime, a duration (`30m`/`24h`/`7d`), or
-a keyword (`tomorrow`, `today`, `week`, `month`, `year`, or `in <duration>`).
-`publish` requires `--current` or a session id (there is no interactive
-picker). `update` only changes the expiry — a share's password is fixed at
-publish time (there is no `update --password`).
-
-Environment: `QUIRE_SERVER_URL`, `QUIRE_API_KEY` (override the config file).
-Harness detection: `--harness zcode|claude-code|codex|omp` flag, else the active
-Codex/Claude Code/ZCode environment, else the most recently updated session
-store. Codex reads `~/.codex/state_5.sqlite` plus the selected task's rollout
-JSONL, both read-only. Top-level tasks are discovered normally; a subagent task
-can be published by passing its explicit task ID. OMP is never auto-detected:
-publish an OMP HTML export by path with `--harness omp`.
-
-### Oh My Pi (OMP)
-
-`quire setup omp` installs Quire's custom share handler into OMP's agent
-directory (`$PI_CODING_AGENT_DIR`, else `~/.omp/agent`) as `share.mjs`. After
-restarting or reloading OMP, `/share` in an interactive, persisted OMP TUI
-session publishes the exact active conversation through Quire with strict
-redaction, no password, and no expiry. The installer never overwrites or
-chains an existing handler: if `share.ts`, `share.js`, or a different
-`share.mjs` is present, it refuses and says what to rename or remove; a
-re-run with matching bytes is a no-op. OMP does not fall back to its native
-share when an installed handler fails, so to revert, rename or remove the
-Quire-installed `share.mjs` and restart/reload OMP. Advanced options
-(password, expiry, preset) are not part of OMP's argumentless `/share`;
-publish the export directly with the desired flags instead. Headless and ACP
-sessions, and `--no-session` runs, keep OMP's native behavior.
-
-## Plugin
-
-Install the plugin in Claude Code or ZCode and use `/share`. In Codex, install
-the native plugin and use `$share`. Both infer password/expiration/preset from
-what you ask and publish immediately (always `--yes`, no prompt), then report
-the link — e.g. `$share random password, expire tomorrow`.
-
-## Deployment (Docker)
-
-```bash
-cp .env.example .env       # set QUIRE_API_KEY, UNLOCK_SECRET, POSTGRES_PASSWORD
-docker compose up -d --build
-```
-
-The server listens on `127.0.0.1:8787` inside the host; front it with your
-reverse proxy (Caddy/Nginx/Traefik) on your chosen host. Notes:
-
-- Serve over HTTPS — the unlock cookie is `Secure` and will not be sent over
-  plain HTTP (localhost is exempt).
-- Forward `X-Forwarded-For` so rate limiting sees real client IPs.
-- The server runs its migrations at startup; no separate migration step.
-
-## Testing
-
-- Unit: `pnpm --filter @quire/<server|cli|web|plugin> test`
-  (server tests need `pnpm db:test:up` first).
-- E2E: `pnpm --filter @quire/e2e test` — builds and drives the compose stack
-  on port 8790, then tears it down. Requires Docker and standard Playwright
-  Chromium, installed with `pnpm --filter @quire/e2e exec playwright install chromium`.
-  No CloakBrowser installation or custom browser path is required.
+For deployment, architecture, security, development, and testing, see the
+[technical documentation](docs/technical/README.md).
