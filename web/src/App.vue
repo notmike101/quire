@@ -87,7 +87,7 @@ function userParts(message: ShareMessage): SharePart[] {
 </script>
 
 <template>
-  <div class="min-h-screen bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+  <div class="app-shell">
     <template v-if="state === 'loading'">
       <LoadingSkeleton />
     </template>
@@ -104,39 +104,149 @@ function userParts(message: ShareMessage): SharePart[] {
       <ErrorPage :message="errorMessage" />
     </template>
     <template v-else>
-      <header class="mx-auto w-full max-w-[760px] px-4 pb-6 pt-10">
-        <h1 class="text-xl font-semibold">{{ meta?.title ?? 'Shared session' }}</h1>
-        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
-          <span v-if="meta?.model" class="rounded-full border border-neutral-200 px-2 py-0.5 dark:border-neutral-800">
+      <header class="share-header">
+        <h1 class="share-title">{{ meta?.title ?? 'Shared session' }}</h1>
+        <div class="share-meta">
+          <span v-if="meta?.model" class="meta-chip">
             {{ meta.model }}
           </span>
           <span v-if="meta?.provider">{{ meta.provider }}</span>
           <span>{{ formatDate(meta?.createdAt ?? new Date().toISOString()) }}</span>
-          <span v-if="meta?.expiresAt" class="text-amber-600 dark:text-amber-400">
+          <span v-if="meta?.expiresAt" class="meta-expires">
             expires {{ formatDate(meta.expiresAt) }}
           </span>
           <span
             v-if="Object.values(meta?.redactions ?? {}).reduce((a, b) => a + b, 0) > 0"
-            class="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+            class="meta-redacted"
           >{{ Object.values(meta?.redactions ?? {}).reduce((a, b) => a + b, 0) }} redacted</span>
         </div>
       </header>
-      <div class="mx-auto flex w-full max-w-[800px] items-stretch">
+      <div class="content-wrap">
         <MessageRail :user-index="userIndex" :messages="messages" :ensure-loaded-through="ensureLoadedThrough" />
-        <main class="min-w-0 flex-1 px-4 pb-16">
+        <main class="msg-col">
           <template v-for="message in displayMessages" :key="messageAnchorId(message)">
             <div v-if="message.role === 'user'" :id="messageAnchorId(message)" class="msg-target">
               <UserMessage :parts="userParts(message)" />
             </div>
             <AssistantMessage v-else :message="message" />
           </template>
-        <div v-if="loadingMore" class="py-4 text-center text-sm text-neutral-400 dark:text-neutral-500">Loading more…</div>
-        <div v-else-if="messages.length === 0" class="py-16 text-center text-sm text-neutral-400 dark:text-neutral-500">
+        <div v-if="loadingMore" class="feed-note">Loading more…</div>
+        <div v-else-if="messages.length === 0" class="feed-note feed-note-empty">
           This session has no shareable messages.
         </div>
-        <div ref="sentinel" class="h-1" />
+        <div ref="sentinel" class="sentinel" />
         </main>
       </div>
     </template>
   </div>
 </template>
+
+<style scoped>
+.app-shell {
+  min-height: 100vh;
+  background-color: var(--color-white);
+  color: var(--color-neutral-900);
+}
+@media (prefers-color-scheme: dark) {
+  .app-shell {
+    background-color: var(--color-neutral-950);
+    color: var(--color-neutral-100);
+  }
+}
+.share-header {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 760px;
+  padding-inline: 1rem;
+  padding-block-end: 1.5rem;
+  padding-top: 2.5rem;
+}
+.share-title {
+  font-size: 1.25rem;
+  line-height: calc(1.75 / 1.25);
+  font-weight: 600;
+}
+.share-meta {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  line-height: calc(1 / 0.75);
+  color: var(--color-neutral-500);
+}
+@media (prefers-color-scheme: dark) {
+  .share-meta {
+    color: var(--color-neutral-400);
+  }
+}
+.meta-chip {
+  border-radius: 2147483647px;
+  border: 1px solid var(--color-neutral-200);
+  padding-inline: 0.5rem;
+  padding-block: 0.125rem;
+}
+@media (prefers-color-scheme: dark) {
+  .meta-chip {
+    border-color: var(--color-neutral-800);
+  }
+}
+.meta-expires {
+  color: var(--color-amber-600);
+}
+@media (prefers-color-scheme: dark) {
+  .meta-expires {
+    color: var(--color-amber-400);
+  }
+}
+.meta-redacted {
+  border-radius: 2147483647px;
+  background-color: var(--color-amber-100);
+  padding-inline: 0.5rem;
+  padding-block: 0.125rem;
+  color: var(--color-amber-700);
+}
+@media (prefers-color-scheme: dark) {
+  .meta-redacted {
+    background-color: #7b330666;
+    color: var(--color-amber-300);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    .meta-redacted {
+      background-color: color-mix(in oklab, var(--color-amber-900) 40%, transparent);
+    }
+  }
+}
+.content-wrap {
+  margin-inline: auto;
+  display: flex;
+  width: 100%;
+  max-width: 800px;
+  align-items: stretch;
+}
+.msg-col {
+  min-width: 0;
+  flex: 1;
+  padding-inline: 1rem;
+  padding-bottom: 4rem;
+}
+.feed-note {
+  padding-block: 1rem;
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: calc(1.25 / 0.875);
+  color: var(--color-neutral-400);
+}
+.feed-note-empty {
+  padding-block: 4rem;
+}
+@media (prefers-color-scheme: dark) {
+  .feed-note {
+    color: var(--color-neutral-500);
+  }
+}
+.sentinel {
+  height: 0.25rem;
+}
+</style>
