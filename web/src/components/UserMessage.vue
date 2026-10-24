@@ -34,7 +34,7 @@ const props = defineProps<{ parts: SharePart[] }>();
   padding-inline: 1rem;
   padding-block: 0.5rem;
   font-size: 0.875rem;
-  line-height: calc(1.25 / 0.875);
+  line-height: var(--lh-sm);
 }
 .system-part {
   max-width: 85%;

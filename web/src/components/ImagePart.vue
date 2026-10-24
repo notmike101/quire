@@ -50,7 +50,7 @@ function fmtBytes(n: number | undefined): string {
   padding-inline: 0.75rem;
   padding-block: 0.5rem;
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   color: var(--color-neutral-400);
 }
 .placeholder-note {

@@ -71,7 +71,7 @@ function fmtBytes(n: number | undefined): string {
   border-radius: 0.5rem;
   border: 1px solid var(--color-neutral-200);
   font-size: 0.875rem;
-  line-height: calc(1.25 / 0.875);
+  line-height: var(--lh-sm);
 }
 .tool-card.failed {
   border-color: var(--color-red-300);
@@ -95,7 +95,7 @@ function fmtBytes(n: number | undefined): string {
   padding-top: 0.125rem;
   font-family: var(--font-mono);
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   color: var(--color-neutral-500);
 }
 .tool-summary {
@@ -113,7 +113,7 @@ function fmtBytes(n: number | undefined): string {
   word-break: break-all;
   font-family: var(--font-mono);
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   color: var(--color-neutral-500);
 }
 .tool-error {
@@ -121,14 +121,14 @@ function fmtBytes(n: number | undefined): string {
   display: block;
   overflow-wrap: break-word;
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   color: var(--color-red-800);
 }
 .tool-image-count {
   margin-top: 0.25rem;
   display: block;
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   color: var(--color-neutral-500);
 }
 .failed-badge {
@@ -138,11 +138,12 @@ function fmtBytes(n: number | undefined): string {
   padding-inline: 0.5rem;
   padding-block: 0.125rem;
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   font-weight: 500;
   color: var(--color-red-800);
 }
 .tool-body {
+  border-color: var(--color-neutral-200);
   border-top: 1px solid var(--color-neutral-200);
   padding: 0.75rem;
 }
@@ -165,7 +166,7 @@ function fmtBytes(n: number | undefined): string {
   padding-inline: 0.75rem;
   padding-block: 0.5rem;
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   color: var(--color-neutral-500);
 }
 .placeholder-note {

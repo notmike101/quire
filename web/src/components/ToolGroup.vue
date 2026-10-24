@@ -46,7 +46,7 @@ const failures = computed(() => props.parts.filter(toolFailed));
   border-radius: 0.5rem;
   border: 1px solid var(--color-neutral-200);
   font-size: 0.875rem;
-  line-height: calc(1.25 / 0.875);
+  line-height: var(--lh-sm);
 }
 .tool-group.failed {
   border-color: var(--color-red-300);
@@ -68,7 +68,7 @@ const failures = computed(() => props.parts.filter(toolFailed));
   padding-top: 0.125rem;
   font-family: var(--font-mono);
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   color: var(--color-neutral-500);
 }
 .group-summary {
@@ -85,19 +85,20 @@ const failures = computed(() => props.parts.filter(toolFailed));
   display: block;
   overflow-wrap: break-word;
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   color: var(--color-neutral-500);
 }
 .group-failures {
   display: flex;
   align-items: flex-start;
   gap: 0.5rem;
+  border-color: var(--color-red-200);
   border-top: 1px solid var(--color-red-200);
   background-color: var(--color-red-50);
   padding-inline: 0.75rem;
   padding-block: 0.5rem;
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   color: var(--color-red-800);
 }
 .failure-note {
@@ -105,6 +106,7 @@ const failures = computed(() => props.parts.filter(toolFailed));
   overflow-wrap: break-word;
 }
 .group-body {
+  border-color: var(--color-neutral-200);
   border-top: 1px solid var(--color-neutral-200);
   padding-inline: 0.75rem;
   padding-block: 0.25rem;

@@ -44,12 +44,12 @@ function submit(): void {
   padding-inline: 0.75rem;
   padding-block: 0.5rem;
   font-size: 0.875rem;
-  line-height: calc(1.25 / 0.875);
+  line-height: var(--lh-sm);
 }
 .gate-error {
-  margin-top: 0.25rem;
+  margin-top: 0.5rem;
   font-size: 0.875rem;
-  line-height: calc(1.25 / 0.875);
+  line-height: var(--lh-sm);
   color: var(--color-red-600);
 }
 .gate-submit {
@@ -60,7 +60,7 @@ function submit(): void {
   padding-inline: 1rem;
   padding-block: 0.5rem;
   font-size: 0.875rem;
-  line-height: calc(1.25 / 0.875);
+  line-height: var(--lh-sm);
   font-weight: 500;
   color: var(--color-white);
 }

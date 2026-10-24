@@ -62,9 +62,4 @@
     background-color: var(--color-neutral-900);
   }
 }
-@keyframes pulse {
-  50% {
-    opacity: 0.5;
-  }
-}
 </style>

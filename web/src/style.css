@@ -3,6 +3,10 @@
 :root {
   --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --lh-xs: calc(1 / 0.75);
+  --lh-sm: calc(1.25 / 0.875);
+  --lh-lg: calc(1.75 / 1.125);
+  --lh-xl: calc(2 / 1.25);
   --color-red-50: oklch(97.1% .013 17.38);
   --color-red-100: oklch(93.6% .032 17.717);
   --color-red-200: oklch(88.5% .062 18.334);
@@ -266,12 +270,12 @@ body {
 .page-title {
   margin-bottom: 0.25rem;
   font-size: 1.125rem;
-  line-height: calc(1.75 / 1.125);
+  line-height: var(--lh-lg);
   font-weight: 600;
 }
 .page-sub {
   font-size: 0.875rem;
-  line-height: calc(1.25 / 0.875);
+  line-height: var(--lh-sm);
   color: var(--color-neutral-500);
 }
 @media (prefers-color-scheme: dark) {
@@ -482,6 +486,11 @@ body {
   .rail-tip { display: none; }
 }
 
+
+/* Skeleton breathing animation (matches Tailwind's old animate-pulse). */
+@keyframes pulse {
+  50% { opacity: 0.5; }
+}
 
 /* Targeted user message: lands below the sticky header after a jump, and
    flashes briefly to confirm the jump landed. */

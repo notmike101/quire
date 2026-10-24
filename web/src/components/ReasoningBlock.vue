@@ -24,13 +24,13 @@ const open = ref(false);
 }
 .reasoning-toggle {
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   font-style: italic;
   color: var(--color-neutral-400);
 }
 .reasoning-label {
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   font-style: italic;
   color: var(--color-neutral-400);
 }
@@ -42,10 +42,11 @@ const open = ref(false);
 .reasoning-body {
   margin-top: 0.25rem;
   white-space: pre-wrap;
-  border-left: 2px solid var(--color-neutral-200);
+  border-color: var(--color-neutral-200);
+  border-left-width: 2px;
   padding-left: 0.75rem;
   font-size: 0.875rem;
-  line-height: calc(1.25 / 0.875);
+  line-height: var(--lh-sm);
   color: var(--color-neutral-500);
 }
 @media (prefers-color-scheme: dark) {

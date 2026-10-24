@@ -43,7 +43,7 @@ async function copy(): Promise<void> {
   padding: 0.75rem;
   font-family: var(--font-mono);
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
 }
 .copy-btn {
   position: absolute;
@@ -56,7 +56,7 @@ async function copy(): Promise<void> {
   padding-inline: 0.5rem;
   padding-block: 0.125rem;
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
 }
 @media (hover: hover) {
   .code-block:hover .copy-btn {

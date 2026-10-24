@@ -28,7 +28,7 @@ const preview = computed(() => compactPreview(
       @click="open = !open"
     >
       <span class="sys-icon" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
-      <span>
+      <span class="sys-text">
         <span class="sys-label">{{ label }}</span>
         <span v-if="preview" class="sys-preview">{{ preview }}</span>
       </span>
@@ -54,8 +54,11 @@ const preview = computed(() => compactPreview(
   padding-block: 0.5rem;
   text-align: left;
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   color: var(--color-neutral-500);
+}
+.sys-text {
+  min-width: 0;
 }
 @media (hover: hover) {
   .sys-toggle:hover {

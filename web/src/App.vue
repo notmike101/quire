@@ -173,7 +173,7 @@ function userParts(message: ShareMessage): SharePart[] {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.75rem;
-  line-height: calc(1 / 0.75);
+  line-height: var(--lh-xs);
   color: var(--color-neutral-500);
 }
 @media (prefers-color-scheme: dark) {
@@ -235,7 +235,7 @@ function userParts(message: ShareMessage): SharePart[] {
   padding-block: 1rem;
   text-align: center;
   font-size: 0.875rem;
-  line-height: calc(1.25 / 0.875);
+  line-height: var(--lh-sm);
   color: var(--color-neutral-400);
 }
 .feed-note-empty {
