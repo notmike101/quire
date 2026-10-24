@@ -26,11 +26,50 @@ async function copy(): Promise<void> {
 </script>
 
 <template>
-  <div class="group relative">
-    <pre class="overflow-x-auto rounded-md bg-neutral-100 p-3 font-mono text-xs dark:bg-neutral-900"><code>{{ display() }}</code></pre>
-    <button
-      class="absolute right-2 top-2 hidden rounded border border-neutral-300 bg-white px-2 py-0.5 text-xs group-hover:block dark:border-neutral-600 dark:bg-neutral-800"
-      @click="copy"
-    >{{ copied ? 'Copied' : 'Copy' }}</button>
+  <div class="code-block">
+    <pre class="code-pre"><code>{{ display() }}</code></pre>
+    <button class="copy-btn" @click="copy">{{ copied ? 'Copied' : 'Copy' }}</button>
   </div>
 </template>
+
+<style scoped>
+.code-block {
+  position: relative;
+}
+.code-pre {
+  overflow-x: auto;
+  border-radius: 0.375rem;
+  background-color: var(--color-neutral-100);
+  padding: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: calc(1 / 0.75);
+}
+.copy-btn {
+  position: absolute;
+  right: 0.5rem;
+  top: 0.5rem;
+  display: none;
+  border-radius: 0.25rem;
+  border: 1px solid var(--color-neutral-300);
+  background-color: var(--color-white);
+  padding-inline: 0.5rem;
+  padding-block: 0.125rem;
+  font-size: 0.75rem;
+  line-height: calc(1 / 0.75);
+}
+@media (hover: hover) {
+  .code-block:hover .copy-btn {
+    display: block;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  .code-pre {
+    background-color: var(--color-neutral-900);
+  }
+  .copy-btn {
+    border-color: var(--color-neutral-600);
+    background-color: var(--color-neutral-800);
+  }
+}
+</style>

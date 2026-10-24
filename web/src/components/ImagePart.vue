@@ -19,7 +19,7 @@ function fmtBytes(n: number | undefined): string {
 </script>
 
 <template>
-  <div class="my-3 image-part">
+  <div class="image-block image-part">
     <img
       v-if="isSafeImageSrc(part.src)"
       :src="part.src"
@@ -27,14 +27,45 @@ function fmtBytes(n: number | undefined): string {
       loading="lazy"
       class="image-part-img"
     />
-    <div
-      v-else
-      class="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-400 dark:border-neutral-800 dark:bg-neutral-900/40 dark:text-neutral-500"
-    >
+    <div v-else class="image-placeholder">
       <span>📷</span>
-      <span class="italic">
+      <span class="placeholder-note">
         image too large to embed{{ part.bytes ? ` (${fmtBytes(part.bytes)})` : '' }}
       </span>
     </div>
   </div>
 </template>
+
+<style scoped>
+.image-block {
+  margin-block: 0.75rem;
+}
+.image-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-neutral-200);
+  background-color: var(--color-neutral-50);
+  padding-inline: 0.75rem;
+  padding-block: 0.5rem;
+  font-size: 0.75rem;
+  line-height: calc(1 / 0.75);
+  color: var(--color-neutral-400);
+}
+.placeholder-note {
+  font-style: italic;
+}
+@media (prefers-color-scheme: dark) {
+  .image-placeholder {
+    border-color: var(--color-neutral-800);
+    background-color: #17171766;
+    color: var(--color-neutral-500);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    .image-placeholder {
+      background-color: color-mix(in oklab, var(--color-neutral-900) 40%, transparent);
+    }
+  }
+}
+</style>
