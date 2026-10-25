@@ -8,9 +8,8 @@ Postgres database.
 
 Edit `site/index.html` and `site/styles.css`. The page uses system fonts, native
 HTML disclosures, and a small theme script, with no external runtime dependencies. The theme follows
-the system color scheme by default. The header's Theme selector offers System,
-Light, and Dark; explicit choices persist in local storage between visits.
-Selecting System clears the override and resumes following the device setting.
+the system color scheme by default. The header's sun/moon switch toggles light
+and dark; explicit choices persist in local storage between visits.
 
 From the repository root:
 

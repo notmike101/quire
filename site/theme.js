@@ -21,29 +21,25 @@
         document.documentElement.dataset.theme = dark ? 'dark' : 'light';
         document.querySelector('meta[name="theme-color"]').content = dark ? '#111113' : '#f5f3ed';
 
-        const select = document.querySelector('.theme-select');
+        const toggle = document.querySelector('.theme-switch');
 
-        if (select) {
-            select.value = savedTheme ?? 'system';
+        if (toggle) {
+            toggle.checked = dark;
         }
     }
 
     applyTheme();
     preference.addEventListener('change', applyTheme);
     document.addEventListener('DOMContentLoaded', () => {
-        const select = document.querySelector('.theme-select');
+        const toggle = document.querySelector('.theme-switch');
 
         document.querySelector('.theme-control').hidden = false;
         applyTheme();
-        select.addEventListener('change', () => {
-            savedTheme = select.value === 'system' ? undefined : select.value;
+        toggle.addEventListener('change', () => {
+            savedTheme = toggle.checked ? 'dark' : 'light';
 
             try {
-                if (savedTheme) {
-                    globalThis.localStorage.setItem('quire-theme', savedTheme);
-                } else {
-                    globalThis.localStorage.removeItem('quire-theme');
-                }
+                globalThis.localStorage.setItem('quire-theme', savedTheme);
             } catch {
                 // Keep the current visit usable when persistence is unavailable.
             }
