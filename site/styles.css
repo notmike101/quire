@@ -34,6 +34,7 @@ summary {
   -webkit-tap-highlight-color: transparent;
 }
 button:focus-visible,
+select:focus-visible,
 a:focus-visible,
 summary:focus-visible {
   outline: 3px solid var(--accent);
@@ -956,21 +957,25 @@ pre {
 
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
-.theme-toggle {
+.theme-control {
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.theme-control:not([hidden]) { display: flex; }
+.theme-select {
   font: inherit;
   font-size: 12px;
   color: var(--ink);
-  background: transparent;
+  background: var(--paper);
   border: 1px solid var(--line);
   padding: 10px;
   cursor: pointer;
 }
-.theme-toggle:hover { color: var(--accent); }
-.theme-toggle[aria-pressed="true"] {
-  background: var(--ink);
-  color: var(--paper);
-}
+.theme-select:hover { border-color: var(--accent); }
 @media (max-width: 760px) {
   .header nav { gap: 12px; }
-  .theme-toggle { font-size: 11px; padding: 8px; }
+  .theme-select { font-size: 11px; padding: 8px 2px; }
+  .theme-control > span { display: none; }
 }

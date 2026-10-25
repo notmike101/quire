@@ -5,39 +5,45 @@
     try {
         savedTheme = globalThis.localStorage.getItem('quire-theme');
     } catch {
-        // Storage can be disabled; the toggle still works for this visit.
+        // Storage can be disabled; theme selection still works for this visit.
     }
 
     if (savedTheme !== 'light' && savedTheme !== 'dark') {
         savedTheme = undefined;
     }
 
-    /** Apply the saved choice, or follow the current system preference. */
+    /**
+     * Apply the saved choice, or follow the current system preference.
+     */
     function applyTheme() {
         const dark = savedTheme ? savedTheme === 'dark' : preference.matches;
 
         document.documentElement.dataset.theme = dark ? 'dark' : 'light';
         document.querySelector('meta[name="theme-color"]').content = dark ? '#111113' : '#f5f3ed';
 
-        const button = document.querySelector('.theme-toggle');
+        const select = document.querySelector('.theme-select');
 
-        if (button) {
-            button.setAttribute('aria-pressed', String(dark));
+        if (select) {
+            select.value = savedTheme ?? 'system';
         }
     }
 
     applyTheme();
     preference.addEventListener('change', applyTheme);
     document.addEventListener('DOMContentLoaded', () => {
-        const button = document.querySelector('.theme-toggle');
+        const select = document.querySelector('.theme-select');
 
-        button.hidden = false;
+        document.querySelector('.theme-control').hidden = false;
         applyTheme();
-        button.addEventListener('click', () => {
-            savedTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+        select.addEventListener('change', () => {
+            savedTheme = select.value === 'system' ? undefined : select.value;
 
             try {
-                globalThis.localStorage.setItem('quire-theme', savedTheme);
+                if (savedTheme) {
+                    globalThis.localStorage.setItem('quire-theme', savedTheme);
+                } else {
+                    globalThis.localStorage.removeItem('quire-theme');
+                }
             } catch {
                 // Keep the current visit usable when persistence is unavailable.
             }
