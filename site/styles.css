@@ -2,11 +2,11 @@
 
 :root {
   color-scheme: light dark;
-  --paper: light-dark(#f5f3ed, #191d1b);
-  --ink: light-dark(#242923, #e8e9e1);
-  --muted: light-dark(#65685f, #b0b6aa);
-  --line: light-dark(#d5d6cb, #41483f);
-  --accent: light-dark(#a13e27, #efa98b);
+  --paper: light-dark(#f5f3ed, #111113);
+  --ink: light-dark(#242923, #ededee);
+  --muted: light-dark(#65685f, #adadb5);
+  --line: light-dark(#d5d6cb, #343438);
+  --accent: light-dark(#a13e27, #e6a18b);
   --serif: Georgia, "Times New Roman", serif;
   --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-family: Arial, Helvetica, sans-serif;
@@ -231,16 +231,16 @@ pre {
 .sheet-back {
   position: absolute;
   inset: 5px 3px 50px;
-  background: light-dark(#e6e5da, #30372f);
-  border: 1px solid light-dark(#cfcec0, #495244);
+  background: light-dark(#e6e5da, #232326);
+  border: 1px solid light-dark(#cfcec0, #36363b);
   transform: rotate(3deg);
   border-radius: 5px;
 }
 .conversation {
   position: relative;
-  background: light-dark(#fffefb, #222822);
-  border: 1px solid light-dark(#c7c9bf, #4d5748);
-  box-shadow: 0 14px 35px #3035230c;
+  background: light-dark(#fffefb, #19191c);
+  border: 1px solid light-dark(#c7c9bf, #3b3b40);
+  box-shadow: 0 14px 35px light-dark(#3035230c, #00000040);
   border-radius: 5px;
   overflow: hidden;
 }
@@ -249,7 +249,7 @@ pre {
   justify-content: space-between;
   gap: 10px;
   padding: 15px 18px;
-  border-bottom: 1px solid light-dark(#e3e3da, #424b3d);
+  border-bottom: 1px solid light-dark(#e3e3da, #2e2e32);
   font: 9px var(--mono);
   color: var(--muted);
 }
@@ -259,7 +259,7 @@ pre {
   margin-right: 5px;
 }
 .read-only {
-  border: 1px solid light-dark(#dce0d3, #4d5748);
+  border: 1px solid light-dark(#dce0d3, #3b3b40);
   align-self: center;
   padding: 4px 6px;
   border-radius: 3px;
@@ -291,12 +291,12 @@ pre {
 .prompt {
   margin: 0 0 20px 32px;
   padding: 13px 16px;
-  background: light-dark(#f0f0e9, #343d32);
+  background: light-dark(#f0f0e9, #26262b);
   border-radius: 9px;
   line-height: 1.7;
 }
 .activity {
-  border: 1px solid light-dark(#dcdfd4, #46513f);
+  border: 1px solid light-dark(#dcdfd4, #343439);
   border-radius: 4px;
   margin: 16px 0 21px;
 }
@@ -312,7 +312,7 @@ pre {
   margin: 2px 0 0 13px;
 }
 .activity-output {
-  border-top: 1px solid light-dark(#dcdfd4, #46513f);
+  border-top: 1px solid light-dark(#dcdfd4, #343439);
   padding: 10px 12px;
   font-size: 10px;
   overflow-wrap: anywhere;
@@ -326,19 +326,19 @@ pre {
   margin-bottom: 10px;
 }
 .conversation pre {
-  background: light-dark(#f6f6f0, #1c231d);
+  background: light-dark(#f6f6f0, #141416);
   font-size: 10px;
   line-height: 1.9;
   padding: 12px 13px;
-  border-left: 2px solid light-dark(#cbd0bd, #54654a);
+  border-left: 2px solid light-dark(#cbd0bd, #45454d);
   overflow: auto;
   margin: 0 0 15px;
 }
 .code-keyword {
-  color: light-dark(#984b3b, #edaa93);
+  color: light-dark(#984b3b, #e6a18b);
 }
 .code-string {
-  color: light-dark(#537151, #b2d2a1);
+  color: light-dark(#537151, #bdb4ed);
 }
 .conversation-end {
   font-size: 10px;
@@ -347,8 +347,8 @@ pre {
 }
 .conversation-bottom {
   padding: 13px 18px;
-  background: light-dark(#f6f7ef, #2b3429);
-  border-top: 1px solid light-dark(#e1e4d8, #47553f);
+  background: light-dark(#f6f7ef, #202023);
+  border-top: 1px solid light-dark(#e1e4d8, #343438);
   font: 8px var(--mono);
   display: flex;
   align-items: center;
@@ -427,25 +427,25 @@ pre {
   margin-bottom: 38px;
 }
 .product-frame {
-  border: 1px solid light-dark(#cdd0c4, #4b5744);
-  background: light-dark(white, #222822);
+  border: 1px solid light-dark(#cdd0c4, #36363b);
+  background: light-dark(white, #19191c);
   border-radius: 5px;
   overflow: hidden;
-  box-shadow: 0 10px 35px #26302208;
+  box-shadow: 0 10px 35px light-dark(#26302208, #00000030);
 }
 .frame-bar {
   display: flex;
   justify-content: space-between;
   gap: 15px;
   padding: 15px 20px;
-  background: light-dark(#eaece2, #30392d);
-  border-bottom: 1px solid light-dark(#d1d5c6, #4b5744);
-  color: light-dark(#62675a, #bac5b1);
+  background: light-dark(#eaece2, #232326);
+  border-bottom: 1px solid light-dark(#d1d5c6, #36363b);
+  color: light-dark(#62675a, #b7b7c0);
   font: 10px var(--mono);
 }
 .frame-dots {
   letter-spacing: 3px;
-  color: light-dark(#9a9f90, #a5b19b);
+  color: light-dark(#9a9f90, #92929c);
 }
 .frame-label {
   font-size: 9px;
@@ -495,8 +495,8 @@ pre {
   font-size: 10px;
 }
 .controls {
-  background: light-dark(#e9ecdf, #252e25);
-  border-block: 1px solid light-dark(#d7dccb, #48553f);
+  background: light-dark(#e9ecdf, #18181b);
+  border-block: 1px solid light-dark(#d7dccb, #343438);
 }
 .controls-grid {
   display: grid;
@@ -510,7 +510,7 @@ pre {
 .control-list article {
   display: flex;
   gap: 23px;
-  border-bottom: 1px solid light-dark(#cdd3c1, #48553f);
+  border-bottom: 1px solid light-dark(#cdd3c1, #343438);
   padding: 0 0 23px;
   margin: 0 0 24px;
 }
@@ -527,12 +527,12 @@ pre {
 }
 .control-list article p {
   font-size: 13px;
-  color: light-dark(#585f50, #bdc8b4);
+  color: light-dark(#585f50, #b7b7c0);
   margin: 0;
 }
 .security-note {
   font-size: 11px;
-  color: light-dark(#59614f, #b6c3ac);
+  color: light-dark(#59614f, #adadb5);
   line-height: 1.8;
   margin: 0;
 }
@@ -572,22 +572,22 @@ pre {
   color: var(--accent);
 }
 .terminal {
-  background: #252e29;
-  color: #edf0e5;
-  border: 1px solid #19251b;
+  background: light-dark(#252e29, #161618);
+  color: light-dark(#edf0e5, #ededee);
+  border: 1px solid light-dark(#19251b, #343438);
   border-radius: 4px;
   overflow: hidden;
 }
 .terminal-title {
   padding: 16px 24px;
-  border-bottom: 1px solid #445044;
+  border-bottom: 1px solid light-dark(#445044, #343438);
   font: 10px var(--mono);
-  color: #bcc4b6;
+  color: light-dark(#bcc4b6, #adadb5);
 }
 .terminal-dots {
   margin-right: 20px;
   letter-spacing: 4px;
-  color: #7f8b7a;
+  color: light-dark(#7f8b7a, #81818b);
 }
 .terminal pre {
   font-size: 14px;
@@ -597,20 +597,20 @@ pre {
   overflow: auto;
 }
 .terminal-comment {
-  color: #b5bfab;
+  color: light-dark(#b5bfab, #adadb5);
 }
 .terminal-prompt {
-  color: #eab293;
+  color: light-dark(#eab293, #e6a18b);
 }
 .terminal > p {
   font-size: 11px;
-  color: #bfc9b7;
+  color: light-dark(#bfc9b7, #adadb5);
   margin: 0;
   padding: 0 30px 27px;
   line-height: 1.8;
 }
 .terminal > p code {
-  color: #edf0e5;
+  color: light-dark(#edf0e5, #ededee);
 }
 .faq {
   border-top: 1px solid var(--line);

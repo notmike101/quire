@@ -17,7 +17,7 @@
         const dark = savedTheme ? savedTheme === 'dark' : preference.matches;
 
         document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-        document.querySelector('meta[name="theme-color"]').content = dark ? '#191d1b' : '#f5f3ed';
+        document.querySelector('meta[name="theme-color"]').content = dark ? '#111113' : '#f5f3ed';
 
         const button = document.querySelector('.theme-toggle');
 
