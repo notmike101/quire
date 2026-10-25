@@ -766,7 +766,7 @@ pre {
   .header nav a {
     font-size: 12px;
   }
-  .header nav > a:first-child {
+  .header nav > a[href="#experience"] {
     display: none;
   }
   .nav-github {
@@ -1006,6 +1006,16 @@ pre {
 }
 @media (max-width: 760px) {
   .header nav { gap: 12px; }
+}
+@media (max-width: 380px) {
+  .header .nav-docs { display: none; }
+  .header { gap: 8px; }
+  .header nav { flex-shrink: 0; gap: 8px; }
+  .header .nav-github { padding-inline: 8px; white-space: nowrap; }
+  .header .nav-github span { display: none; }
+  .hero { grid-template-columns: minmax(0, 1fr); }
+  .hero h1 { font-size: 38px; }
+  .hero .actions { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
   .theme-thumb { transition: none; }
