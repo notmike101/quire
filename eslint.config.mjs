@@ -98,8 +98,7 @@ export default [
     ...scopeToJavaScript(configJs),
     ...scopeToJavaScript(configJsdoc),
     {
-        /* All JavaScript sources in this repo are Node scripts; the package
-           defaults to browser globals outside scripts/bin, so declare Node
+        /* The package defaults to browser globals outside scripts/bin, so declare Node
            globals for the Node helper scripts that live outside that convention. */
         files: ['**/test/fixtures/**/*.{js,mjs,cjs}'],
         languageOptions: { globals: globals.nodeBuiltin },
