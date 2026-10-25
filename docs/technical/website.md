@@ -7,7 +7,9 @@ Postgres database.
 ## Edit and preview
 
 Edit `site/index.html` and `site/styles.css`. The page uses system fonts, native
-HTML disclosures, and no JavaScript or external runtime dependencies.
+HTML disclosures, and a small theme script, with no external runtime dependencies. The theme follows
+the system color scheme until the header toggle is used; that choice persists
+in local storage between visits.
 
 From the repository root:
 
@@ -16,7 +18,7 @@ node scripts/build-site.mjs
 ```
 
 Or use `pnpm build:site` with the repository's pinned pnpm. The packager copies
-the three site files and the two synthetic screenshots in `docs/images/` into
+the four site files and the two synthetic screenshots in `docs/images/` into
 `site/dist/`. Unexpected leftover files cause packaging to fail; inspect and
 remove those files before trying again. Do not add private session data there.
 
@@ -44,7 +46,7 @@ at both the domain root and a GitHub Pages project path such as `/quire/`.
 
 The workflow uses the `github-pages` environment with `contents: read`,
 `pages: write`, and `id-token: write`. It installs no project dependencies and
-does not run the application test stack. Only the five public website files
+does not run the application test stack. Only the six public website files
 are uploaded. See [GitHub's custom workflow documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
 
 No custom domain is configured. Documentation links point to the canonical

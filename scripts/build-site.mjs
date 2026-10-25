@@ -5,7 +5,7 @@ const output = new URL('site/dist/', root);
 
 await mkdir(new URL('assets/', output), { recursive: true });
 
-await Promise.all(['index.html', 'styles.css', 'favicon.svg'].map((name) =>
+await Promise.all(['index.html', 'styles.css', 'favicon.svg', 'theme.js'].map((name) =>
     copyFile(new URL(`site/${name}`, root), new URL(name, output)),
 ));
 
@@ -24,6 +24,7 @@ const expected = [
     'favicon.svg',
     'index.html',
     'styles.css',
+    'theme.js',
 ];
 
 if (JSON.stringify(files) !== JSON.stringify(expected)) {
@@ -32,4 +33,4 @@ if (JSON.stringify(files) !== JSON.stringify(expected)) {
     );
 }
 
-console.info('Site ready in site/dist (5 public files).');
+console.info('Site ready in site/dist (6 public files).');
